@@ -166,15 +166,17 @@ Use this when you want to install without crates.io (audit the source,
 air-gapped install, or deploy an unreleased commit).
 
 ```bash
-# On the Spark.
+# On the Spark. Run as your normal user — the script escalates to sudo
+# only for the systemd wiring step.
 git clone https://github.com/niklasfrick/spark-dashboard.git
 cd spark-dashboard
-sudo ./packaging/install.sh
+./packaging/install.sh
 ```
 
 This builds the frontend (`npm run build`) and the Rust binary
 (`cargo build --release`), then hands off to the same `service install`
-logic as Option A.
+logic as Option A. You'll be prompted for your sudo password once, when
+the service is installed.
 
 ### Managing the service
 
@@ -195,7 +197,7 @@ or `RUST_LOG`, then `sudo systemctl restart spark-dashboard`.
 cargo install --force spark-dashboard && sudo spark-dashboard service install
 
 # Option B
-cd spark-dashboard && git pull && sudo ./packaging/install.sh
+cd spark-dashboard && git pull && ./packaging/install.sh
 ```
 
 Re-running `service install` is idempotent: it stops the service, swaps the
