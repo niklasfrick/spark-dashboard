@@ -42,12 +42,12 @@ describe('MemoryCard', () => {
   it('renders all 4 colored bar segments', () => {
     const { container } = render(<MemoryCard metrics={mockMemoryMetrics} />)
 
-    // The stacked bar has a flex container with colored divs
-    const barContainer = container.querySelector('.flex.h-8.rounded-lg.overflow-hidden')
+    // StackedBar renders a flex row with one div per non-zero segment
+    const barContainer = container.querySelector('.flex.h-2\\.5.rounded-full.overflow-hidden')
     expect(barContainer).toBeTruthy()
 
-    // Count colored segments inside the bar (GPU, CPU, Cached, Free)
-    const segments = barContainer!.querySelectorAll('div')
+    // All 4 mock segments are > 0, so all 4 render (GPU, CPU, Cached, Free)
+    const segments = barContainer!.querySelectorAll(':scope > div')
     expect(segments.length).toBe(4)
   })
 
