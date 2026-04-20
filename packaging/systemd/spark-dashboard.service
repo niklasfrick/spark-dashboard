@@ -1,0 +1,33 @@
+[Unit]
+Description=Spark Dashboard — DGX Spark hardware & LLM monitoring
+Documentation=https://github.com/niklasfrick/spark-dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=spark-dashboard
+Group=spark-dashboard
+SupplementaryGroups=video render docker
+EnvironmentFile=-/etc/spark-dashboard/config.env
+ExecStart=/usr/local/bin/spark-dashboard
+Restart=on-failure
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+# Hardening (kept compatible with /proc + NVML reads)
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

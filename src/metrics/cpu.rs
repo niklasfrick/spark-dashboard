@@ -7,7 +7,10 @@ pub fn collect_cpu_metrics(sys: &sysinfo::System) -> CpuMetrics {
     let cpus = sys.cpus();
     let aggregate_percent = sys.global_cpu_usage();
 
-    let name = cpus.first().map(|c| c.brand().to_string()).filter(|b| !b.is_empty());
+    let name = cpus
+        .first()
+        .map(|c| c.brand().to_string())
+        .filter(|b| !b.is_empty());
 
     let per_core: Vec<CoreMetrics> = cpus
         .iter()

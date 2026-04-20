@@ -1,8 +1,10 @@
 # dev/
 
-Operator scripts for the spark-dashboard. Both scripts read configuration from
-the repo-root `.env` file — copy `.env.example` to `.env` and edit before
-running anything here.
+Development-only scripts for spark-dashboard. Configuration is read from a
+repo-root `.env` file — copy `.env.example` to `.env` and edit before running.
+
+For **production installs**, use `cargo install spark-dashboard` or
+`packaging/install.sh`. See the repo [README](../README.md#install-on-the-dgx-spark).
 
 ## Scripts
 
@@ -19,13 +21,6 @@ Runs the full dev environment:
 Frontend edits hot-reload in the browser via Vite. Backend edits trigger a
 remote rebuild (takes about as long as `cargo build --release` does on your
 Spark).
-
-### `./dev/deploy.sh` — one-shot production deploy
-
-Builds the frontend locally, rsyncs the project to the Spark, compiles the
-backend there, and runs the binary in the foreground. The frontend is embedded
-into the binary via `rust-embed`, so only the Rust binary needs to run in
-production. The dashboard is served at `http://${SPARK_HOST}:3000`.
 
 ## Required environment variables
 

@@ -10,9 +10,8 @@ pub struct DetectedEngine {
 }
 
 /// Known engine binaries and their default ports.
-const ENGINE_BINARIES: &[(&str, EngineType, &str)] = &[
-    ("vllm", EngineType::Vllm, "http://localhost:8000"),
-];
+const ENGINE_BINARIES: &[(&str, EngineType, &str)] =
+    &[("vllm", EngineType::Vllm, "http://localhost:8000")];
 
 // ---------------------------------------------------------------------------
 // Public detection entry point
@@ -33,7 +32,10 @@ pub async fn detect_engines(
 
     // Merge Docker results -- prefer Docker endpoint when duplicate engine type
     for dc in docker_candidates {
-        if let Some(existing) = candidates.iter_mut().find(|c| c.engine_type == dc.engine_type) {
+        if let Some(existing) = candidates
+            .iter_mut()
+            .find(|c| c.engine_type == dc.engine_type)
+        {
             // Docker has actual port mapping, prefer it
             existing.endpoint = dc.endpoint;
         } else {
@@ -110,7 +112,10 @@ fn detect_by_process(sys: &sysinfo::System) -> Vec<DetectedEngine> {
 /// Returns a constructed endpoint if at least `--port` is found, otherwise
 /// falls back to the default.
 fn parse_endpoint_from_args(args: &[OsString], default_endpoint: &str) -> Option<String> {
-    let args: Vec<String> = args.iter().filter_map(|a| a.to_str().map(String::from)).collect();
+    let args: Vec<String> = args
+        .iter()
+        .filter_map(|a| a.to_str().map(String::from))
+        .collect();
 
     let mut host: Option<&str> = None;
     let mut port: Option<&str> = None;
@@ -185,8 +190,16 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
     let mut detected = Vec::new();
 
     for container in &containers {
-        let image = container.image.as_deref().unwrap_or_default().to_lowercase();
-        let command = container.command.as_deref().unwrap_or_default().to_lowercase();
+        let image = container
+            .image
+            .as_deref()
+            .unwrap_or_default()
+            .to_lowercase();
+        let command = container
+            .command
+            .as_deref()
+            .unwrap_or_default()
+            .to_lowercase();
         let names = container
             .names
             .as_ref()
@@ -194,9 +207,7 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
             .unwrap_or_default();
 
         // Match on image name, container command, or container names
-        let is_vllm = image.contains("vllm")
-            || command.contains("vllm")
-            || names.contains("vllm");
+        let is_vllm = image.contains("vllm") || command.contains("vllm") || names.contains("vllm");
 
         if !is_vllm {
             continue;
@@ -209,9 +220,8 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
             .and_then(|ports| ports.iter().find_map(|p| p.public_port));
 
         // 2. Try port from the container's own command string
-        let cmd_port = parse_port_from_command_str(
-            container.command.as_deref().unwrap_or_default(),
-        );
+        let cmd_port =
+            parse_port_from_command_str(container.command.as_deref().unwrap_or_default());
 
         let port = mapped_port.map(|p| p.to_string()).or(cmd_port);
 
@@ -227,23 +237,21 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
                     let top_opts = TopOptionsBuilder::default().ps_args("-eo pid,args").build();
                     match docker.top_processes(container_id, Some(top_opts)).await {
                         Ok(top) => {
-                            top.processes
-                                .as_ref()
-                                .and_then(|procs| {
-                                    for row in procs {
-                                        // Each row is a Vec<String> of column values
-                                        let line = row.join(" ");
-                                        if let Some(p) = parse_port_from_command_str(&line) {
-                                            tracing::debug!(
-                                                "Docker top: found port {} in: {}",
-                                                p,
-                                                line
-                                            );
-                                            return Some(p);
-                                        }
+                            top.processes.as_ref().and_then(|procs| {
+                                for row in procs {
+                                    // Each row is a Vec<String> of column values
+                                    let line = row.join(" ");
+                                    if let Some(p) = parse_port_from_command_str(&line) {
+                                        tracing::debug!(
+                                            "Docker top: found port {} in: {}",
+                                            p,
+                                            line
+                                        );
+                                        return Some(p);
                                     }
-                                    None
-                                })
+                                }
+                                None
+                            })
                         }
                         Err(e) => {
                             tracing::debug!("docker top failed for {}: {}", container_id, e);

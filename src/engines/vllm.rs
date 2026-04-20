@@ -132,11 +132,19 @@ impl EngineAdapter for VllmAdapter {
             let sum = parsed
                 .counters
                 .get("vllm_request_time_per_output_token_seconds_sum")
-                .or_else(|| parsed.counters.get("vllm_time_per_output_token_seconds_sum"));
+                .or_else(|| {
+                    parsed
+                        .counters
+                        .get("vllm_time_per_output_token_seconds_sum")
+                });
             let count = parsed
                 .counters
                 .get("vllm_request_time_per_output_token_seconds_count")
-                .or_else(|| parsed.counters.get("vllm_time_per_output_token_seconds_count"));
+                .or_else(|| {
+                    parsed
+                        .counters
+                        .get("vllm_time_per_output_token_seconds_count")
+                });
             match (sum, count) {
                 (Some(&s), Some(&c)) if c > 0.0 && s > 0.0 => Some(c / s),
                 _ => None,
@@ -236,7 +244,9 @@ impl EngineAdapter for VllmAdapter {
         // End-to-end request latency (avg from histogram)
         let e2e_latency_ms = {
             let sum = parsed.counters.get("vllm_e2e_request_latency_seconds_sum");
-            let count = parsed.counters.get("vllm_e2e_request_latency_seconds_count");
+            let count = parsed
+                .counters
+                .get("vllm_e2e_request_latency_seconds_count");
             match (sum, count) {
                 (Some(&s), Some(&c)) if c > 0.0 => Some((s / c) * 1000.0),
                 _ => None,

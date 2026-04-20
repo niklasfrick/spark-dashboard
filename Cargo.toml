@@ -8,6 +8,21 @@ repository = "https://github.com/niklasfrick/spark-dashboard"
 readme = "README.md"
 keywords = ["monitoring", "gpu", "nvml", "dgx-spark", "vllm"]
 categories = ["command-line-utilities", "visualization"]
+# frontend/dist is produced by `npm run build` before `cargo publish`; it is
+# gitignored but must ship in the published crate so rust-embed can pick it up
+# during `cargo install`. Same for the systemd unit + config example — they are
+# embedded in the binary via include_str! for the `service` subcommand.
+include = [
+    "/src/**",
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/README.md",
+    "/LICENSE",
+    "/CHANGELOG.md",
+    "/frontend/dist/**",
+    "/packaging/systemd/spark-dashboard.service",
+    "/packaging/config.env.example",
+]
 
 [dependencies]
 axum = { version = "0.8", features = ["ws"] }
@@ -19,7 +34,7 @@ tower-http = { version = "0.6", features = ["cors", "fs"] }
 rust-embed = { version = "8", features = ["axum"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 mime_guess = "2"
 reqwest = { version = "0.12", features = ["json"] }
 async-trait = "0.1"

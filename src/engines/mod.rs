@@ -155,8 +155,7 @@ impl EngineState {
     /// 30 seconds, meaning it should be removed from the active engine list.
     pub fn should_remove(&self) -> bool {
         if let Some(stopped) = self.stopped_at {
-            self.status == EngineStatus::Stopped
-                && stopped.elapsed() > Duration::from_secs(30)
+            self.status == EngineStatus::Stopped && stopped.elapsed() > Duration::from_secs(30)
         } else {
             false
         }
@@ -236,15 +235,15 @@ pub async fn engine_collector_loop(
                 // Add newly detected engines
                 for d in &detected {
                     let key = (d.engine_type.clone(), d.endpoint.clone());
-                    if !engine_map.contains_key(&key) {
+                    engine_map.entry(key).or_insert_with(|| {
                         let adapter = create_adapter(
                             d.engine_type.clone(),
                             d.endpoint.clone(),
                             client.clone(),
                         );
                         tracing::info!("Detected engine: {} at {}", d.engine_type, d.endpoint);
-                        engine_map.insert(key, EngineState::new(adapter));
-                    }
+                        EngineState::new(adapter)
+                    });
                 }
             }
 

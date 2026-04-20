@@ -1,27 +1,55 @@
+mod cli;
 mod engines;
 mod metrics;
 mod server;
 mod ws;
 
-use clap::Parser;
+use clap::{Args, Parser, Subcommand};
+use cli::service::ServiceCommand;
 use engines::{EngineOverride, EngineType};
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 
-/// Spark Dashboard - Real-time hardware metrics for the NVIDIA DGX Spark
+/// Spark Dashboard — Real-time hardware and LLM monitoring for the NVIDIA DGX Spark.
 #[derive(Parser, Debug)]
 #[command(name = "spark-dashboard", version, about)]
-struct Args {
+struct Cli {
+    #[command(flatten)]
+    run: RunArgs,
+
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Manage the systemd service (install, uninstall, status).
+    #[command(subcommand)]
+    Service(ServiceCommand),
+}
+
+#[derive(Args, Debug)]
+struct RunArgs {
     /// Port to listen on
-    #[arg(short = 'p', long, default_value_t = 3000)]
+    #[arg(
+        short = 'p',
+        long,
+        env = "SPARK_DASHBOARD_PORT",
+        default_value_t = 3000
+    )]
     port: u16,
 
     /// Address to bind to
-    #[arg(short = 'b', long, default_value = "0.0.0.0")]
+    #[arg(
+        short = 'b',
+        long,
+        env = "SPARK_DASHBOARD_BIND",
+        default_value = "0.0.0.0"
+    )]
     bind: String,
 
     /// Metrics polling interval in milliseconds
-    #[arg(long, default_value_t = 1000)]
+    #[arg(long, env = "SPARK_DASHBOARD_POLL_INTERVAL", default_value_t = 1000)]
     poll_interval: u64,
 
     /// Manually specify engine type (use with --engine-url)
@@ -33,10 +61,23 @@ struct Args {
     engine_url: Vec<String>,
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = Args::parse();
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let cli = Cli::parse();
 
+    match cli.command {
+        Some(Command::Service(cmd)) => cli::service::dispatch(cmd),
+        None => run_server(cli.run),
+    }
+}
+
+fn run_server(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(async move { run_server_inner(args).await })
+}
+
+async fn run_server_inner(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -72,8 +113,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (tx, _rx) = broadcast::channel::<String>(16);
 
     // Shared engine state: engine collector writes, metrics collector reads
-    let engine_state: Arc<RwLock<Vec<engines::EngineSnapshot>>> =
-        Arc::new(RwLock::new(Vec::new()));
+    let engine_state: Arc<RwLock<Vec<engines::EngineSnapshot>>> = Arc::new(RwLock::new(Vec::new()));
 
     // Spawn engine collector loop as separate tokio task (Research Pitfall 7:
     // separate task so slow engine API calls don't block hardware metrics)

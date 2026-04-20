@@ -47,8 +47,7 @@ pub fn collect_gpu_metrics(device: &Option<nvml_wrapper::Device>) -> GpuMetrics 
 
     let name = nvml_optional(device.name());
 
-    let utilization_percent =
-        nvml_optional(device.utilization_rates()).map(|u| u.gpu);
+    let utilization_percent = nvml_optional(device.utilization_rates()).map(|u| u.gpu);
 
     let temperature_celsius = nvml_optional(
         device.temperature(nvml_wrapper::enum_wrappers::device::TemperatureSensor::Gpu),
@@ -60,15 +59,12 @@ pub fn collect_gpu_metrics(device: &Option<nvml_wrapper::Device>) -> GpuMetrics 
         nvml_optional(device.power_management_limit()).map(|mw| mw as f64 / 1000.0);
 
     // Each clock query wrapped individually -- memory clock may be N/A on DGX Spark
-    let clock_graphics_mhz = nvml_optional(
-        device.clock_info(nvml_wrapper::enum_wrappers::device::Clock::Graphics),
-    );
-    let clock_sm_mhz = nvml_optional(
-        device.clock_info(nvml_wrapper::enum_wrappers::device::Clock::SM),
-    );
-    let clock_memory_mhz = nvml_optional(
-        device.clock_info(nvml_wrapper::enum_wrappers::device::Clock::Memory),
-    );
+    let clock_graphics_mhz =
+        nvml_optional(device.clock_info(nvml_wrapper::enum_wrappers::device::Clock::Graphics));
+    let clock_sm_mhz =
+        nvml_optional(device.clock_info(nvml_wrapper::enum_wrappers::device::Clock::SM));
+    let clock_memory_mhz =
+        nvml_optional(device.clock_info(nvml_wrapper::enum_wrappers::device::Clock::Memory));
 
     // Fan speed may be N/A on DGX Spark (chassis-managed fans)
     let fan_speed_percent = nvml_optional(device.fan_speed(0));
@@ -89,8 +85,13 @@ pub fn collect_gpu_metrics(device: &Option<nvml_wrapper::Device>) -> GpuMetrics 
 /// Detect GPU throttle/thermal events from NVML throttle reasons.
 /// Returns empty vec if no device or no active throttle reasons.
 #[cfg(target_os = "linux")]
-pub fn detect_gpu_events(device: &Option<nvml_wrapper::Device>, timestamp_ms: u64) -> Vec<GpuEvent> {
-    let Some(device) = device else { return Vec::new() };
+pub fn detect_gpu_events(
+    device: &Option<nvml_wrapper::Device>,
+    timestamp_ms: u64,
+) -> Vec<GpuEvent> {
+    let Some(device) = device else {
+        return Vec::new();
+    };
     let mut events = Vec::new();
 
     if let Some(reasons) = nvml_optional(device.current_throttle_reasons()) {

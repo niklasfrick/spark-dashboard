@@ -58,7 +58,9 @@ pub fn collect_memory_metrics(sys: &sysinfo::System) -> MemoryMetrics {
         total_bytes,
         used_bytes,
         available_bytes,
-        cached_bytes: total_bytes.saturating_sub(used_bytes).saturating_sub(available_bytes),
+        cached_bytes: total_bytes
+            .saturating_sub(used_bytes)
+            .saturating_sub(available_bytes),
         gpu_estimated_bytes: None,
         is_unified: cfg!(target_os = "macos"),
     }

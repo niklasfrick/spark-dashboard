@@ -19,8 +19,7 @@ pub fn parse_prometheus_text(body: &str) -> Option<ParsedMetrics> {
     // rules and get silently dropped by prometheus-parse. Replace in both metric
     // lines and # TYPE/# HELP lines so the parser can match samples to their type
     // declarations.
-    let normalized = body
-        .replace("vllm:", "vllm_");
+    let normalized = body.replace("vllm:", "vllm_");
 
     let reader = std::io::BufReader::new(normalized.as_bytes());
     let scrape = prometheus_parse::Scrape::parse(reader.lines()).ok()?;
