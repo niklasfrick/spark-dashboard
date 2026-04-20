@@ -2,11 +2,13 @@
 #
 # Source-build installer for spark-dashboard.
 #
-# Run from the root of a cloned repository on the DGX Spark:
+# Run from the root of a cloned repository on the DGX Spark as your normal
+# user — do NOT prefix with `sudo`. The script builds the frontend and binary
+# as you, and escalates to sudo only when wiring up the systemd service.
 #
-#   sudo ./packaging/install.sh              # build + install + enable service
-#   sudo ./packaging/install.sh --no-service # build + install binary only
-#   sudo ./packaging/install.sh --uninstall  # remove service + binary
+#   ./packaging/install.sh              # build + install + enable service
+#   ./packaging/install.sh --no-service # build + install binary only
+#   ./packaging/install.sh --uninstall  # remove service + binary
 #
 # Primary install path is `cargo install spark-dashboard`. Use this script when
 # you want to install from a local checkout (air-gapped, auditing, or
@@ -66,9 +68,29 @@ done
 
 require() {
     command -v "$1" >/dev/null 2>&1 || {
-        echo "error: \`$1\` is required but not installed" >&2
+        echo "error: \`$1\` is required but not installed or not on PATH" >&2
         exit 1
     }
+}
+
+refuse_root() {
+    if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
+        cat >&2 <<'MSG'
+error: do not run this script with sudo.
+
+This installer builds the frontend (npm) and binary (cargo) as your regular
+user, and will escalate to sudo only when installing the systemd service.
+Running under sudo strips PATH and breaks lookups for cargo/npm installed
+in your home (nvm, rustup, etc.).
+
+Re-run without sudo:
+  ./packaging/install.sh                 # install
+  ./packaging/install.sh --uninstall     # uninstall
+
+You'll be prompted for your sudo password when the service is wired up.
+MSG
+        exit 1
+    fi
 }
 
 preflight() {
@@ -83,22 +105,16 @@ preflight() {
     require sudo
 }
 
-need_root() {
-    if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
-        echo "error: this step needs root. Re-run with sudo." >&2
-        exit 1
-    fi
-}
-
 uninstall() {
+    refuse_root
     preflight
-    need_root
     local bin="${PREFIX}/bin/spark-dashboard"
     if [[ -x "$bin" ]]; then
         local purge_args=()
         if [[ $PURGE -eq 1 ]]; then
             purge_args+=(--purge)
         fi
+        # The binary self-escalates to sudo for the uninstall operation.
         "$bin" service uninstall "${purge_args[@]}"
     else
         echo "spark-dashboard is not installed at $bin — nothing to do"
@@ -106,6 +122,7 @@ uninstall() {
 }
 
 install_from_source() {
+    refuse_root
     preflight
     require cargo
     require npm

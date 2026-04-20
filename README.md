@@ -6,7 +6,24 @@ vLLM engine statistics and streams them over WebSocket to a React frontend.
 
 ![Stack](https://img.shields.io/badge/Rust-Axum-orange) ![Stack](https://img.shields.io/badge/React_19-TypeScript-blue) ![Stack](https://img.shields.io/badge/Tailwind_CSS_4-06B6D4) ![Stack](https://img.shields.io/badge/Vite_8-646CFF) ![License](https://img.shields.io/badge/license-MIT-green)
 
+![Spark Dashboard](./docs/dashboard.png)
+
 ## Quick Start
+
+### Install on the Spark
+
+Run as your normal user on the DGX Spark (requires Rust 1.75+):
+
+```bash
+cargo install spark-dashboard
+sudo spark-dashboard service install
+systemctl status spark-dashboard
+```
+
+The dashboard is now served on port 3000. See [Install on the DGX Spark](#install-on-the-dgx-spark)
+for the full guide, config overrides, and uninstall.
+
+### Develop locally
 
 ```bash
 git clone https://github.com/niklasfrick/spark-dashboard.git
@@ -83,6 +100,94 @@ cp .env.example .env
 The scripts in `dev/` source this file; Vite picks up `VITE_*` variables
 automatically. `.env` is gitignored — never commit it.
 
+## Install on the DGX Spark
+
+The dashboard runs as a supervised `systemd` service on the Spark. Two install
+paths; both build from source on the Spark.
+
+### Option A — via cargo (recommended)
+
+```bash
+# On the Spark. Requires Rust 1.75+ and internet access.
+cargo install spark-dashboard
+sudo spark-dashboard service install
+systemctl status spark-dashboard
+```
+
+`cargo install` pulls the crate from [crates.io](https://crates.io/crates/spark-dashboard)
+and compiles it locally. `service install` copies the binary to
+`/usr/local/bin`, creates a locked-down `spark-dashboard` system user (added
+to `video`, `render`, `docker` groups for NVML and Docker access), writes the
+systemd unit, and enables it.
+
+### Option B — from a local checkout
+
+Use this when you want to install without crates.io (audit the source,
+air-gapped install, or deploy an unreleased commit).
+
+```bash
+# On the Spark. Run as your normal user — the script escalates to sudo
+# only for the systemd wiring step.
+git clone https://github.com/niklasfrick/spark-dashboard.git
+cd spark-dashboard
+./packaging/install.sh
+```
+
+This builds the frontend (`npm run build`) and the Rust binary
+(`cargo build --release`), then hands off to the same `service install`
+logic as Option A. You'll be prompted for your sudo password once, when
+the service is installed.
+
+### Managing the service
+
+```bash
+sudo systemctl {start|stop|restart} spark-dashboard
+journalctl -u spark-dashboard -f          # follow logs
+sudo spark-dashboard service status       # same as `systemctl status`
+```
+
+Optional overrides live in `/etc/spark-dashboard/config.env` — set
+`SPARK_DASHBOARD_PORT`, `SPARK_DASHBOARD_BIND`, `SPARK_DASHBOARD_POLL_INTERVAL`,
+or `RUST_LOG`, then `sudo systemctl restart spark-dashboard`.
+
+### Upgrade
+
+```bash
+# Option A
+cargo install --force spark-dashboard && sudo spark-dashboard service install
+
+# Option B
+cd spark-dashboard && git pull && ./packaging/install.sh
+```
+
+Re-running `service install` is idempotent: it stops the service, swaps the
+binary, and starts it again, preserving `/etc/spark-dashboard/config.env`.
+
+### Uninstall
+
+```bash
+sudo spark-dashboard service uninstall         # keep /etc/spark-dashboard
+sudo spark-dashboard service uninstall --purge # remove everything
+```
+
+### CLI options
+
+```
+spark-dashboard [OPTIONS]                 run the server (default)
+spark-dashboard service install [--prefix /usr/local]
+spark-dashboard service uninstall [--purge]
+spark-dashboard service status
+
+  -p, --port <PORT>           Listen port [default: 3000] [env: SPARK_DASHBOARD_PORT]
+  -b, --bind <BIND>           Bind address [default: 0.0.0.0] [env: SPARK_DASHBOARD_BIND]
+      --poll-interval <MS>    Polling interval ms [default: 1000] [env: SPARK_DASHBOARD_POLL_INTERVAL]
+      --engine <TYPE>         Manual engine type (e.g. vllm)
+      --engine-url <URL>      Manual engine endpoint (requires --engine)
+```
+
+Engines are auto-detected via process scan and Docker API. Use `--engine` and
+`--engine-url` to override when auto-detection doesn't work.
+
 ## Development
 
 ### Prerequisites
@@ -139,92 +244,6 @@ VITE_BACKEND_URL=http://${SPARK_HOST}:3000
 
 The frontend connects to the WebSocket using `window.location.host`, so the
 proxy is transparent — no code changes between dev and production.
-
-## Install on the DGX Spark
-
-The dashboard runs as a supervised `systemd` service on the Spark. Two install
-paths; both build from source on the Spark.
-
-### Option A — via cargo (recommended)
-
-```bash
-# On the Spark. Requires Rust 1.75+ and internet access.
-cargo install spark-dashboard
-sudo spark-dashboard service install
-systemctl status spark-dashboard
-```
-
-`cargo install` pulls the crate from [crates.io](https://crates.io/crates/spark-dashboard)
-and compiles it locally. `service install` copies the binary to
-`/usr/local/bin`, creates a locked-down `spark-dashboard` system user (added
-to `video`, `render`, `docker` groups for NVML and Docker access), writes the
-systemd unit, and enables it.
-
-### Option B — from a local checkout
-
-Use this when you want to install without crates.io (audit the source,
-air-gapped install, or deploy an unreleased commit).
-
-```bash
-# On the Spark.
-git clone https://github.com/niklasfrick/spark-dashboard.git
-cd spark-dashboard
-sudo ./packaging/install.sh
-```
-
-This builds the frontend (`npm run build`) and the Rust binary
-(`cargo build --release`), then hands off to the same `service install`
-logic as Option A.
-
-### Managing the service
-
-```bash
-sudo systemctl {start|stop|restart} spark-dashboard
-journalctl -u spark-dashboard -f          # follow logs
-sudo spark-dashboard service status       # same as `systemctl status`
-```
-
-Optional overrides live in `/etc/spark-dashboard/config.env` — set
-`SPARK_DASHBOARD_PORT`, `SPARK_DASHBOARD_BIND`, `SPARK_DASHBOARD_POLL_INTERVAL`,
-or `RUST_LOG`, then `sudo systemctl restart spark-dashboard`.
-
-### Upgrade
-
-```bash
-# Option A
-cargo install --force spark-dashboard && sudo spark-dashboard service install
-
-# Option B
-cd spark-dashboard && git pull && sudo ./packaging/install.sh
-```
-
-Re-running `service install` is idempotent: it stops the service, swaps the
-binary, and starts it again, preserving `/etc/spark-dashboard/config.env`.
-
-### Uninstall
-
-```bash
-sudo spark-dashboard service uninstall         # keep /etc/spark-dashboard
-sudo spark-dashboard service uninstall --purge # remove everything
-```
-
-### CLI options
-
-```
-spark-dashboard [OPTIONS]                 run the server (default)
-spark-dashboard service install [--prefix /usr/local]
-spark-dashboard service uninstall [--purge]
-spark-dashboard service status
-
-  -p, --port <PORT>           Listen port [default: 3000] [env: SPARK_DASHBOARD_PORT]
-  -b, --bind <BIND>           Bind address [default: 0.0.0.0] [env: SPARK_DASHBOARD_BIND]
-      --poll-interval <MS>    Polling interval ms [default: 1000] [env: SPARK_DASHBOARD_POLL_INTERVAL]
-      --engine <TYPE>         Manual engine type (e.g. vllm)
-      --engine-url <URL>      Manual engine endpoint (requires --engine)
-```
-
-Engines are auto-detected via process scan and Docker API. Use `--engine` and
-`--engine-url` to override when auto-detection doesn't work.
 
 ## Releases
 
