@@ -6,7 +6,24 @@ vLLM engine statistics and streams them over WebSocket to a React frontend.
 
 ![Stack](https://img.shields.io/badge/Rust-Axum-orange) ![Stack](https://img.shields.io/badge/React_19-TypeScript-blue) ![Stack](https://img.shields.io/badge/Tailwind_CSS_4-06B6D4) ![Stack](https://img.shields.io/badge/Vite_8-646CFF) ![License](https://img.shields.io/badge/license-MIT-green)
 
+![Spark Dashboard](./docs/dashboard.png)
+
 ## Quick Start
+
+### Install on the Spark
+
+Run as your normal user on the DGX Spark (requires Rust 1.75+):
+
+```bash
+cargo install spark-dashboard
+sudo spark-dashboard service install
+systemctl status spark-dashboard
+```
+
+The dashboard is now served on port 3000. See [Install on the DGX Spark](#install-on-the-dgx-spark)
+for the full guide, config overrides, and uninstall.
+
+### Develop locally
 
 ```bash
 git clone https://github.com/niklasfrick/spark-dashboard.git
@@ -82,63 +99,6 @@ cp .env.example .env
 
 The scripts in `dev/` source this file; Vite picks up `VITE_*` variables
 automatically. `.env` is gitignored — never commit it.
-
-## Development
-
-### Prerequisites
-
-- **Local machine** (macOS or Linux): Node.js 20+, npm, rsync, ssh
-- **DGX Spark**: Rust 1.75+, SSH access with key-based auth (no password prompts)
-- Optional: `brew install fswatch` for instant file-change detection (the
-  watcher falls back to 2s polling without it)
-
-### Running the dev environment
-
-```bash
-./dev/dev.sh
-```
-
-The script handles everything:
-
-1. **Syncs** the full project to the Spark via rsync
-2. **Builds** the Rust backend on the Spark (`cargo build --release`)
-3. **Starts** the backend on the Spark (port 3000)
-4. **Starts** the Vite dev server locally (port 5173)
-5. **Watches** `src/` and `Cargo.toml` for Rust changes — auto-syncs and rebuilds on the Spark
-
-| What you edit                      | What happens                                                      |
-|------------------------------------|-------------------------------------------------------------------|
-| Frontend files (`frontend/src/`)   | Vite hot-reloads instantly in the browser                         |
-| Backend files (`src/`, `Cargo.toml`) | Auto-detected → rsync to Spark → rebuild → restart (~compile time) |
-
-Useful while `dev.sh` is running:
-
-```bash
-# Watch backend logs in another terminal
-ssh "${SPARK_USER}@${SPARK_HOST}" tail -f /tmp/spark-dashboard.log
-
-# Press Ctrl+C in the dev.sh terminal to stop everything (cleans up the remote process too)
-```
-
-### How the proxy works
-
-By default, Vite proxies `/ws` and `/api` to `localhost:3000` — this works out
-of the box with NVIDIA Sync port forwarding (or any SSH tunnel that maps
-the Spark's port 3000 to your local machine).
-
-```
-Browser → localhost:5173/ws  → Vite proxy → localhost:3000/ws (forwarded to Spark)
-Browser → localhost:5173/api → Vite proxy → localhost:3000/api (forwarded to Spark)
-```
-
-To connect directly over the network instead, set in `.env`:
-
-```bash
-VITE_BACKEND_URL=http://${SPARK_HOST}:3000
-```
-
-The frontend connects to the WebSocket using `window.location.host`, so the
-proxy is transparent — no code changes between dev and production.
 
 ## Install on the DGX Spark
 
@@ -227,6 +187,63 @@ spark-dashboard service status
 
 Engines are auto-detected via process scan and Docker API. Use `--engine` and
 `--engine-url` to override when auto-detection doesn't work.
+
+## Development
+
+### Prerequisites
+
+- **Local machine** (macOS or Linux): Node.js 20+, npm, rsync, ssh
+- **DGX Spark**: Rust 1.75+, SSH access with key-based auth (no password prompts)
+- Optional: `brew install fswatch` for instant file-change detection (the
+  watcher falls back to 2s polling without it)
+
+### Running the dev environment
+
+```bash
+./dev/dev.sh
+```
+
+The script handles everything:
+
+1. **Syncs** the full project to the Spark via rsync
+2. **Builds** the Rust backend on the Spark (`cargo build --release`)
+3. **Starts** the backend on the Spark (port 3000)
+4. **Starts** the Vite dev server locally (port 5173)
+5. **Watches** `src/` and `Cargo.toml` for Rust changes — auto-syncs and rebuilds on the Spark
+
+| What you edit                      | What happens                                                      |
+|------------------------------------|-------------------------------------------------------------------|
+| Frontend files (`frontend/src/`)   | Vite hot-reloads instantly in the browser                         |
+| Backend files (`src/`, `Cargo.toml`) | Auto-detected → rsync to Spark → rebuild → restart (~compile time) |
+
+Useful while `dev.sh` is running:
+
+```bash
+# Watch backend logs in another terminal
+ssh "${SPARK_USER}@${SPARK_HOST}" tail -f /tmp/spark-dashboard.log
+
+# Press Ctrl+C in the dev.sh terminal to stop everything (cleans up the remote process too)
+```
+
+### How the proxy works
+
+By default, Vite proxies `/ws` and `/api` to `localhost:3000` — this works out
+of the box with NVIDIA Sync port forwarding (or any SSH tunnel that maps
+the Spark's port 3000 to your local machine).
+
+```
+Browser → localhost:5173/ws  → Vite proxy → localhost:3000/ws (forwarded to Spark)
+Browser → localhost:5173/api → Vite proxy → localhost:3000/api (forwarded to Spark)
+```
+
+To connect directly over the network instead, set in `.env`:
+
+```bash
+VITE_BACKEND_URL=http://${SPARK_HOST}:3000
+```
+
+The frontend connects to the WebSocket using `window.location.host`, so the
+proxy is transparent — no code changes between dev and production.
 
 ## Releases
 
