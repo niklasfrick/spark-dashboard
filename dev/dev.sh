@@ -13,7 +13,13 @@ fi
 
 : "${SPARK_USER:?Set SPARK_USER in .env (copy .env.example to .env)}"
 : "${SPARK_HOST:?Set SPARK_HOST in .env (copy .env.example to .env)}"
-: "${SPARK_DIR:=~/spark-dashboard}"
+: "${SPARK_DIR:=spark-dashboard}"
+
+# Strip a leading `~/` — bash expands that to the *local* home when sourcing
+# .env, which would then rsync to the wrong place. Remote paths without a
+# leading slash are resolved against the remote user's home anyway.
+SPARK_DIR="${SPARK_DIR#\~/}"
+SPARK_DIR="${SPARK_DIR/#$HOME\//}"
 
 SPARK="${SPARK_USER}@${SPARK_HOST}"
 PIDS=()

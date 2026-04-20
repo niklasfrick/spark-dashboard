@@ -33,7 +33,7 @@ production. The dashboard is served at `http://${SPARK_HOST}:3000`.
 |--------------------|--------------------------------------------------------------|
 | `SPARK_USER`       | SSH user on the Spark (required)                             |
 | `SPARK_HOST`       | Hostname or IP of the Spark (required)                       |
-| `SPARK_DIR`        | Project path on the Spark (default `~/spark-dashboard`)      |
+| `SPARK_DIR`        | Project path on the Spark, relative to remote home (default `spark-dashboard`) |
 | `VITE_BACKEND_URL` | Where Vite proxies `/ws` and `/api` (default `http://localhost:3000`) |
 
 Missing `SPARK_USER` or `SPARK_HOST` causes the script to exit immediately with

@@ -77,7 +77,7 @@ cp .env.example .env
 |--------------------|--------------------------------------------------------------|
 | `SPARK_USER`       | SSH user on the Spark (required)                             |
 | `SPARK_HOST`       | Hostname or IP of the Spark (required)                       |
-| `SPARK_DIR`        | Project path on the Spark (default `~/spark-dashboard`)      |
+| `SPARK_DIR`        | Project path on the Spark, relative to remote home (default `spark-dashboard`) |
 | `VITE_BACKEND_URL` | Where Vite proxies `/ws` and `/api` (default `http://localhost:3000`) |
 
 The scripts in `dev/` source this file; Vite picks up `VITE_*` variables
@@ -123,7 +123,7 @@ ssh "${SPARK_USER}@${SPARK_HOST}" tail -f /tmp/spark-dashboard.log
 ### How the proxy works
 
 By default, Vite proxies `/ws` and `/api` to `localhost:3000` — this works out
-of the box with NVIDIA Nsight port forwarding (or any SSH tunnel that maps
+of the box with NVIDIA Sync port forwarding (or any SSH tunnel that maps
 the Spark's port 3000 to your local machine).
 
 ```

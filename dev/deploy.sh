@@ -13,7 +13,11 @@ fi
 
 : "${SPARK_USER:?Set SPARK_USER in .env (copy .env.example to .env)}"
 : "${SPARK_HOST:?Set SPARK_HOST in .env (copy .env.example to .env)}"
-: "${SPARK_DIR:=~/spark-dashboard}"
+: "${SPARK_DIR:=spark-dashboard}"
+
+# Strip leading `~/` or local home — see dev/dev.sh for rationale.
+SPARK_DIR="${SPARK_DIR#\~/}"
+SPARK_DIR="${SPARK_DIR/#$HOME\//}"
 
 SPARK="${SPARK_USER}@${SPARK_HOST}"
 
