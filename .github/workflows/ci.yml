@@ -3,25 +3,43 @@ name: CI
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - '**.md'
-      - 'LICENSE'
-      - 'docs/**'
-      - '.gitignore'
   pull_request:
-    paths-ignore:
-      - '**.md'
-      - 'LICENSE'
-      - 'docs/**'
-      - '.gitignore'
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      installer: ${{ steps.filter.outputs.installer }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            rust:
+              - 'src/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'frontend/**'
+              - '.github/workflows/ci.yml'
+            frontend:
+              - 'frontend/**'
+              - '.github/workflows/ci.yml'
+            installer:
+              - 'packaging/**'
+              - '.github/workflows/ci.yml'
+
   rust:
     name: Rust (aarch64-linux)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v6
@@ -53,6 +71,8 @@ jobs:
 
   frontend:
     name: Frontend
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -70,6 +90,8 @@ jobs:
 
   installer:
     name: Installer lint
+    needs: changes
+    if: needs.changes.outputs.installer == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
