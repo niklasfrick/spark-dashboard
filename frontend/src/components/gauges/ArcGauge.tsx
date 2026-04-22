@@ -109,7 +109,7 @@ export const ArcGauge = React.memo(function ArcGauge({
           {unit}
         </text>
       </svg>
-      <span className="text-[11px] text-zinc-500 -mt-0.5">{label}</span>
+      <span className="text-[11px] text-zinc-300 -mt-0.5">{label}</span>
     </div>
   )
 })

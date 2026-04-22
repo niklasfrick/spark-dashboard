@@ -71,7 +71,7 @@ function MetricTile({ label, value, unit, trend, invertTrend, warn }: {
 }) {
   return (
     <div className="flex flex-col gap-0.5 min-w-0">
-      <span className={`text-xs font-medium uppercase tracking-wider truncate ${warn ? 'text-red-400/70' : 'text-zinc-600'}`}>
+      <span className={`text-xs font-medium uppercase tracking-wider truncate ${warn ? 'text-red-400/70' : 'text-zinc-400'}`}>
         {label}
       </span>
       <div className="flex items-baseline">
@@ -186,7 +186,7 @@ export function EngineCard({
           <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 py-1.5">
             {/* Prefill Throughput */}
             <div className="bg-white/[0.02] rounded-md px-2.5 py-2">
-              <div className="text-xs font-medium text-zinc-600 uppercase tracking-wider mb-2">Prompt Processing / Prefill Throughput</div>
+              <div className="text-sm font-semibold text-zinc-300 tracking-tight mb-2">Prompt Processing / Prefill Throughput</div>
               <div className="grid grid-cols-1 gap-2">
                 <MetricTile label="Live" value={fmtVal(promptTps, formatTps)} unit="tok/s" trend={promptTpsTrend} />
                 <MetricTile label="Global Average" value={fmtVal(avgPromptTps, formatTps)} unit="tok/s" trend={avgPromptTpsTrend} />
@@ -196,7 +196,7 @@ export function EngineCard({
 
             {/* Decode Throughput */}
             <div className="bg-white/[0.02] rounded-md px-2.5 py-2">
-              <div className="text-xs font-medium text-zinc-600 uppercase tracking-wider mb-2">Token Generation / Decode Throughput</div>
+              <div className="text-sm font-semibold text-zinc-300 tracking-tight mb-2">Token Generation / Decode Throughput</div>
               <div className="grid grid-cols-1 gap-2">
                 <MetricTile label="Live" value={fmtVal(tps, formatTps)} unit="tok/s" trend={tpsTrend} />
                 <MetricTile label="Global Average" value={fmtVal(avgTps, formatTps)} unit="tok/s" trend={avgTpsTrend} />
@@ -206,7 +206,7 @@ export function EngineCard({
 
             {/* Latency */}
             <div className="bg-white/[0.02] rounded-md px-2.5 py-2">
-              <div className="text-xs font-medium text-zinc-600 uppercase tracking-wider mb-2">Latency</div>
+              <div className="text-sm font-semibold text-zinc-300 tracking-tight mb-2">Latency</div>
               <div className="grid grid-cols-2 gap-2">
                 <MetricTile label="TTFT" value={fmtVal(ttft, formatTtft)} unit="ms" trend={ttftTrend} invertTrend />
                 <MetricTile label="E2E" value={e2eFmt.value} unit={e2eFmt.unit} trend={e2eTrend} invertTrend />
@@ -217,7 +217,7 @@ export function EngineCard({
 
             {/* Requests */}
             <div className="bg-white/[0.02] rounded-md px-2.5 py-2">
-              <div className="text-xs font-medium text-zinc-600 uppercase tracking-wider mb-2">Requests</div>
+              <div className="text-sm font-semibold text-zinc-300 tracking-tight mb-2">Requests</div>
               <div className="grid grid-cols-2 gap-2">
                 <MetricTile label="Active" value={fmtInt(activeReqs)} />
                 <MetricTile label="Queued" value={fmtInt(queuedReqs)} />
@@ -233,10 +233,10 @@ export function EngineCard({
 
             {/* Cache */}
             <div className="bg-white/[0.02] rounded-md px-2.5 py-2">
-              <div className="text-xs font-medium text-zinc-600 uppercase tracking-wider mb-2">Cache</div>
+              <div className="text-sm font-semibold text-zinc-300 tracking-tight mb-2">Cache</div>
               <div className="grid grid-cols-2 gap-2">
                 <div className="flex flex-col gap-0.5 min-w-0">
-                  <span className="text-xs font-medium text-zinc-600 uppercase tracking-wider truncate">KV Cache</span>
+                  <span className="text-xs font-medium text-zinc-400 uppercase tracking-wider truncate">KV Cache</span>
                   <div className="flex items-baseline">
                     <span className="text-2xl font-bold text-zinc-100 font-mono tabular-nums leading-none">
                       {kvPercent !== null ? Math.round(kvPercent) : '--'}
