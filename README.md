@@ -59,7 +59,10 @@ for details on what each script does.
 - Arc gauges, time-series charts, sparklines, per-core heatmap
 - 15-minute rolling history with circular buffers
 - Connection status badge, staleness detection, auto-reconnect
-- Multi-engine tabs when multiple inference servers are running
+- Multi-engine tabs with a **Global** aggregate view (running-engine count,
+  summed throughput, weighted-mean latencies) plus one drill-down tab per
+  engine — see [`dev/vllm-multi/`](./dev/vllm-multi/) for a
+  three-instance test rig
 
 ## Architecture
 
