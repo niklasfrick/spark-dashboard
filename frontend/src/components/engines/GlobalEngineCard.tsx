@@ -1,0 +1,153 @@
+import { formatTps, formatTtft, formatDurationMs } from '@/lib/format'
+import type { AggregateSnapshot } from '@/lib/engineAggregate'
+import { MetricTile, KvBar, fmtVal, fmtInt } from './EngineCardPrimitives'
+
+interface GlobalEngineCardProps {
+  snapshot: AggregateSnapshot
+}
+
+/** Styled to match the metric-group tiles below (same bg/radius/padding idiom). */
+function RunningCountCard({ count }: { count: number }) {
+  return (
+    <div className="bg-white/[0.02] rounded-md px-2.5 py-2 w-fit">
+      <div className="text-sm font-semibold text-zinc-300 tracking-tight mb-2">
+        Engines Running
+      </div>
+      <span className="text-5xl font-bold font-mono tabular-nums leading-none text-[#76B900]">
+        {count}
+      </span>
+    </div>
+  )
+}
+
+export function GlobalEngineCard({ snapshot }: GlobalEngineCardProps) {
+  const {
+    running_count,
+    total_count,
+    tokens_per_sec,
+    avg_tokens_per_sec,
+    per_request_tps,
+    prompt_tokens_per_sec,
+    avg_prompt_tokens_per_sec,
+    per_request_prompt_tps,
+    ttft_ms,
+    e2e_latency_ms,
+    queue_time_ms,
+    avg_batch_size,
+    active_requests,
+    queued_requests,
+    total_requests,
+    swapped_requests,
+    preemptions_total,
+    kv_cache_percent,
+    prefix_cache_hit_rate,
+  } = snapshot
+
+  const e2eFmt = formatDurationMs(e2e_latency_ms)
+
+  if (running_count === 0) {
+    return (
+      <div className="flex flex-col h-full gap-3">
+        <RunningCountCard count={0} />
+        <p className="text-sm text-zinc-500">
+          {total_count === 0
+            ? 'No inference engines detected. Start vLLM and it will appear here automatically.'
+            : 'No engines are currently running. Waiting for inference servers to come online.'}
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-col h-full gap-3">
+      <RunningCountCard count={running_count} />
+
+      {/* ── Grouped aggregate metrics — matches EngineCard layout ── */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 py-1.5">
+        {/* Prefill Throughput */}
+        <div className="bg-white/[0.02] rounded-md px-2.5 py-2">
+          <div className="text-sm font-semibold text-zinc-300 tracking-tight mb-2">
+            Prompt Processing / Prefill Throughput
+            <span className="ml-1 text-[10px] font-normal text-zinc-500">(sum)</span>
+          </div>
+          <div className="grid grid-cols-1 gap-2">
+            <MetricTile label="Live" value={fmtVal(prompt_tokens_per_sec, formatTps)} unit="tok/s" />
+            <MetricTile label="Global Average" value={fmtVal(avg_prompt_tokens_per_sec, formatTps)} unit="tok/s" />
+            <MetricTile label="Per-Request Avg" value={fmtVal(per_request_prompt_tps, formatTps)} unit="tok/s" />
+          </div>
+        </div>
+
+        {/* Decode Throughput */}
+        <div className="bg-white/[0.02] rounded-md px-2.5 py-2">
+          <div className="text-sm font-semibold text-zinc-300 tracking-tight mb-2">
+            Token Generation / Decode Throughput
+            <span className="ml-1 text-[10px] font-normal text-zinc-500">(sum)</span>
+          </div>
+          <div className="grid grid-cols-1 gap-2">
+            <MetricTile label="Live" value={fmtVal(tokens_per_sec, formatTps)} unit="tok/s" />
+            <MetricTile label="Global Average" value={fmtVal(avg_tokens_per_sec, formatTps)} unit="tok/s" />
+            <MetricTile label="Per-Request Avg" value={fmtVal(per_request_tps, formatTps)} unit="tok/s" />
+          </div>
+        </div>
+
+        {/* Latency */}
+        <div className="bg-white/[0.02] rounded-md px-2.5 py-2">
+          <div className="text-sm font-semibold text-zinc-300 tracking-tight mb-2">
+            Latency
+            <span className="ml-1 text-[10px] font-normal text-zinc-500">(weighted)</span>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <MetricTile label="TTFT" value={fmtVal(ttft_ms, formatTtft)} unit="ms" />
+            <MetricTile label="E2E" value={e2eFmt.value} unit={e2eFmt.unit} />
+            <MetricTile label="Queue Wait" value={fmtVal(queue_time_ms, formatTtft)} unit="ms" />
+            <MetricTile label="Batch Size" value={avg_batch_size !== null ? avg_batch_size.toFixed(1) : '--'} unit="/step" />
+          </div>
+        </div>
+
+        {/* Requests */}
+        <div className="bg-white/[0.02] rounded-md px-2.5 py-2">
+          <div className="text-sm font-semibold text-zinc-300 tracking-tight mb-2">
+            Requests
+            <span className="ml-1 text-[10px] font-normal text-zinc-500">(sum)</span>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <MetricTile label="Active" value={fmtInt(active_requests)} />
+            <MetricTile label="Queued" value={fmtInt(queued_requests)} />
+            <MetricTile label="Total" value={fmtInt(total_requests)} />
+            {swapped_requests !== null && swapped_requests > 0 && (
+              <MetricTile label="Swapped" value={fmtInt(swapped_requests)} warn />
+            )}
+            {preemptions_total !== null && preemptions_total > 0 && (
+              <MetricTile label="Preemptions" value={fmtInt(preemptions_total)} warn />
+            )}
+          </div>
+        </div>
+
+        {/* Cache */}
+        <div className="bg-white/[0.02] rounded-md px-2.5 py-2">
+          <div className="text-sm font-semibold text-zinc-300 tracking-tight mb-2">
+            Cache
+            <span className="ml-1 text-[10px] font-normal text-zinc-500">(avg)</span>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="flex flex-col gap-0.5 min-w-0">
+              <span className="text-xs font-medium text-zinc-400 uppercase tracking-wider truncate">KV Cache</span>
+              <div className="flex items-baseline">
+                <span className="text-2xl font-bold text-zinc-100 font-mono tabular-nums leading-none">
+                  {kv_cache_percent !== null ? Math.round(kv_cache_percent) : '--'}
+                </span>
+                <span className="text-xs text-zinc-500 ml-1">%</span>
+              </div>
+              {kv_cache_percent !== null && <KvBar percent={kv_cache_percent} />}
+            </div>
+            <MetricTile
+              label="Prefix Hit"
+              value={prefix_cache_hit_rate !== null ? `${Math.round(prefix_cache_hit_rate)}` : '--'}
+              unit="%"
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}

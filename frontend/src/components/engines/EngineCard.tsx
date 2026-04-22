@@ -2,11 +2,16 @@ import { TimeSeriesChart, type ChartSeries } from '@/components/charts/TimeSerie
 import { formatTps, formatTtft, formatDurationMs } from '@/lib/format'
 import type { EngineSnapshot } from '@/types/metrics'
 import type { InferenceRequest } from '@/types/events'
-
-interface ChartDataPoint {
-  timestamp: number
-  value: number
-}
+import {
+  type ChartDataPoint,
+  type Trend,
+  MetricTile,
+  KvBar,
+  TrendArrow,
+  computeTrend,
+  fmtVal,
+  fmtInt,
+} from './EngineCardPrimitives'
 
 function decodeTokenSeries(chartData: {
   tps: ChartDataPoint[]
@@ -30,77 +35,6 @@ function prefillTokenSeries(chartData: {
     { data: chartData.avgPromptTps, label: 'Avg tok/s', color: '#3b82f6' },
     { data: chartData.perReqPromptTps, label: 'Per-req tok/s', color: '#a855f7' },
   ]
-}
-
-// --- Trend detection ---
-type Trend = 'up' | 'down' | 'stable'
-
-function computeTrend(data: ChartDataPoint[], threshold = 0.05): Trend {
-  if (data.length < 6) return 'stable'
-  const recent = data.slice(-3)
-  const older = data.slice(Math.max(0, data.length - 15), data.length - 3)
-  if (older.length < 3) return 'stable'
-  const recentAvg = recent.reduce((s, p) => s + p.value, 0) / recent.length
-  const olderAvg = older.reduce((s, p) => s + p.value, 0) / older.length
-  if (olderAvg === 0) return recentAvg > 0 ? 'up' : 'stable'
-  const change = (recentAvg - olderAvg) / Math.abs(olderAvg)
-  if (change > threshold) return 'up'
-  if (change < -threshold) return 'down'
-  return 'stable'
-}
-
-function TrendArrow({ trend, invertColor }: { trend: Trend; invertColor?: boolean }) {
-  if (trend === 'stable') {
-    return <span className="text-zinc-600 text-[11px] ml-0.5">→</span>
-  }
-  const isUp = trend === 'up'
-  const color = invertColor
-    ? (isUp ? 'text-red-400' : 'text-[#76B900]')
-    : (isUp ? 'text-[#76B900]' : 'text-red-400')
-  return <span className={`${color} text-[11px] ml-0.5`}>{isUp ? '▲' : '▼'}</span>
-}
-
-/** Big metric tile with trend indicator */
-function MetricTile({ label, value, unit, trend, invertTrend, warn }: {
-  label: string
-  value: string
-  unit?: string
-  trend?: Trend
-  invertTrend?: boolean
-  warn?: boolean
-}) {
-  return (
-    <div className="flex flex-col gap-0.5 min-w-0">
-      <span className={`text-xs font-medium uppercase tracking-wider truncate ${warn ? 'text-red-400/70' : 'text-zinc-400'}`}>
-        {label}
-      </span>
-      <div className="flex items-baseline">
-        <span className={`text-2xl font-bold font-mono tabular-nums leading-none ${warn ? 'text-red-400' : 'text-zinc-100'}`}>
-          {value}
-        </span>
-        {unit && <span className="text-xs text-zinc-500 ml-1">{unit}</span>}
-        {trend && <TrendArrow trend={trend} invertColor={invertTrend} />}
-      </div>
-    </div>
-  )
-}
-
-/** Mini KV cache bar */
-function KvBar({ percent }: { percent: number }) {
-  const color = percent > 90 ? 'bg-red-500' : percent > 70 ? 'bg-yellow-500' : 'bg-[#76B900]'
-  return (
-    <div className="flex h-1 rounded-full overflow-hidden bg-zinc-700/50 mt-1">
-      <div className={`${color} transition-all duration-300`} style={{ width: `${percent}%` }} />
-    </div>
-  )
-}
-
-function fmtVal(v: number | null, fmt: (n: number) => string): string {
-  return v === null ? '--' : fmt(v)
-}
-
-function fmtInt(v: number | null): string {
-  return v === null ? '--' : String(Math.round(v))
 }
 
 interface EngineCardProps {
