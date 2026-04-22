@@ -1,6 +1,6 @@
 [package]
 name = "spark-dashboard"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "Real-time hardware and LLM inference monitoring for Linux hosts with NVIDIA GPUs"
 license = "MIT"
