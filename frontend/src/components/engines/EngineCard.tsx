@@ -186,21 +186,21 @@ export function EngineCard({
           <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 py-1.5">
             {/* Prefill Throughput */}
             <div className="bg-white/[0.02] rounded-md px-2.5 py-2">
-              <div className="text-xs font-medium text-zinc-600 uppercase tracking-wider mb-2">Prefill Throughput</div>
+              <div className="text-xs font-medium text-zinc-600 uppercase tracking-wider mb-2">Prompt Processing / Prefill Throughput</div>
               <div className="grid grid-cols-1 gap-2">
                 <MetricTile label="Live" value={fmtVal(promptTps, formatTps)} unit="tok/s" trend={promptTpsTrend} />
-                <MetricTile label="Average" value={fmtVal(avgPromptTps, formatTps)} unit="tok/s" trend={avgPromptTpsTrend} />
-                <MetricTile label="Per-request" value={fmtVal(perReqPromptTps, formatTps)} unit="tok/s" trend={perReqPromptTpsTrend} />
+                <MetricTile label="Global Average" value={fmtVal(avgPromptTps, formatTps)} unit="tok/s" trend={avgPromptTpsTrend} />
+                <MetricTile label="Per-Request Average" value={fmtVal(perReqPromptTps, formatTps)} unit="tok/s" trend={perReqPromptTpsTrend} />
               </div>
             </div>
 
             {/* Decode Throughput */}
             <div className="bg-white/[0.02] rounded-md px-2.5 py-2">
-              <div className="text-xs font-medium text-zinc-600 uppercase tracking-wider mb-2">Decode Throughput</div>
+              <div className="text-xs font-medium text-zinc-600 uppercase tracking-wider mb-2">Token Generation / Decode Throughput</div>
               <div className="grid grid-cols-1 gap-2">
                 <MetricTile label="Live" value={fmtVal(tps, formatTps)} unit="tok/s" trend={tpsTrend} />
-                <MetricTile label="Average" value={fmtVal(avgTps, formatTps)} unit="tok/s" trend={avgTpsTrend} />
-                <MetricTile label="Per-request" value={fmtVal(perReqTps, formatTps)} unit="tok/s" trend={perReqTpsTrend} />
+                <MetricTile label="Global Average" value={fmtVal(avgTps, formatTps)} unit="tok/s" trend={avgTpsTrend} />
+                <MetricTile label="Per-Request Average" value={fmtVal(perReqTps, formatTps)} unit="tok/s" trend={perReqTpsTrend} />
               </div>
             </div>
 
