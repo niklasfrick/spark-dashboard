@@ -74,6 +74,8 @@ export interface NetworkMetrics {
 
 export type EngineType = 'Vllm'
 
+export type DeploymentMode = 'Docker' | 'Native'
+
 export type EngineStatus =
   | { type: 'Running' }
   | { type: 'Loading' }
@@ -115,4 +117,5 @@ export interface EngineSnapshot {
   model: ModelInfo | null
   metrics: EngineMetrics | null
   recent_requests: InferenceRequestData[]
+  deployment_mode: DeploymentMode
 }
