@@ -22,9 +22,10 @@ function HwCard({ title, subtitle, children }: { title?: string; subtitle?: stri
   return (
     <div className="bg-[#111115] rounded-lg border border-white/[0.04] px-3 pt-2.5 pb-2 flex flex-col transition-colors duration-200 hover:border-[#76B900]/10">
       {(title || subtitle) && (
-        <div className="mb-1 min-h-[26px]">
-          {title && <div className="text-[11px] font-medium text-zinc-400 uppercase tracking-wider">{title}</div>}
-          {subtitle && <div className="text-[10px] text-zinc-600 truncate" title={subtitle}>{subtitle}</div>}
+        <div className="mb-1 min-h-[26px] flex items-baseline gap-1.5 min-w-0">
+          {title && <span className="text-xs font-semibold text-zinc-200 tracking-tight shrink-0">{title}</span>}
+          {title && subtitle && <span className="text-zinc-600 shrink-0">·</span>}
+          {subtitle && <span className="text-[11px] text-zinc-400 truncate min-w-0" title={subtitle}>{subtitle}</span>}
         </div>
       )}
       {children}
@@ -82,11 +83,11 @@ export function Dashboard({
 
       {/* ── Hardware Overview — takes ~45% of viewport, 2 rows ── */}
       <div className="flex-[2] min-h-0 bg-[#0a0a0d]/80 rounded-xl border border-white/[0.03] p-2.5 flex flex-col">
-        <h2 className="text-xs font-medium text-zinc-600 uppercase tracking-wider mb-1.5 shrink-0">Hardware</h2>
+        <h2 className="text-sm font-semibold text-zinc-300 tracking-tight mb-1.5 shrink-0">Hardware</h2>
         <div className="flex-1 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-4 gap-1.5">
 
           {/* GPU Utilization */}
-          <HwCard title="GPU Util" subtitle={metrics.gpu.name ?? undefined}>
+          <HwCard title="GPU Utilization" subtitle={metrics.gpu.name ?? undefined}>
             <div className="flex items-start gap-2 shrink-0">
               <ArcGauge value={metrics.gpu.utilization_percent ?? 0} label="GPU Util" unit="%" size={72} />
               <div className="flex-1 min-h-[60px]">

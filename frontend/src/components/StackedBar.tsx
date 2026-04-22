@@ -28,7 +28,7 @@ export function StackedBar({ segments }: { segments: BarSegment[] }) {
         {segments.map((seg, i) => (
           <div key={i} className="flex items-center gap-1">
             <span className={`inline-block w-1.5 h-1.5 rounded-full ${seg.color}`} />
-            <span className="text-[10px] text-zinc-500">{seg.label}</span>
+            <span className="text-[10px] text-zinc-300">{seg.label}</span>
           </div>
         ))}
       </div>

@@ -1,5 +1,5 @@
 [Unit]
-Description=Spark Dashboard — DGX Spark hardware & LLM monitoring
+Description=Spark Dashboard — Hardware & LLM monitoring
 Documentation=https://github.com/niklasfrick/spark-dashboard
 After=network-online.target
 Wants=network-online.target

@@ -53,6 +53,8 @@ export interface MemoryMetrics {
   available_bytes: number
   cached_bytes: number
   gpu_estimated_bytes: number | null
+  gpu_memory_total_bytes: number | null
+  gpu_memory_used_bytes: number | null
   is_unified: boolean
 }
 
@@ -71,6 +73,8 @@ export interface NetworkMetrics {
 // --- LLM Engine Types (Phase 2) ---
 
 export type EngineType = 'Vllm'
+
+export type DeploymentMode = 'Docker' | 'Native'
 
 export type EngineStatus =
   | { type: 'Running' }
@@ -113,4 +117,5 @@ export interface EngineSnapshot {
   model: ModelInfo | null
   metrics: EngineMetrics | null
   recent_requests: InferenceRequestData[]
+  deployment_mode: DeploymentMode
 }

@@ -17,6 +17,12 @@ pub enum EngineType {
     Vllm,
 }
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
+pub enum DeploymentMode {
+    Docker,
+    Native,
+}
+
 impl std::fmt::Display for EngineType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -91,6 +97,7 @@ pub struct EngineSnapshot {
     pub model: Option<ModelInfo>,
     pub metrics: Option<EngineMetrics>,
     pub recent_requests: Vec<RecentRequest>,
+    pub deployment_mode: DeploymentMode,
 }
 
 // ---------------------------------------------------------------------------
@@ -116,16 +123,18 @@ pub struct EngineState {
     pub last_seen: Instant,
     pub status: EngineStatus,
     pub stopped_at: Option<Instant>,
+    pub deployment_mode: DeploymentMode,
 }
 
 impl EngineState {
-    pub fn new(adapter: Box<dyn EngineAdapter>) -> Self {
+    pub fn new(adapter: Box<dyn EngineAdapter>, deployment_mode: DeploymentMode) -> Self {
         Self {
             adapter,
             consecutive_failures: 0,
             last_seen: Instant::now(),
             status: EngineStatus::Running,
             stopped_at: None,
+            deployment_mode,
         }
     }
 
@@ -213,7 +222,7 @@ pub async fn engine_collector_loop(
     for ov in &overrides {
         let adapter = create_adapter(ov.engine_type.clone(), ov.endpoint.clone(), client.clone());
         let key = (ov.engine_type.clone(), ov.endpoint.clone());
-        engine_map.insert(key, EngineState::new(adapter));
+        engine_map.insert(key, EngineState::new(adapter, DeploymentMode::Native));
         tracing::info!(
             "Manual engine override registered: {} at {}",
             ov.engine_type,
@@ -242,7 +251,7 @@ pub async fn engine_collector_loop(
                             client.clone(),
                         );
                         tracing::info!("Detected engine: {} at {}", d.engine_type, d.endpoint);
-                        EngineState::new(adapter)
+                        EngineState::new(adapter, d.deployment_mode.clone())
                     });
                 }
             }
@@ -283,6 +292,7 @@ pub async fn engine_collector_loop(
                             model,
                             metrics,
                             recent_requests: Vec::new(),
+                            deployment_mode: state.deployment_mode.clone(),
                         });
                     }
                 }

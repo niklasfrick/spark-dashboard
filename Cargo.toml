@@ -2,7 +2,7 @@
 name = "spark-dashboard"
 version = "0.2.0"
 edition = "2021"
-description = "Real-time hardware and LLM inference monitoring for the NVIDIA DGX Spark"
+description = "Real-time hardware and LLM inference monitoring for Linux hosts with NVIDIA GPUs"
 license = "MIT"
 repository = "https://github.com/niklasfrick/spark-dashboard"
 readme = "README.md"

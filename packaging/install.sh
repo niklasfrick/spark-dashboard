@@ -2,9 +2,9 @@
 #
 # Source-build installer for spark-dashboard.
 #
-# Run from the root of a cloned repository on the DGX Spark as your normal
-# user — do NOT prefix with `sudo`. The script builds the frontend and binary
-# as you, and escalates to sudo only when wiring up the systemd service.
+# Run from the root of a cloned repository on the target Linux host as your
+# normal user — do NOT prefix with `sudo`. The script builds the frontend and
+# binary as you, and escalates to sudo only when wiring up the systemd service.
 #
 #   ./packaging/install.sh              # build + install + enable service
 #   ./packaging/install.sh --no-service # build + install binary only
@@ -95,11 +95,8 @@ MSG
 
 preflight() {
     if [[ "$(uname -s)" != "Linux" ]]; then
-        echo "error: this installer only supports Linux (Spark is aarch64 Linux)" >&2
+        echo "error: this installer only supports Linux" >&2
         exit 1
-    fi
-    if [[ "$(uname -m)" != "aarch64" ]]; then
-        echo "warning: expected aarch64, found $(uname -m) — continuing anyway" >&2
     fi
     require systemctl
     require sudo

@@ -9,7 +9,20 @@ const mockMemoryMetrics: MemoryMetrics = {
   available_bytes: 44_000_000_000,
   cached_bytes: 10_000_000_000,
   gpu_estimated_bytes: 20_000_000_000,
+  gpu_memory_total_bytes: null,
+  gpu_memory_used_bytes: null,
   is_unified: true,
+}
+
+const discreteGpuMetrics: MemoryMetrics = {
+  total_bytes: 64_000_000_000,
+  used_bytes: 32_000_000_000,
+  available_bytes: 28_000_000_000,
+  cached_bytes: 6_000_000_000,
+  gpu_estimated_bytes: null,
+  gpu_memory_total_bytes: 24_000_000_000,
+  gpu_memory_used_bytes: 12_000_000_000,
+  is_unified: false,
 }
 
 describe('MemoryCard', () => {
@@ -74,5 +87,35 @@ describe('MemoryCard', () => {
     }
     render(<MemoryCard metrics={noGpuMetrics} />)
     expect(screen.getByText('GPU memory estimation unavailable')).toBeTruthy()
+  })
+
+  describe('discrete GPU (is_unified=false)', () => {
+    it('renders system RAM and a separate GPU VRAM section', () => {
+      render(<MemoryCard metrics={discreteGpuMetrics} />)
+
+      // Title and subtitle switch for discrete
+      expect(screen.getByText(/64 GB system RAM/)).toBeTruthy()
+      expect(screen.getByText('GPU VRAM')).toBeTruthy()
+      expect(screen.getByText(/24 GB total/)).toBeTruthy()
+
+      // VRAM section renders its own used/free segments
+      const used = screen.getAllByText(/^Used:/)
+      expect(used.length).toBeGreaterThanOrEqual(1)
+
+      // Discrete case must not show the unified "GPU (est.)" segment
+      expect(screen.queryByText(/GPU \(est\.\):/)).toBeNull()
+      // Nor the unified-only warning
+      expect(screen.queryByText('GPU memory estimation unavailable')).toBeNull()
+    })
+
+    it('hides the VRAM section when gpu_memory_total_bytes is null', () => {
+      const noVramMetrics: MemoryMetrics = {
+        ...discreteGpuMetrics,
+        gpu_memory_total_bytes: null,
+        gpu_memory_used_bytes: null,
+      }
+      render(<MemoryCard metrics={noVramMetrics} />)
+      expect(screen.queryByText('GPU VRAM')).toBeNull()
+    })
   })
 })

@@ -1,4 +1,4 @@
-use super::EngineType;
+use super::{DeploymentMode, EngineType};
 use std::ffi::{OsStr, OsString};
 use std::time::Duration;
 
@@ -7,6 +7,7 @@ use std::time::Duration;
 pub struct DetectedEngine {
     pub engine_type: EngineType,
     pub endpoint: String,
+    pub deployment_mode: DeploymentMode,
 }
 
 /// Known engine binaries and their default ports.
@@ -38,6 +39,7 @@ pub async fn detect_engines(
         {
             // Docker has actual port mapping, prefer it
             existing.endpoint = dc.endpoint;
+            existing.deployment_mode = dc.deployment_mode;
         } else {
             candidates.push(dc);
         }
@@ -101,6 +103,7 @@ fn detect_by_process(sys: &sysinfo::System) -> Vec<DetectedEngine> {
             detected.push(DetectedEngine {
                 engine_type: engine_type.clone(),
                 endpoint,
+                deployment_mode: DeploymentMode::Native,
             });
         }
     }
@@ -273,6 +276,7 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
             detected.push(DetectedEngine {
                 engine_type: EngineType::Vllm,
                 endpoint,
+                deployment_mode: DeploymentMode::Docker,
             });
         } else {
             tracing::debug!(
