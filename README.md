@@ -18,7 +18,7 @@ Run as your normal user on any Linux host with NVIDIA drivers (requires Rust 1.7
 
 ```bash
 cargo install spark-dashboard
-sudo "$(command -v spark-dashboard)" service install
+sudo ~/.cargo/bin/spark-dashboard service install
 systemctl status spark-dashboard
 ```
 
@@ -116,7 +116,7 @@ build from source on the host.
 ```bash
 # On the host. Requires Rust 1.75+, NVIDIA drivers, and internet access.
 cargo install spark-dashboard
-sudo "$(command -v spark-dashboard)" service install
+sudo ~/.cargo/bin/spark-dashboard service install
 systemctl status spark-dashboard
 ```
 
@@ -126,13 +126,13 @@ and compiles it locally. `service install` copies the binary to
 to `video`, `render`, `docker` groups for NVML and Docker access), writes the
 systemd unit, and enables it.
 
-> **Why `sudo "$(command -v spark-dashboard)"`?** `cargo install` drops the
-> binary in `~/.cargo/bin`, but `sudo` resets PATH via `secure_path` and
-> doesn't inherit that directory — so plain `sudo spark-dashboard` would
-> fail with "command not found." `command -v` resolves the absolute path
-> in your shell before `sudo` runs. After `service install` copies the
-> binary to `/usr/local/bin`, subsequent `sudo spark-dashboard …` calls
-> (e.g. `service status`, `service uninstall`) work normally.
+> **Why the explicit `~/.cargo/bin/` path?** `cargo install` drops the
+> binary in `~/.cargo/bin`, which isn't on `sudo`'s sanitized `secure_path`
+> and isn't always on the user's interactive PATH either (depends on how
+> Rust was installed). Passing the absolute path makes the command work
+> regardless. After `service install` copies the binary to `/usr/local/bin`,
+> subsequent `sudo spark-dashboard …` calls (e.g. `service status`,
+> `service uninstall`) resolve normally.
 
 ### Option B — from a local checkout
 
@@ -169,7 +169,7 @@ Optional overrides live in `/etc/spark-dashboard/config.env` — set
 
 ```bash
 # Option A
-cargo install --force spark-dashboard && sudo spark-dashboard service install
+cargo install --force spark-dashboard && sudo ~/.cargo/bin/spark-dashboard service install
 
 # Option B
 cd spark-dashboard && git pull && ./packaging/install.sh
