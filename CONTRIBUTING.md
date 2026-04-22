@@ -8,7 +8,7 @@ bug reports, clear reproductions, and targeted PRs are all welcome.
 ```bash
 git clone https://github.com/niklasfrick/spark-dashboard.git
 cd spark-dashboard
-cp .env.example .env           # edit with your Spark's user/host
+cp .env.example .env           # edit with your remote host's user/host
 ./dev/dev.sh
 ```
 
@@ -21,7 +21,7 @@ environment variables are required.
 # Frontend (runs on any OS)
 cd frontend && npm test
 
-# Backend (must run on Linux / the DGX Spark — depends on NVML, procfs)
+# Backend (must run on Linux with NVIDIA drivers — depends on NVML, procfs)
 cargo test
 ```
 
@@ -75,6 +75,6 @@ Do **not** hand-edit version numbers — `release-please` owns them.
 When filing a bug, please include:
 
 - What you expected vs. what happened
-- DGX Spark OS / driver / CUDA versions (`nvidia-smi`)
+- Host OS / NVIDIA driver / CUDA versions (`nvidia-smi`)
 - Which engine adapter was involved (vLLM, etc.), if any
 - A snippet from `/tmp/spark-dashboard.log` around the failure

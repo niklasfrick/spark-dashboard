@@ -11,17 +11,24 @@ if [ -f "$PROJECT_ROOT/.env" ]; then
     set +a
 fi
 
-: "${SPARK_USER:?Set SPARK_USER in .env (copy .env.example to .env)}"
-: "${SPARK_HOST:?Set SPARK_HOST in .env (copy .env.example to .env)}"
-: "${SPARK_DIR:=spark-dashboard}"
+# DEPLOY_* are the current names; SPARK_* are accepted as legacy aliases with a
+# one-line deprecation note, so existing .env files keep working.
+: "${DEPLOY_USER:=${SPARK_USER:-}}"
+: "${DEPLOY_HOST:=${SPARK_HOST:-}}"
+: "${DEPLOY_DIR:=${SPARK_DIR:-spark-dashboard}}"
+if [ -n "${SPARK_USER:-}${SPARK_HOST:-}${SPARK_DIR:-}" ]; then
+    echo "note: SPARK_USER/SPARK_HOST/SPARK_DIR are deprecated — rename to DEPLOY_* in .env (old names still work for now)" >&2
+fi
+: "${DEPLOY_USER:?Set DEPLOY_USER in .env (copy .env.example to .env)}"
+: "${DEPLOY_HOST:?Set DEPLOY_HOST in .env (copy .env.example to .env)}"
 
 # Strip a leading `~/` — bash expands that to the *local* home when sourcing
 # .env, which would then rsync to the wrong place. Remote paths without a
 # leading slash are resolved against the remote user's home anyway.
-SPARK_DIR="${SPARK_DIR#\~/}"
-SPARK_DIR="${SPARK_DIR/#$HOME\//}"
+DEPLOY_DIR="${DEPLOY_DIR#\~/}"
+DEPLOY_DIR="${DEPLOY_DIR/#$HOME\//}"
 
-SPARK="${SPARK_USER}@${SPARK_HOST}"
+REMOTE="${DEPLOY_USER}@${DEPLOY_HOST}"
 PIDS=()
 
 CLEANED_UP=false
@@ -33,7 +40,7 @@ cleanup() {
     for pid in "${PIDS[@]}"; do
         kill "$pid" 2>/dev/null || true
     done
-    ssh "${SPARK}" "pkill -f '[t]arget/release/spark-dashboard' || true" 2>/dev/null || true
+    ssh "${REMOTE}" "pkill -f '[t]arget/release/spark-dashboard' || true" 2>/dev/null || true
     wait 2>/dev/null || true
     echo "Done."
 }
@@ -42,7 +49,7 @@ trap cleanup EXIT INT TERM
 # --- Remote shell prefix: ensure cargo is in PATH for non-interactive SSH ---
 REMOTE_ENV="source ~/.cargo/env 2>/dev/null;"
 
-# --- Sync backend source to Spark ---
+# --- Sync backend source to remote host ---
 sync_backend() {
     rsync -az --delete \
         --exclude target \
@@ -52,16 +59,16 @@ sync_backend() {
         --exclude .planning \
         --exclude .claude \
         --exclude 'frontend/dist' \
-        "${PROJECT_ROOT}/" "${SPARK}:${SPARK_DIR}/"
+        "${PROJECT_ROOT}/" "${REMOTE}:${DEPLOY_DIR}/"
 }
 
-# --- Build and (re)start backend on Spark ---
+# --- Build and (re)start backend on remote host ---
 rebuild_backend() {
-    echo "==> Building on Spark..."
-    ssh "${SPARK}" "${REMOTE_ENV} pkill -f '[t]arget/release/spark-dashboard' || true"
-    if ssh "${SPARK}" "${REMOTE_ENV} cd ${SPARK_DIR} && cargo build --release"; then
+    echo "==> Building on ${REMOTE}..."
+    ssh "${REMOTE}" "${REMOTE_ENV} pkill -f '[t]arget/release/spark-dashboard' || true"
+    if ssh "${REMOTE}" "${REMOTE_ENV} cd ${DEPLOY_DIR} && cargo build --release"; then
         echo "==> Starting backend..."
-        ssh "${SPARK}" "cd ${SPARK_DIR} && > /tmp/spark-dashboard.log && (nohup ./target/release/spark-dashboard >> /tmp/spark-dashboard.log 2>&1 < /dev/null &) &"
+        ssh "${REMOTE}" "cd ${DEPLOY_DIR} && > /tmp/spark-dashboard.log && (nohup ./target/release/spark-dashboard >> /tmp/spark-dashboard.log 2>&1 < /dev/null &) &"
         echo "==> Backend running"
     else
         echo "!!! Backend build failed"
@@ -104,12 +111,12 @@ watch_backend() {
 }
 
 # 1. Sync and build backend
-echo "==> Syncing to ${SPARK}:${SPARK_DIR}..."
+echo "==> Syncing to ${REMOTE}:${DEPLOY_DIR}..."
 sync_backend
 rebuild_backend
 
 # 2. Stream backend logs
-ssh "${SPARK}" "tail -n0 -f /tmp/spark-dashboard.log" 2>/dev/null &
+ssh "${REMOTE}" "tail -n0 -f /tmp/spark-dashboard.log" 2>/dev/null &
 PIDS+=($!)
 
 # 3. Install frontend deps if needed
@@ -137,8 +144,8 @@ PIDS+=($!)
 
 echo ""
 echo "================================================"
-echo "  Frontend (Vite):  http://localhost:5173"
-echo "  Backend  (Spark): ${BACKEND_URL}"
+echo "  Frontend (Vite):   http://localhost:5173"
+echo "  Backend  (remote): ${BACKEND_URL}"
 echo "================================================"
 echo ""
 echo "  Press Ctrl+C to stop"

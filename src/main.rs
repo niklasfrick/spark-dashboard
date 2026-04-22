@@ -10,7 +10,7 @@ use engines::{EngineOverride, EngineType};
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 
-/// Spark Dashboard — Real-time hardware and LLM monitoring for the NVIDIA DGX Spark.
+/// Spark Dashboard — Real-time hardware and LLM monitoring for Linux hosts with NVIDIA GPUs.
 #[derive(Parser, Debug)]
 #[command(name = "spark-dashboard", version, about)]
 struct Cli {
@@ -51,6 +51,12 @@ struct RunArgs {
     /// Metrics polling interval in milliseconds
     #[arg(long, env = "SPARK_DASHBOARD_POLL_INTERVAL", default_value_t = 1000)]
     poll_interval: u64,
+
+    /// NVML GPU index to monitor (0 = first GPU). On multi-GPU hosts, pick which
+    /// device the dashboard reads. Out-of-range values log a warning and fall
+    /// back to empty GPU metrics.
+    #[arg(long, env = "SPARK_DASHBOARD_GPU_INDEX", default_value_t = 0)]
+    gpu_index: u32,
 
     /// Manually specify engine type (use with --engine-url)
     #[arg(long, value_name = "TYPE")]
@@ -126,6 +132,7 @@ async fn run_server_inner(args: RunArgs) -> Result<(), Box<dyn std::error::Error
     tokio::spawn(metrics::metrics_collector(
         tx.clone(),
         args.poll_interval,
+        args.gpu_index,
         engine_state.clone(),
     ));
 

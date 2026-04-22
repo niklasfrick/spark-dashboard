@@ -58,7 +58,7 @@ pub fn collect_gpu_metrics(device: &Option<nvml_wrapper::Device>) -> GpuMetrics 
     let power_limit_watts =
         nvml_optional(device.power_management_limit()).map(|mw| mw as f64 / 1000.0);
 
-    // Each clock query wrapped individually -- memory clock may be N/A on DGX Spark
+    // Each clock query wrapped individually -- memory clock may be N/A on some GPUs
     let clock_graphics_mhz =
         nvml_optional(device.clock_info(nvml_wrapper::enum_wrappers::device::Clock::Graphics));
     let clock_sm_mhz =
@@ -66,7 +66,7 @@ pub fn collect_gpu_metrics(device: &Option<nvml_wrapper::Device>) -> GpuMetrics 
     let clock_memory_mhz =
         nvml_optional(device.clock_info(nvml_wrapper::enum_wrappers::device::Clock::Memory));
 
-    // Fan speed may be N/A on DGX Spark (chassis-managed fans)
+    // Fan speed may be N/A on some GPUs (e.g. chassis-managed fans)
     let fan_speed_percent = nvml_optional(device.fan_speed(0));
 
     GpuMetrics {

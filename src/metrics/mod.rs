@@ -29,6 +29,7 @@ pub struct MetricsSnapshot {
 pub async fn metrics_collector(
     tx: broadcast::Sender<String>,
     poll_interval_ms: u64,
+    gpu_index: u32,
     engine_state: std::sync::Arc<tokio::sync::RwLock<Vec<EngineSnapshot>>>,
 ) {
     let mut interval = tokio::time::interval(Duration::from_millis(poll_interval_ms));
@@ -40,13 +41,36 @@ pub async fn metrics_collector(
 
     // Initialize NVML (gracefully handle absence)
     let nvml = nvml_wrapper::Nvml::init().ok();
-    let device = nvml.as_ref().and_then(|n| n.device_by_index(0).ok());
-
-    if nvml.is_some() {
-        tracing::info!("NVML initialized successfully");
-    } else {
-        tracing::warn!("NVML not available -- GPU metrics will be empty");
-    }
+    let device = match nvml.as_ref() {
+        Some(n) => {
+            let count = n.device_count().unwrap_or(0);
+            tracing::info!("NVML initialized: {} GPU(s) available", count);
+            if gpu_index >= count {
+                tracing::warn!(
+                    "--gpu-index {} is out of range (found {} GPU(s)); GPU metrics disabled",
+                    gpu_index,
+                    count
+                );
+                None
+            } else {
+                match n.device_by_index(gpu_index) {
+                    Ok(d) => Some(d),
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to open GPU at index {}: {} — GPU metrics disabled",
+                            gpu_index,
+                            e
+                        );
+                        None
+                    }
+                }
+            }
+        }
+        None => {
+            tracing::warn!("NVML not available -- GPU metrics will be empty");
+            None
+        }
+    };
 
     // Initial CPU refresh (first reading will be 0%, second will be accurate)
     sys.refresh_cpu_usage();
@@ -98,6 +122,7 @@ pub async fn metrics_collector(
 pub async fn metrics_collector(
     tx: broadcast::Sender<String>,
     poll_interval_ms: u64,
+    _gpu_index: u32,
     engine_state: std::sync::Arc<tokio::sync::RwLock<Vec<EngineSnapshot>>>,
 ) {
     let mut interval = tokio::time::interval(Duration::from_millis(poll_interval_ms));
@@ -153,7 +178,7 @@ pub async fn metrics_collector(
 }
 
 /// GPU metrics collected via NVML.
-/// Fields are `Option` because the DGX Spark may return `NotSupported` for some queries.
+/// Fields are `Option` because some queries may return `NotSupported` depending on the GPU.
 #[derive(Clone, serde::Serialize, Debug)]
 pub struct GpuMetrics {
     pub name: Option<String>,
@@ -182,7 +207,9 @@ pub struct CoreMetrics {
     pub usage_percent: f32,
 }
 
-/// Unified memory metrics (CPU + GPU share the same pool on DGX Spark).
+/// Memory metrics. `is_unified` flags unified-memory systems (e.g. DGX Spark GB10,
+/// GH200) where CPU and GPU share one pool; on discrete-GPU systems GPU VRAM is
+/// reported separately via `gpu_memory_total_bytes` / `gpu_memory_used_bytes`.
 #[derive(Clone, serde::Serialize, Debug)]
 pub struct MemoryMetrics {
     pub total_bytes: u64,
@@ -190,6 +217,8 @@ pub struct MemoryMetrics {
     pub available_bytes: u64,
     pub cached_bytes: u64,
     pub gpu_estimated_bytes: Option<u64>,
+    pub gpu_memory_total_bytes: Option<u64>,
+    pub gpu_memory_used_bytes: Option<u64>,
     pub is_unified: bool,
 }
 

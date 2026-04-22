@@ -53,6 +53,8 @@ export interface MemoryMetrics {
   available_bytes: number
   cached_bytes: number
   gpu_estimated_bytes: number | null
+  gpu_memory_total_bytes: number | null
+  gpu_memory_used_bytes: number | null
   is_unified: boolean
 }
 

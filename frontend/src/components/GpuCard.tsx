@@ -81,7 +81,7 @@ export function GpuCard({ metrics, chartData, events, requests, showCharts = fal
           <MetricRow
             label="Fan Speed"
             value={formatPercent(metrics.fan_speed_percent)}
-            tooltip="Fan speed is chassis-managed and not exposed via NVML on DGX Spark."
+            tooltip="Fan speed may not be exposed via NVML on some GPUs (e.g. chassis-managed fans)."
           />
         </div>
       </div>
