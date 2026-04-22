@@ -18,7 +18,7 @@ Run as your normal user on any Linux host with NVIDIA drivers (requires Rust 1.7
 
 ```bash
 cargo install spark-dashboard
-sudo spark-dashboard service install
+sudo "$(command -v spark-dashboard)" service install
 systemctl status spark-dashboard
 ```
 
@@ -116,7 +116,7 @@ build from source on the host.
 ```bash
 # On the host. Requires Rust 1.75+, NVIDIA drivers, and internet access.
 cargo install spark-dashboard
-sudo spark-dashboard service install
+sudo "$(command -v spark-dashboard)" service install
 systemctl status spark-dashboard
 ```
 
@@ -125,6 +125,14 @@ and compiles it locally. `service install` copies the binary to
 `/usr/local/bin`, creates a locked-down `spark-dashboard` system user (added
 to `video`, `render`, `docker` groups for NVML and Docker access), writes the
 systemd unit, and enables it.
+
+> **Why `sudo "$(command -v spark-dashboard)"`?** `cargo install` drops the
+> binary in `~/.cargo/bin`, but `sudo` resets PATH via `secure_path` and
+> doesn't inherit that directory — so plain `sudo spark-dashboard` would
+> fail with "command not found." `command -v` resolves the absolute path
+> in your shell before `sudo` runs. After `service install` copies the
+> binary to `/usr/local/bin`, subsequent `sudo spark-dashboard …` calls
+> (e.g. `service status`, `service uninstall`) work normally.
 
 ### Option B — from a local checkout
 
