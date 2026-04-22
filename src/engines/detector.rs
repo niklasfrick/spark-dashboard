@@ -1,4 +1,5 @@
 use super::{DeploymentMode, EngineType};
+use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
 use std::time::Duration;
 
@@ -31,16 +32,27 @@ pub async fn detect_engines(
     // Layer 2: Docker scan (Linux-only)
     let docker_candidates = detect_docker_engines().await;
 
-    // Merge Docker results -- prefer Docker endpoint when duplicate engine type
+    // Merge Docker results. Key by (engine_type, endpoint) so multiple
+    // instances of the same engine on different ports are preserved as
+    // distinct entries. When a Docker candidate matches an existing
+    // process-scan entry by exact endpoint, upgrade its deployment_mode to
+    // Docker (Docker detection is authoritative for container metadata).
+    let mut seen: HashSet<(EngineType, String)> = candidates
+        .iter()
+        .map(|c| (c.engine_type.clone(), c.endpoint.clone()))
+        .collect();
+
     for dc in docker_candidates {
-        if let Some(existing) = candidates
-            .iter_mut()
-            .find(|c| c.engine_type == dc.engine_type)
-        {
-            // Docker has actual port mapping, prefer it
-            existing.endpoint = dc.endpoint;
-            existing.deployment_mode = dc.deployment_mode;
+        let key = (dc.engine_type.clone(), dc.endpoint.clone());
+        if seen.contains(&key) {
+            if let Some(existing) = candidates
+                .iter_mut()
+                .find(|c| c.engine_type == dc.engine_type && c.endpoint == dc.endpoint)
+            {
+                existing.deployment_mode = dc.deployment_mode;
+            }
         } else {
+            seen.insert(key);
             candidates.push(dc);
         }
     }
@@ -89,22 +101,23 @@ fn detect_by_process(sys: &sysinfo::System) -> Vec<DetectedEngine> {
             procs = vllm_procs;
         }
 
-        if !procs.is_empty() {
-            // Try to extract --host and --port from the process command line.
-            // Skip processes with empty cmd() (e.g. container processes where
-            // sysinfo can't read /proc/<pid>/cmdline).
-            let endpoint = procs
-                .iter()
-                .filter(|p| !p.cmd().is_empty())
-                .filter_map(|p| parse_endpoint_from_args(p.cmd(), default_endpoint))
-                .next()
+        // Emit one DetectedEngine per distinct endpoint. Multi-instance native
+        // setups (three `vllm serve --port 8000/8001/8002` processes) need each
+        // port to surface as its own engine rather than collapsing to the first.
+        let mut seen_endpoints: HashSet<String> = HashSet::new();
+        for p in &procs {
+            if p.cmd().is_empty() {
+                continue;
+            }
+            let endpoint = parse_endpoint_from_args(p.cmd(), default_endpoint)
                 .unwrap_or_else(|| default_endpoint.to_string());
-
-            detected.push(DetectedEngine {
-                engine_type: engine_type.clone(),
-                endpoint,
-                deployment_mode: DeploymentMode::Native,
-            });
+            if seen_endpoints.insert(endpoint.clone()) {
+                detected.push(DetectedEngine {
+                    engine_type: engine_type.clone(),
+                    endpoint,
+                    deployment_mode: DeploymentMode::Native,
+                });
+            }
         }
     }
 
@@ -169,8 +182,14 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
     let docker = match Docker::connect_with_local_defaults() {
         Ok(d) => d,
         Err(e) => {
-            tracing::debug!(
-                "Docker not available for engine detection (permission denied?): {}",
+            // Elevated to info: if multi-instance containerized vLLM isn't being
+            // picked up, the operator needs to know Docker discovery failed.
+            // Common cause: spark-dashboard user not in `docker` group, or the
+            // service was started before that group change took effect
+            // (`sudo systemctl restart spark-dashboard` usually fixes it).
+            tracing::info!(
+                "Docker detection unavailable (is spark-dashboard in the `docker` group \
+                 and is the socket at /var/run/docker.sock?): {}",
                 e
             );
             return vec![];
@@ -185,7 +204,10 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
     let containers = match docker.list_containers(Some(opts)).await {
         Ok(c) => c,
         Err(e) => {
-            tracing::debug!("Failed to list Docker containers: {}", e);
+            tracing::info!(
+                "Failed to list Docker containers (permission/socket issue?): {}",
+                e
+            );
             return vec![];
         }
     };
@@ -203,14 +225,13 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
             .as_deref()
             .unwrap_or_default()
             .to_lowercase();
-        let names = container
-            .names
-            .as_ref()
-            .map(|n| n.join(" ").to_lowercase())
-            .unwrap_or_default();
 
-        // Match on image name, container command, or container names
-        let is_vllm = image.contains("vllm") || command.contains("vllm") || names.contains("vllm");
+        // Match on image name OR container command only. Container *names*
+        // are operator-chosen and commonly include "vllm" for unrelated
+        // sidecars (e.g. an OpenResty reverse proxy named "vllm-proxy"),
+        // so they are not a reliable signal and are deliberately excluded
+        // to prevent false-positive engine detection.
+        let is_vllm = image.contains("vllm") || command.contains("vllm");
 
         if !is_vllm {
             continue;
