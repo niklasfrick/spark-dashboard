@@ -9,6 +9,11 @@ pub struct DetectedEngine {
     pub engine_type: EngineType,
     pub endpoint: String,
     pub deployment_mode: DeploymentMode,
+    /// Model identity recovered from the launch command line (e.g. `vllm serve
+    /// unsloth/Llama-3.2-1B-Instruct` or `--model Qwen/Qwen2.5-3B`). Used as a
+    /// fallback when `/v1/models` returns a bare slug without the HF-style
+    /// `Provider/` prefix that the operator actually started the server with.
+    pub served_model: Option<String>,
 }
 
 /// Known engine binaries and their default ports.
@@ -50,6 +55,13 @@ pub async fn detect_engines(
                 .find(|c| c.engine_type == dc.engine_type && c.endpoint == dc.endpoint)
             {
                 existing.deployment_mode = dc.deployment_mode;
+                // Prefer a non-None served_model hint: Docker discovery often
+                // sees the `--model` arg the operator launched with, while
+                // native process scanning may not (e.g. when vLLM is launched
+                // inside a container with host networking).
+                if existing.served_model.is_none() && dc.served_model.is_some() {
+                    existing.served_model = dc.served_model.clone();
+                }
             }
         } else {
             seen.insert(key);
@@ -111,11 +123,13 @@ fn detect_by_process(sys: &sysinfo::System) -> Vec<DetectedEngine> {
             }
             let endpoint = parse_endpoint_from_args(p.cmd(), default_endpoint)
                 .unwrap_or_else(|| default_endpoint.to_string());
+            let served_model = parse_model_from_args(p.cmd());
             if seen_endpoints.insert(endpoint.clone()) {
                 detected.push(DetectedEngine {
                     engine_type: engine_type.clone(),
                     endpoint,
                     deployment_mode: DeploymentMode::Native,
+                    served_model,
                 });
             }
         }
@@ -168,6 +182,114 @@ fn parse_endpoint_from_args(args: &[OsString], default_endpoint: &str) -> Option
     } else {
         Some(default_endpoint.to_string())
     }
+}
+
+/// Parse the served model id from a vLLM process's command-line arguments.
+///
+/// Recognizes:
+///   * `--model <id>` / `--model=<id>` (canonical vLLM flag)
+///   * Positional `serve <id>` (matches `vllm serve unsloth/Llama-3.2-1B-Instruct`
+///     and `python -m vllm.entrypoints.openai.api_server serve <id>`)
+///
+/// The `--model` flag is preferred when both forms appear — it is what vLLM
+/// itself treats as authoritative.
+fn parse_model_from_args(args: &[OsString]) -> Option<String> {
+    let args: Vec<String> = args
+        .iter()
+        .filter_map(|a| a.to_str().map(String::from))
+        .collect();
+
+    // First pass: explicit --model flag.
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--model" {
+            if let Some(val) = args.get(i + 1) {
+                if !val.is_empty() && !val.starts_with('-') {
+                    return Some(val.clone());
+                }
+            }
+        } else if let Some(val) = args[i].strip_prefix("--model=") {
+            if !val.is_empty() {
+                return Some(val.to_string());
+            }
+        }
+        i += 1;
+    }
+
+    // Second pass: positional `serve <id>` after a vllm entrypoint token.
+    for (idx, arg) in args.iter().enumerate() {
+        let is_vllm_entry =
+            arg == "vllm" || arg.ends_with("/vllm") || arg.contains("vllm.entrypoints");
+        if !is_vllm_entry {
+            continue;
+        }
+        // Find the `serve` subcommand after the entrypoint token.
+        if let Some(serve_idx) = args.iter().enumerate().skip(idx + 1).find_map(|(j, a)| {
+            if a == "serve" {
+                Some(j)
+            } else {
+                None
+            }
+        }) {
+            if let Some(val) = args.get(serve_idx + 1) {
+                if !val.is_empty() && !val.starts_with('-') {
+                    return Some(val.clone());
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Parse the served model id from a pre-joined command string (used by Docker
+/// `container.command` and `docker top` output rows). Accepts the same shapes
+/// as [`parse_model_from_args`].
+///
+/// Only reachable from the Linux Docker path in normal builds, but the unit
+/// tests exercise it on every platform — hence the `test` cfg.
+#[cfg(any(target_os = "linux", test))]
+fn parse_model_from_command_str(cmd: &str) -> Option<String> {
+    let parts: Vec<&str> = cmd.split_whitespace().collect();
+
+    // First pass: explicit --model flag.
+    for (i, part) in parts.iter().enumerate() {
+        if *part == "--model" {
+            if let Some(val) = parts.get(i + 1) {
+                if !val.is_empty() && !val.starts_with('-') {
+                    return Some((*val).to_string());
+                }
+            }
+        } else if let Some(val) = part.strip_prefix("--model=") {
+            if !val.is_empty() {
+                return Some(val.to_string());
+            }
+        }
+    }
+
+    // Second pass: positional `serve <id>` after a vllm entrypoint token.
+    for (idx, part) in parts.iter().enumerate() {
+        let is_vllm_entry =
+            *part == "vllm" || part.ends_with("/vllm") || part.contains("vllm.entrypoints");
+        if !is_vllm_entry {
+            continue;
+        }
+        if let Some(serve_idx) = parts.iter().enumerate().skip(idx + 1).find_map(|(j, a)| {
+            if *a == "serve" {
+                Some(j)
+            } else {
+                None
+            }
+        }) {
+            if let Some(val) = parts.get(serve_idx + 1) {
+                if !val.is_empty() && !val.starts_with('-') {
+                    return Some((*val).to_string());
+                }
+            }
+        }
+    }
+
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -243,44 +365,63 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
             .as_ref()
             .and_then(|ports| ports.iter().find_map(|p| p.public_port));
 
-        // 2. Try port from the container's own command string
-        let cmd_port =
-            parse_port_from_command_str(container.command.as_deref().unwrap_or_default());
+        // 2. Try port + model from the container's own command string
+        let container_cmd = container.command.as_deref().unwrap_or_default();
+        let cmd_port = parse_port_from_command_str(container_cmd);
+        let cmd_model = parse_model_from_command_str(container_cmd);
 
         let port = mapped_port.map(|p| p.to_string()).or(cmd_port);
 
         // 3. If still no port (e.g. host networking + `sleep infinity` container),
-        //    inspect the actual processes running inside the container via `docker top`
-        let port = match port {
-            Some(p) => Some(p),
-            None => {
-                let container_id = container.id.as_deref().unwrap_or_default();
-                if container_id.is_empty() {
-                    None
-                } else {
-                    let top_opts = TopOptionsBuilder::default().ps_args("-eo pid,args").build();
-                    match docker.top_processes(container_id, Some(top_opts)).await {
-                        Ok(top) => {
-                            top.processes.as_ref().and_then(|procs| {
-                                for row in procs {
-                                    // Each row is a Vec<String> of column values
-                                    let line = row.join(" ");
+        //    inspect the actual processes running inside the container via `docker top`.
+        //    The same top output is also the best source for recovering the model
+        //    argument, since `container.command` is just the container's *entrypoint*
+        //    and often omits the child vllm-serve args.
+        let (port, served_model) = {
+            let container_id = container.id.as_deref().unwrap_or_default();
+            let need_port = port.is_none();
+            let need_model = cmd_model.is_none();
+            if container_id.is_empty() || (!need_port && !need_model) {
+                (port, cmd_model)
+            } else {
+                let top_opts = TopOptionsBuilder::default().ps_args("-eo pid,args").build();
+                match docker.top_processes(container_id, Some(top_opts)).await {
+                    Ok(top) => {
+                        let mut found_port = port;
+                        let mut found_model = cmd_model;
+                        if let Some(procs) = top.processes.as_ref() {
+                            for row in procs {
+                                let line = row.join(" ");
+                                if found_port.is_none() {
                                     if let Some(p) = parse_port_from_command_str(&line) {
                                         tracing::debug!(
                                             "Docker top: found port {} in: {}",
                                             p,
                                             line
                                         );
-                                        return Some(p);
+                                        found_port = Some(p);
                                     }
                                 }
-                                None
-                            })
+                                if found_model.is_none() {
+                                    if let Some(m) = parse_model_from_command_str(&line) {
+                                        tracing::debug!(
+                                            "Docker top: found model {} in: {}",
+                                            m,
+                                            line
+                                        );
+                                        found_model = Some(m);
+                                    }
+                                }
+                                if found_port.is_some() && found_model.is_some() {
+                                    break;
+                                }
+                            }
                         }
-                        Err(e) => {
-                            tracing::debug!("docker top failed for {}: {}", container_id, e);
-                            None
-                        }
+                        (found_port, found_model)
+                    }
+                    Err(e) => {
+                        tracing::debug!("docker top failed for {}: {}", container_id, e);
+                        (port, cmd_model)
                     }
                 }
             }
@@ -289,15 +430,17 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
         if let Some(p) = port {
             let endpoint = format!("http://localhost:{}", p);
             tracing::debug!(
-                "Docker vLLM candidate: image={}, port={}, endpoint={}",
+                "Docker vLLM candidate: image={}, port={}, endpoint={}, model={:?}",
                 container.image.as_deref().unwrap_or("?"),
                 p,
-                endpoint
+                endpoint,
+                served_model,
             );
             detected.push(DetectedEngine {
                 engine_type: EngineType::Vllm,
                 endpoint,
                 deployment_mode: DeploymentMode::Docker,
+                served_model,
             });
         } else {
             tracing::debug!(
@@ -355,5 +498,88 @@ async fn probe_engine(client: &reqwest::Client, candidate: &DetectedEngine) -> b
                 .map(|r| r.status().is_success())
                 .unwrap_or(false)
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn to_args(parts: &[&str]) -> Vec<OsString> {
+        parts.iter().map(OsString::from).collect()
+    }
+
+    #[test]
+    fn parses_positional_serve_arg() {
+        let args = to_args(&["vllm", "serve", "unsloth/Llama-3.2-1B-Instruct"]);
+        assert_eq!(
+            parse_model_from_args(&args).as_deref(),
+            Some("unsloth/Llama-3.2-1B-Instruct"),
+        );
+    }
+
+    #[test]
+    fn parses_explicit_model_flag() {
+        let args = to_args(&[
+            "python",
+            "-m",
+            "vllm.entrypoints.openai.api_server",
+            "--model",
+            "Qwen/Qwen2.5-3B-Instruct",
+        ]);
+        assert_eq!(
+            parse_model_from_args(&args).as_deref(),
+            Some("Qwen/Qwen2.5-3B-Instruct"),
+        );
+    }
+
+    #[test]
+    fn prefers_model_flag_over_positional_and_handles_equals_form() {
+        // `--model=` wins and the trailing `--port` is not misread as a value.
+        let args = to_args(&[
+            "vllm",
+            "serve",
+            "--model=mistralai/Mistral-7B",
+            "--port",
+            "8001",
+        ]);
+        assert_eq!(
+            parse_model_from_args(&args).as_deref(),
+            Some("mistralai/Mistral-7B"),
+        );
+    }
+
+    #[test]
+    fn returns_none_when_serve_has_no_positional() {
+        let args = to_args(&["vllm", "serve"]);
+        assert_eq!(parse_model_from_args(&args), None);
+    }
+
+    #[test]
+    fn command_str_parses_positional_serve() {
+        assert_eq!(
+            parse_model_from_command_str("vllm serve google/gemma-2-2b-it --port 8002").as_deref(),
+            Some("google/gemma-2-2b-it"),
+        );
+    }
+
+    #[test]
+    fn command_str_parses_explicit_model_equals_flag() {
+        assert_eq!(
+            parse_model_from_command_str(
+                "python -m vllm.entrypoints.openai.api_server --model=meta-llama/Llama-3.1-8B-Instruct",
+            )
+            .as_deref(),
+            Some("meta-llama/Llama-3.1-8B-Instruct"),
+        );
+    }
+
+    #[test]
+    fn command_str_returns_none_for_unrelated_command() {
+        assert_eq!(parse_model_from_command_str("sleep infinity"), None);
     }
 }

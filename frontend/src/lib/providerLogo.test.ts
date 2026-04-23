@@ -82,8 +82,10 @@ describe('getProviderLogo', () => {
     expect(getProviderLogo('deepseek-v3')?.slug).toBe('deepseek')
   })
 
-  it('keyword fallback still runs when the Org/ prefix is unknown', () => {
-    expect(getProviderLogo('custom-org/qwen2-rewrite')?.slug).toBe('qwen')
+  it('treats an unknown Org/ prefix as authoritative and skips keyword fallback', () => {
+    // `custom-org` is not a recognized provider, so even though the model slug
+    // contains the `qwen` keyword, we must not misattribute it to Qwen.
+    expect(getProviderLogo('custom-org/qwen2-rewrite')).toBeNull()
   })
 
   it('returns null when nothing matches', () => {

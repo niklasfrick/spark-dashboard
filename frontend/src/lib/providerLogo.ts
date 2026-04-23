@@ -80,7 +80,11 @@ export function getProviderLogo(modelName: string | null | undefined): ProviderL
   const trimmed = modelName.trim()
   if (!trimmed) return null
 
-  // 1) Prefer explicit `Org/Model` prefix resolution.
+  // When an explicit `Org/Model` prefix is present, the org is authoritative:
+  // resolve strictly from the prefix and do NOT fall back to keyword matching
+  // across the model slug (which would misattribute e.g. `custom-org/llama-3b`
+  // to Meta). The aggregator handles the "unknown prefix" case by labeling the
+  // chip with the raw prefix.
   const slashIdx = trimmed.indexOf('/')
   if (slashIdx > 0) {
     const rawPrefix = trimmed.slice(0, slashIdx).trim()
@@ -90,9 +94,10 @@ export function getProviderLogo(modelName: string | null | undefined): ProviderL
         ORG_ALIAS[normalized] ?? (ORG_IDENTITY.has(normalized) ? normalized : null)
       if (slug) return buildLogo(slug, rawPrefix)
     }
+    return null
   }
 
-  // 2) Fall back to keyword scan across the full model name.
+  // No org prefix — fall back to keyword scan across the full model name.
   const haystack = trimmed.toLowerCase()
   for (const { keyword, slug, alt } of KEYWORD_FALLBACKS) {
     if (haystack.includes(keyword)) return buildLogo(slug, alt)
