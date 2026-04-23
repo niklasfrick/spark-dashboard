@@ -35,6 +35,7 @@ const ORG_IDENTITY: ReadonlySet<string> = new Set([
   'unsloth',
   'z-ai',
   'minimax',
+  'huggingfacetb',
 ])
 
 /**
@@ -44,6 +45,7 @@ const ORG_IDENTITY: ReadonlySet<string> = new Set([
  */
 const SLUG_EXTENSION: Record<string, string> = {
   unsloth: 'webp',
+  huggingfacetb: 'webp',
 }
 
 /**

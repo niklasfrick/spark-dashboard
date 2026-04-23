@@ -36,6 +36,13 @@ describe('getProviderLogo', () => {
     expect(logo?.url).toBe('/icons/providers/unsloth.webp')
   })
 
+  it('maps HuggingFaceTB to the huggingfacetb webp asset', () => {
+    const logo = getProviderLogo('HuggingFaceTB/SmolLM-1.7B-Instruct')
+    expect(logo?.slug).toBe('huggingfacetb')
+    expect(logo?.alt).toBe('HuggingFaceTB')
+    expect(logo?.url).toBe('/icons/providers/huggingfacetb.webp')
+  })
+
   it('maps zai-org to the z-ai asset', () => {
     const logo = getProviderLogo('zai-org/GLM-4.5')
     expect(logo?.slug).toBe('z-ai')
