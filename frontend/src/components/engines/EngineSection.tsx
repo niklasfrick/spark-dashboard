@@ -156,9 +156,22 @@ export function EngineSection({
   const aggregate = useMemo(() => aggregateEngines(engines), [engines])
   const providerGroups = useMemo(() => groupRunningByProvider(engines), [engines])
 
+  const showGlobalControls = aggregate.running_count > 1
+
+  useEffect(() => {
+    if (showGlobalControls || engines.length === 0) return
+    const onlyEngineKey = `${engines[0].engine_type}-${engines[0].endpoint}`
+    if (activeTab !== onlyEngineKey) {
+      setActiveTab(onlyEngineKey)
+    }
+  }, [showGlobalControls, activeTab, engines])
+
   const tabOrder = useMemo(
-    () => [GLOBAL_TAB_VALUE, ...engines.map((e) => `${e.engine_type}-${e.endpoint}`)],
-    [engines],
+    () => [
+      ...(showGlobalControls ? [GLOBAL_TAB_VALUE] : []),
+      ...engines.map((e) => `${e.engine_type}-${e.endpoint}`),
+    ],
+    [engines, showGlobalControls],
   )
 
   const rotationEnabled =
@@ -266,17 +279,21 @@ export function EngineSection({
                 }
               }}
             >
-              <GlobalEngineTab
-                runningCount={aggregate.running_count}
-                cycle={cycle}
-                intervalMs={activeIntervalMs}
-                showCountdown={isGlobal && rotationEnabled}
-              />
-              {engines.length > 0 && (
-                <span
-                  aria-hidden="true"
-                  className="self-center h-4 w-px bg-white/[0.06] mx-1 shrink-0"
-                />
+              {showGlobalControls && (
+                <>
+                  <GlobalEngineTab
+                    runningCount={aggregate.running_count}
+                    cycle={cycle}
+                    intervalMs={activeIntervalMs}
+                    showCountdown={isGlobal && rotationEnabled}
+                  />
+                  {engines.length > 0 && (
+                    <span
+                      aria-hidden="true"
+                      className="self-center h-4 w-px bg-white/[0.06] mx-1 shrink-0"
+                    />
+                  )}
+                </>
               )}
               {engines.map((engine) => {
                 const engineKey = `${engine.engine_type}-${engine.endpoint}`
@@ -292,7 +309,9 @@ export function EngineSection({
                 )
               })}
             </TabsList>
-            <TabRotationControl value={rotationInterval} onChange={handleRotationIntervalChange} />
+            {showGlobalControls && (
+              <TabRotationControl value={rotationInterval} onChange={handleRotationIntervalChange} />
+            )}
           </div>
         </CardHeader>
         <CardContent className="flex-1 min-h-0 flex flex-col">
