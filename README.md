@@ -8,7 +8,7 @@ vLLM engine statistics and streams them over WebSocket to a React frontend.
 
 ![Stack](https://img.shields.io/badge/Rust-Axum-orange) ![Stack](https://img.shields.io/badge/React_19-TypeScript-blue) ![Stack](https://img.shields.io/badge/Tailwind_CSS_4-06B6D4) ![Stack](https://img.shields.io/badge/Vite_8-646CFF) ![License](https://img.shields.io/badge/license-MIT-green)
 
-![Spark Dashboard](./docs/dashboard.png)
+![Spark Dashboard](./docs/dashboard.gif)
 
 ## Quick Start
 
@@ -55,11 +55,21 @@ for details on what each script does.
 - KV cache utilization, prefix cache hit rate
 - Automatic engine discovery via process scan and Docker API
 
+**Multi-Engine Support**
+- Run and monitor any number of inference engines side by side — each
+  vLLM process or container is detected automatically and gets its own tab
+- **All Engines** overview tab with running-engine count, summed
+  throughput, and weighted-mean latencies across every detected engine
+- Per-engine drill-down tabs with provider chips showing the engine type
+  (vLLM) and source (Docker / host process)
+- Auto-rotating tab carousel with a configurable interval (default 3 s);
+  rotation pauses automatically the moment you interact with a tab so you
+  can focus on a single engine without fighting the UI
+
 **Dashboard**
 - Arc gauges, time-series charts, sparklines, per-core heatmap
 - 15-minute rolling history with circular buffers
 - Connection status badge, staleness detection, auto-reconnect
-- Multi-engine tabs when multiple inference servers are running
 
 ## Architecture
 

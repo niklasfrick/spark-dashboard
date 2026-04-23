@@ -142,10 +142,25 @@
   animation: pulse-dot 1.5s ease-in-out infinite;
 }
 
+/* Tab rotation countdown bar — browser-driven, jitter-free. */
+@keyframes tab-rotation-shrink {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+}
+.tab-rotation-bar {
+  transform-origin: left center;
+  animation-name: tab-rotation-shrink;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+  animation-duration: var(--rotation-duration, 10000ms);
+  will-change: transform;
+}
+
 /* Respect reduced motion */
 @media (prefers-reduced-motion: reduce) {
   .recharts-line-curve path { transition: none !important; }
   .animate-pulse-dot { animation: none; }
+  .tab-rotation-bar { animation: none; transform: scaleX(0); }
 }
 
 /* Subtle scrollbar for dark theme */

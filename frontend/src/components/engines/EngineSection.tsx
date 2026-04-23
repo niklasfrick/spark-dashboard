@@ -1,9 +1,75 @@
+import { useEffect, useMemo, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList } from '@/components/ui/tabs'
 import { EngineTab } from './EngineTab'
 import { EngineCard } from './EngineCard'
-import type { EngineSnapshot } from '@/types/metrics'
+import { GlobalEngineTab, GLOBAL_TAB_VALUE } from './GlobalEngineTab'
+import { GlobalEngineCard } from './GlobalEngineCard'
+import {
+  TabRotationControl,
+  parseRotationState,
+  serializeRotationState,
+  type RotationInterval,
+} from './TabRotationControl'
+import { aggregateEngines, groupRunningByProvider } from '@/lib/engineAggregate'
+import { engineDisplayName } from '@/lib/format'
+import { getProviderLogo } from '@/lib/providerLogo'
+import { useTabRotation } from '@/hooks/useTabRotation'
+import type { EngineSnapshot, EngineType, DeploymentMode } from '@/types/metrics'
 import type { InferenceRequest } from '@/types/events'
+
+/** Icon path per engine type. Files ship in `public/icons/`. */
+const ENGINE_ICON: Record<EngineType, string> = {
+  Vllm: '/icons/vllm.svg',
+}
+
+const ROTATION_INTERVAL_STORAGE_KEY = 'spark-dashboard:engine-rotation-interval'
+
+function EngineChip({ label, iconSrc }: { label: string; iconSrc?: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-md border border-white/[0.06] bg-white/[0.03] px-2 py-1 text-[11px] font-medium leading-none text-zinc-200">
+      {iconSrc && (
+        <img
+          src={iconSrc}
+          alt=""
+          aria-hidden="true"
+          className="h-3.5 w-3.5 shrink-0 object-contain"
+          onError={(e) => {
+            e.currentTarget.style.display = 'none'
+          }}
+        />
+      )}
+      <span>{label}</span>
+    </span>
+  )
+}
+
+function DeploymentChip({ mode }: { mode: DeploymentMode }) {
+  if (mode === 'Docker') {
+    return <EngineChip label="Docker" iconSrc="/icons/docker.svg" />
+  }
+  // Native / Direct — no dedicated logo, use a small inline "server" glyph.
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-md border border-white/[0.06] bg-white/[0.03] px-2 py-1 text-[11px] font-medium leading-none text-zinc-200">
+      <svg
+        aria-hidden="true"
+        viewBox="0 0 16 16"
+        className="h-3.5 w-3.5 shrink-0 text-zinc-400"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <rect x="2" y="3" width="12" height="4" rx="1" />
+        <rect x="2" y="9" width="12" height="4" rx="1" />
+        <circle cx="4.5" cy="5" r="0.5" fill="currentColor" />
+        <circle cx="4.5" cy="11" r="0.5" fill="currentColor" />
+      </svg>
+      <span>Direct</span>
+    </span>
+  )
+}
 
 interface ChartDataPoint {
   timestamp: number
@@ -37,7 +103,102 @@ export function EngineSection({
   getChartData,
   requests,
 }: EngineSectionProps) {
-  // Empty state: no engines detected
+  const [activeTab, setActiveTab] = useState<string>(GLOBAL_TAB_VALUE)
+  const [rotationEnabledState, setRotationEnabledState] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true
+    try {
+      return parseRotationState(window.localStorage.getItem(ROTATION_INTERVAL_STORAGE_KEY)).enabled
+    } catch {
+      return true
+    }
+  })
+  const [rotationInterval, setRotationInterval] = useState<RotationInterval>(() => {
+    if (typeof window === 'undefined') return 10000
+    try {
+      return parseRotationState(window.localStorage.getItem(ROTATION_INTERVAL_STORAGE_KEY)).interval
+    } catch {
+      return 10000
+    }
+  })
+  const [focusWithin, setFocusWithin] = useState(false)
+  const [userPaused, setUserPaused] = useState(false)
+
+  useEffect(() => {
+    if (!userPaused) return
+    const handlePointerDown = (e: PointerEvent) => {
+      const target = e.target as HTMLElement | null
+      if (!target || !target.closest('[data-slot="tabs-list"]')) {
+        setUserPaused(false)
+        setFocusWithin(false)
+      }
+    }
+    document.addEventListener('pointerdown', handlePointerDown)
+    return () => document.removeEventListener('pointerdown', handlePointerDown)
+  }, [userPaused])
+
+  const handleTabChange = (v: string) => {
+    setActiveTab(v)
+    setUserPaused(true)
+  }
+
+  const handleRotationEnabledChange = (next: boolean) => {
+    setRotationEnabledState(next)
+    if (next) {
+      setUserPaused(false)
+      setFocusWithin(false)
+    }
+  }
+
+  const handleRotationIntervalChange = (next: RotationInterval) => {
+    setRotationInterval(next)
+    setUserPaused(false)
+    setFocusWithin(false)
+  }
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      window.localStorage.setItem(
+        ROTATION_INTERVAL_STORAGE_KEY,
+        serializeRotationState({ enabled: rotationEnabledState, interval: rotationInterval }),
+      )
+    } catch {
+      // ignore storage errors (private mode, quota, etc.)
+    }
+  }, [rotationEnabledState, rotationInterval])
+
+  const aggregate = useMemo(() => aggregateEngines(engines), [engines])
+  const providerGroups = useMemo(() => groupRunningByProvider(engines), [engines])
+
+  const showGlobalControls = aggregate.running_count > 1
+
+  useEffect(() => {
+    if (showGlobalControls || engines.length === 0) return
+    const onlyEngineKey = `${engines[0].engine_type}-${engines[0].endpoint}`
+    if (activeTab !== onlyEngineKey) {
+      setActiveTab(onlyEngineKey)
+    }
+  }, [showGlobalControls, activeTab, engines])
+
+  const tabOrder = useMemo(
+    () => [
+      ...(showGlobalControls ? [GLOBAL_TAB_VALUE] : []),
+      ...engines.map((e) => `${e.engine_type}-${e.endpoint}`),
+    ],
+    [engines, showGlobalControls],
+  )
+
+  const rotationEnabled =
+    rotationEnabledState && !focusWithin && !userPaused && tabOrder.length > 1
+  const { cycle, activeIntervalMs } = useTabRotation({
+    order: tabOrder,
+    activeTab,
+    onAdvance: setActiveTab,
+    intervalMs: rotationInterval,
+    enabled: rotationEnabled,
+  })
+
+  // Empty state: no engines detected at all
   if (engines.length === 0) {
     return (
       <Card className="bg-[#0d0d10] border-white/[0.04] h-full">
@@ -54,38 +215,138 @@ export function EngineSection({
     )
   }
 
-  // Tabbed engine view
-  const defaultTab = `${engines[0].engine_type}-${engines[0].endpoint}`
+  const activeEngine = engines.find(
+    (e) => `${e.engine_type}-${e.endpoint}` === activeTab,
+  )
 
-  // Use the first running engine's model name as the big title
-  const activeEngine = engines.find(e => e.status.type === 'Running') ?? engines[0]
-  const modelName = activeEngine?.model?.name ?? 'No Model Loaded'
-  const modelDetail = activeEngine?.model
-    ? [activeEngine.model.parameter_size, activeEngine.model.quantization].filter(Boolean).join(' ')
-    : undefined
+  const isGlobal = activeTab === GLOBAL_TAB_VALUE
+  const headerTitle = isGlobal
+    ? 'All Engines'
+    : activeEngine?.model?.name ?? 'No Model Loaded'
+
+  const headerProviderLogo = !isGlobal ? getProviderLogo(activeEngine?.model?.name) : null
 
   return (
-    <Tabs defaultValue={defaultTab} className="h-full">
+    <Tabs
+      value={activeTab}
+      onValueChange={(v) => handleTabChange(v as string)}
+      className="h-full"
+    >
       <Card className="bg-[#0d0d10] border-white/[0.04] h-full">
-        <CardHeader className="flex flex-row justify-between items-center">
-          <div>
-            <CardTitle className="text-2xl font-bold text-zinc-100 tracking-tight">{modelName}</CardTitle>
-            {modelDetail && <p className="text-sm text-zinc-500 mt-0.5">{modelDetail}</p>}
+        <CardHeader className="flex flex-row justify-between items-center gap-4 min-w-0">
+          <div className="shrink-0 flex items-center gap-4 min-w-0">
+            {headerProviderLogo && (
+              <div className="shrink-0 h-14 w-14 rounded-xl bg-white p-2 flex items-center justify-center ring-1 ring-white/[0.06]">
+                <img
+                  src={headerProviderLogo.url}
+                  alt={headerProviderLogo.alt}
+                  className="h-full w-full object-contain"
+                  onError={(e) => {
+                    const tile = e.currentTarget.parentElement
+                    if (tile) tile.style.display = 'none'
+                  }}
+                />
+              </div>
+            )}
+            <div className="min-w-0">
+              <CardTitle className="text-2xl font-bold text-zinc-100 tracking-tight truncate" title={headerTitle}>
+                {headerTitle}
+              </CardTitle>
+              {isGlobal ? (
+                providerGroups.length > 0 && (
+                  <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+                    {providerGroups.map((g) => (
+                      <EngineChip
+                        key={g.key}
+                        label={`${g.label} (${g.count})`}
+                        iconSrc={g.logo?.url}
+                      />
+                    ))}
+                  </div>
+                )
+              ) : activeEngine ? (
+                <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+                  <EngineChip
+                    label={engineDisplayName(activeEngine.engine_type)}
+                    iconSrc={ENGINE_ICON[activeEngine.engine_type]}
+                  />
+                  <DeploymentChip mode={activeEngine.deployment_mode} />
+                  {activeEngine.model?.parameter_size && (
+                    <EngineChip label={activeEngine.model.parameter_size} />
+                  )}
+                  {activeEngine.model?.quantization && (
+                    <EngineChip label={activeEngine.model.quantization} />
+                  )}
+                </div>
+              ) : null}
+            </div>
           </div>
-          <TabsList variant="line" className="bg-transparent">
-            {engines.map((engine) => (
-              <EngineTab
-                key={`${engine.engine_type}-${engine.endpoint}`}
-                engine={engine}
-              />
-            ))}
-          </TabsList>
+          <div className="flex items-center gap-3 flex-1 min-w-0 justify-end">
+            <TabsList
+              variant="line"
+              className="bg-transparent min-w-0 flex-nowrap gap-2 !h-auto overflow-x-auto overflow-y-visible py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              onPointerDown={() => setUserPaused(true)}
+              onFocus={() => setFocusWithin(true)}
+              onBlur={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                  setFocusWithin(false)
+                }
+              }}
+            >
+              {showGlobalControls && (
+                <>
+                  <GlobalEngineTab
+                    runningCount={aggregate.running_count}
+                    cycle={cycle}
+                    intervalMs={activeIntervalMs}
+                    showCountdown={isGlobal && rotationEnabled}
+                  />
+                  {engines.length > 0 && (
+                    <span
+                      aria-hidden="true"
+                      className="self-center h-4 w-px bg-white/[0.06] mx-1 shrink-0"
+                    />
+                  )}
+                </>
+              )}
+              {engines.map((engine) => {
+                const engineKey = `${engine.engine_type}-${engine.endpoint}`
+                const isActive = engineKey === activeTab
+                return (
+                  <EngineTab
+                    key={engineKey}
+                    engine={engine}
+                    cycle={cycle}
+                    intervalMs={activeIntervalMs}
+                    showCountdown={isActive && rotationEnabled}
+                  />
+                )
+              })}
+            </TabsList>
+            {showGlobalControls && (
+              <>
+                <span
+                  aria-hidden="true"
+                  className="self-center h-5 w-px bg-white/[0.08] shrink-0"
+                />
+                <TabRotationControl
+                  enabled={rotationEnabledState}
+                  interval={rotationInterval}
+                  onEnabledChange={handleRotationEnabledChange}
+                  onIntervalChange={handleRotationIntervalChange}
+                />
+              </>
+            )}
+          </div>
         </CardHeader>
         <CardContent className="flex-1 min-h-0 flex flex-col">
+          <TabsContent value={GLOBAL_TAB_VALUE}>
+            <GlobalEngineCard snapshot={aggregate} />
+          </TabsContent>
+
           {engines.map((engine) => {
             const engineKey = `${engine.engine_type}-${engine.endpoint}`
 
-            // Build sparkline and chart data from history hooks
             const chartDataForEngine: EngineChartData | undefined = getChartData
               ? {
                   tps: getChartData(`${engineKey}:tps`),

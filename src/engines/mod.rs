@@ -189,9 +189,10 @@ pub fn create_adapter(
     engine_type: EngineType,
     endpoint: String,
     client: reqwest::Client,
+    model_hint: Option<String>,
 ) -> Box<dyn EngineAdapter> {
     match engine_type {
-        EngineType::Vllm => Box::new(vllm::VllmAdapter::new(client, endpoint)),
+        EngineType::Vllm => Box::new(vllm::VllmAdapter::new(client, endpoint, model_hint)),
     }
 }
 
@@ -220,7 +221,12 @@ pub async fn engine_collector_loop(
 
     // Seed manual overrides into the engine map at startup (D-12)
     for ov in &overrides {
-        let adapter = create_adapter(ov.engine_type.clone(), ov.endpoint.clone(), client.clone());
+        let adapter = create_adapter(
+            ov.engine_type.clone(),
+            ov.endpoint.clone(),
+            client.clone(),
+            None,
+        );
         let key = (ov.engine_type.clone(), ov.endpoint.clone());
         engine_map.insert(key, EngineState::new(adapter, DeploymentMode::Native));
         tracing::info!(
@@ -249,8 +255,14 @@ pub async fn engine_collector_loop(
                             d.engine_type.clone(),
                             d.endpoint.clone(),
                             client.clone(),
+                            d.served_model.clone(),
                         );
-                        tracing::info!("Detected engine: {} at {}", d.engine_type, d.endpoint);
+                        tracing::info!(
+                            "Detected engine: {} at {} (model={:?})",
+                            d.engine_type,
+                            d.endpoint,
+                            d.served_model,
+                        );
                         EngineState::new(adapter, d.deployment_mode.clone())
                     });
                 }

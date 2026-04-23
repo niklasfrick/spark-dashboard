@@ -8,6 +8,11 @@ use tokio::sync::Mutex;
 pub struct VllmAdapter {
     client: reqwest::Client,
     endpoint: String,
+    /// Model identity recovered from the launch command line (e.g.
+    /// `unsloth/Llama-3.2-1B-Instruct`). Used as a fallback when
+    /// `/v1/models` returns a bare slug without the HF-style `Provider/`
+    /// prefix — see `get_model_info` for the precedence rules.
+    served_model: Option<String>,
     /// Previous generation_tokens_total counter reading for rate computation.
     prev_gen_tokens: Mutex<Option<(f64, Instant)>>,
     /// Previous prompt_tokens_total counter reading for rate computation.
@@ -19,10 +24,11 @@ pub struct VllmAdapter {
 }
 
 impl VllmAdapter {
-    pub fn new(client: reqwest::Client, endpoint: String) -> Self {
+    pub fn new(client: reqwest::Client, endpoint: String, served_model: Option<String>) -> Self {
         Self {
             client,
             endpoint,
+            served_model,
             prev_gen_tokens: Mutex::new(None),
             prev_prompt_tokens: Mutex::new(None),
             avg_accum: Mutex::new((0.0, 0)),
@@ -67,17 +73,37 @@ impl EngineAdapter for VllmAdapter {
     }
 
     async fn get_model_info(&self) -> Option<ModelInfo> {
-        let resp = self
-            .client
-            .get(format!("{}/v1/models", self.endpoint))
-            .timeout(Duration::from_secs(2))
-            .send()
-            .await
-            .ok()?;
-        let models: OpenAIModelsResponse = resp.json().await.ok()?;
-        let model = models.data.first()?;
+        // Try the OpenAI-compatible models endpoint first. vLLM returns
+        // whatever id it was launched with, but downstream model routers can
+        // strip the HF-style `Provider/` prefix before replying — which is
+        // exactly the case we want to recover from via the command-line hint.
+        let api_id: Option<String> = async {
+            let resp = self
+                .client
+                .get(format!("{}/v1/models", self.endpoint))
+                .timeout(Duration::from_secs(2))
+                .send()
+                .await
+                .ok()?;
+            let models: OpenAIModelsResponse = resp.json().await.ok()?;
+            models.data.first().map(|m| m.id.clone())
+        }
+        .await;
+
+        // Precedence:
+        //   1. API id, if it already carries a `Provider/` prefix.
+        //   2. Command-line hint captured during detection.
+        //   3. API id as-is (bare slug).
+        //   4. None (nothing resolved).
+        let name = match (&api_id, &self.served_model) {
+            (Some(id), _) if id.contains('/') => Some(id.clone()),
+            (_, Some(hint)) => Some(hint.clone()),
+            (Some(id), None) => Some(id.clone()),
+            (None, None) => None,
+        }?;
+
         Some(ModelInfo {
-            name: model.id.clone(),
+            name,
             parameter_size: None,
             quantization: None,
         })

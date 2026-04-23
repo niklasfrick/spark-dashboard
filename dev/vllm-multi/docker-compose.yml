@@ -1,0 +1,157 @@
+# Three-instance vLLM test rig with a reverse proxy on :8000 for easy use.
+#
+# Topology:
+#   host:8000  -> vllm-proxy (OpenResty)  -> vllm-{small,medium,large}:8000
+#   host:8001  -> vllm-small              (direct; dashboard scrapes this)
+#   host:8002  -> vllm-medium             (direct; dashboard scrapes this)
+#   host:8003  -> vllm-large              (direct; dashboard scrapes this)
+#
+# The dashboard's Docker detector finds each vLLM container via its host
+# port publication, so the three engines show up as separate tabs.
+# Client-facing traffic should use the proxy on :8000 — it supports both
+# path-based routing (/small, /medium, /large) and model-based routing
+# where the "model" field in the request body picks the upstream.
+#
+# Memory model: vLLM's --gpu-memory-utilization is measured against
+# currently free GPU memory at init time. Containers therefore start
+# sequentially via depends_on: service_healthy so each sees the correct
+# free pool.
+#
+# Usage:
+#   docker compose up -d
+#   curl http://localhost:8000/             # usage hints
+#   curl http://localhost:8000/health       # proxy health
+#   docker compose down
+
+services:
+  vllm-small:
+    image: vllm/vllm-openai:latest
+    container_name: vllm-small
+    restart: unless-stopped
+    ipc: host
+    ports:
+      - "8001:8000"
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+    command: >-
+      --model unsloth/Llama-3.2-1B-Instruct
+      --served-model-name llama-3.2-1b
+      --host 0.0.0.0
+      --port 8000
+      --gpu-memory-utilization 0.15
+      --max-model-len 4096
+      --enforce-eager
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 40
+      start_period: 180s
+
+  vllm-medium:
+    image: vllm/vllm-openai:latest
+    container_name: vllm-medium
+    restart: unless-stopped
+    ipc: host
+    depends_on:
+      vllm-small:
+        condition: service_healthy
+    ports:
+      - "8002:8000"
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+    command: >-
+      --model Qwen/Qwen2.5-3B-Instruct
+      --served-model-name qwen2.5-3b
+      --host 0.0.0.0
+      --port 8000
+      --gpu-memory-utilization 0.20
+      --max-model-len 4096
+      --enforce-eager
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 40
+      start_period: 240s
+
+  vllm-large:
+    image: vllm/vllm-openai:latest
+    container_name: vllm-large
+    restart: unless-stopped
+    ipc: host
+    depends_on:
+      vllm-medium:
+        condition: service_healthy
+    ports:
+      - "8003:8000"
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+    command: >-
+      --model google/gemma-4-E2B-it
+      --served-model-name gemma-4-e2b
+      --host 0.0.0.0
+      --port 8000
+      --gpu-memory-utilization 0.18
+      --max-model-len 4096
+      --enforce-eager
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 40
+      start_period: 300s
+
+  vllm-proxy:
+    image: openresty/openresty:alpine
+    container_name: vllm-proxy
+    restart: unless-stopped
+    # Start as soon as the upstream service containers exist so OpenResty
+    # can resolve them at config-load time. Doesn't wait for health --
+    # the proxy may 502 briefly while models warm up, which is fine for
+    # a test rig.
+    depends_on:
+      - vllm-small
+      - vllm-medium
+      - vllm-large
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./nginx/nginx.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+volumes:
+  hf-cache:
+    name: vllm-multi-hf-cache

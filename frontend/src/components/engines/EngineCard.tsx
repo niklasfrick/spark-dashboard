@@ -2,11 +2,16 @@ import { TimeSeriesChart, type ChartSeries } from '@/components/charts/TimeSerie
 import { formatTps, formatTtft, formatDurationMs } from '@/lib/format'
 import type { EngineSnapshot } from '@/types/metrics'
 import type { InferenceRequest } from '@/types/events'
-
-interface ChartDataPoint {
-  timestamp: number
-  value: number
-}
+import {
+  type ChartDataPoint,
+  type Trend,
+  MetricTile,
+  KvBar,
+  TrendArrow,
+  computeTrend,
+  fmtVal,
+  fmtInt,
+} from './EngineCardPrimitives'
 
 function decodeTokenSeries(chartData: {
   tps: ChartDataPoint[]
@@ -30,77 +35,6 @@ function prefillTokenSeries(chartData: {
     { data: chartData.avgPromptTps, label: 'Avg tok/s', color: '#3b82f6' },
     { data: chartData.perReqPromptTps, label: 'Per-req tok/s', color: '#a855f7' },
   ]
-}
-
-// --- Trend detection ---
-type Trend = 'up' | 'down' | 'stable'
-
-function computeTrend(data: ChartDataPoint[], threshold = 0.05): Trend {
-  if (data.length < 6) return 'stable'
-  const recent = data.slice(-3)
-  const older = data.slice(Math.max(0, data.length - 15), data.length - 3)
-  if (older.length < 3) return 'stable'
-  const recentAvg = recent.reduce((s, p) => s + p.value, 0) / recent.length
-  const olderAvg = older.reduce((s, p) => s + p.value, 0) / older.length
-  if (olderAvg === 0) return recentAvg > 0 ? 'up' : 'stable'
-  const change = (recentAvg - olderAvg) / Math.abs(olderAvg)
-  if (change > threshold) return 'up'
-  if (change < -threshold) return 'down'
-  return 'stable'
-}
-
-function TrendArrow({ trend, invertColor }: { trend: Trend; invertColor?: boolean }) {
-  if (trend === 'stable') {
-    return <span className="text-zinc-600 text-[11px] ml-0.5">→</span>
-  }
-  const isUp = trend === 'up'
-  const color = invertColor
-    ? (isUp ? 'text-red-400' : 'text-[#76B900]')
-    : (isUp ? 'text-[#76B900]' : 'text-red-400')
-  return <span className={`${color} text-[11px] ml-0.5`}>{isUp ? '▲' : '▼'}</span>
-}
-
-/** Big metric tile with trend indicator */
-function MetricTile({ label, value, unit, trend, invertTrend, warn }: {
-  label: string
-  value: string
-  unit?: string
-  trend?: Trend
-  invertTrend?: boolean
-  warn?: boolean
-}) {
-  return (
-    <div className="flex flex-col gap-0.5 min-w-0">
-      <span className={`text-xs font-medium uppercase tracking-wider truncate ${warn ? 'text-red-400/70' : 'text-zinc-400'}`}>
-        {label}
-      </span>
-      <div className="flex items-baseline">
-        <span className={`text-2xl font-bold font-mono tabular-nums leading-none ${warn ? 'text-red-400' : 'text-zinc-100'}`}>
-          {value}
-        </span>
-        {unit && <span className="text-xs text-zinc-500 ml-1">{unit}</span>}
-        {trend && <TrendArrow trend={trend} invertColor={invertTrend} />}
-      </div>
-    </div>
-  )
-}
-
-/** Mini KV cache bar */
-function KvBar({ percent }: { percent: number }) {
-  const color = percent > 90 ? 'bg-red-500' : percent > 70 ? 'bg-yellow-500' : 'bg-[#76B900]'
-  return (
-    <div className="flex h-1 rounded-full overflow-hidden bg-zinc-700/50 mt-1">
-      <div className={`${color} transition-all duration-300`} style={{ width: `${percent}%` }} />
-    </div>
-  )
-}
-
-function fmtVal(v: number | null, fmt: (n: number) => string): string {
-  return v === null ? '--' : fmt(v)
-}
-
-function fmtInt(v: number | null): string {
-  return v === null ? '--' : String(Math.round(v))
 }
 
 interface EngineCardProps {
@@ -185,7 +119,7 @@ export function EngineCard({
           {/* ── Grouped metrics with trend arrows — 4 categories ── */}
           <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 py-1.5">
             {/* Prefill Throughput */}
-            <div className="bg-white/[0.02] rounded-md px-2.5 py-2">
+            <div className="bg-white/[0.02] rounded-md px-4 py-3.5">
               <div className="text-sm font-semibold text-zinc-300 tracking-tight mb-2">Prompt Processing / Prefill Throughput</div>
               <div className="grid grid-cols-1 gap-2">
                 <MetricTile label="Live" value={fmtVal(promptTps, formatTps)} unit="tok/s" trend={promptTpsTrend} />
@@ -195,7 +129,7 @@ export function EngineCard({
             </div>
 
             {/* Decode Throughput */}
-            <div className="bg-white/[0.02] rounded-md px-2.5 py-2">
+            <div className="bg-white/[0.02] rounded-md px-4 py-3.5">
               <div className="text-sm font-semibold text-zinc-300 tracking-tight mb-2">Token Generation / Decode Throughput</div>
               <div className="grid grid-cols-1 gap-2">
                 <MetricTile label="Live" value={fmtVal(tps, formatTps)} unit="tok/s" trend={tpsTrend} />
@@ -205,7 +139,7 @@ export function EngineCard({
             </div>
 
             {/* Latency */}
-            <div className="bg-white/[0.02] rounded-md px-2.5 py-2">
+            <div className="bg-white/[0.02] rounded-md px-4 py-3.5">
               <div className="text-sm font-semibold text-zinc-300 tracking-tight mb-2">Latency</div>
               <div className="grid grid-cols-2 gap-2">
                 <MetricTile label="TTFT" value={fmtVal(ttft, formatTtft)} unit="ms" trend={ttftTrend} invertTrend />
@@ -216,7 +150,7 @@ export function EngineCard({
             </div>
 
             {/* Requests */}
-            <div className="bg-white/[0.02] rounded-md px-2.5 py-2">
+            <div className="bg-white/[0.02] rounded-md px-4 py-3.5">
               <div className="text-sm font-semibold text-zinc-300 tracking-tight mb-2">Requests</div>
               <div className="grid grid-cols-2 gap-2">
                 <MetricTile label="Active" value={fmtInt(activeReqs)} />
@@ -232,7 +166,7 @@ export function EngineCard({
             </div>
 
             {/* Cache */}
-            <div className="bg-white/[0.02] rounded-md px-2.5 py-2">
+            <div className="bg-white/[0.02] rounded-md px-4 py-3.5">
               <div className="text-sm font-semibold text-zinc-300 tracking-tight mb-2">Cache</div>
               <div className="grid grid-cols-2 gap-2">
                 <div className="flex flex-col gap-0.5 min-w-0">
