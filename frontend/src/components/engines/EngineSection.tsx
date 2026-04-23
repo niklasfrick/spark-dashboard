@@ -5,9 +5,64 @@ import { EngineTab } from './EngineTab'
 import { EngineCard } from './EngineCard'
 import { GlobalEngineTab, GLOBAL_TAB_VALUE } from './GlobalEngineTab'
 import { GlobalEngineCard } from './GlobalEngineCard'
+import { TabRotationControl, type RotationInterval } from './TabRotationControl'
 import { aggregateEngines } from '@/lib/engineAggregate'
-import type { EngineSnapshot } from '@/types/metrics'
+import { engineDisplayName } from '@/lib/format'
+import { getProviderLogo } from '@/lib/providerLogo'
+import { useTabRotation } from '@/hooks/useTabRotation'
+import type { EngineSnapshot, EngineType, DeploymentMode } from '@/types/metrics'
 import type { InferenceRequest } from '@/types/events'
+
+/** Icon path per engine type. Files ship in `public/icons/`. */
+const ENGINE_ICON: Record<EngineType, string> = {
+  Vllm: '/icons/vllm.svg',
+}
+
+function EngineChip({ label, iconSrc }: { label: string; iconSrc?: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-md border border-white/[0.06] bg-white/[0.03] px-2 py-1 text-[11px] font-medium leading-none text-zinc-200">
+      {iconSrc && (
+        <img
+          src={iconSrc}
+          alt=""
+          aria-hidden="true"
+          className="h-3.5 w-3.5 shrink-0 object-contain"
+          onError={(e) => {
+            e.currentTarget.style.display = 'none'
+          }}
+        />
+      )}
+      <span>{label}</span>
+    </span>
+  )
+}
+
+function DeploymentChip({ mode }: { mode: DeploymentMode }) {
+  if (mode === 'Docker') {
+    return <EngineChip label="Docker" iconSrc="/icons/docker.svg" />
+  }
+  // Native / Direct — no dedicated logo, use a small inline "server" glyph.
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-md border border-white/[0.06] bg-white/[0.03] px-2 py-1 text-[11px] font-medium leading-none text-zinc-200">
+      <svg
+        aria-hidden="true"
+        viewBox="0 0 16 16"
+        className="h-3.5 w-3.5 shrink-0 text-zinc-400"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <rect x="2" y="3" width="12" height="4" rx="1" />
+        <rect x="2" y="9" width="12" height="4" rx="1" />
+        <circle cx="4.5" cy="5" r="0.5" fill="currentColor" />
+        <circle cx="4.5" cy="11" r="0.5" fill="currentColor" />
+      </svg>
+      <span>Direct</span>
+    </span>
+  )
+}
 
 interface ChartDataPoint {
   timestamp: number
@@ -42,8 +97,24 @@ export function EngineSection({
   requests,
 }: EngineSectionProps) {
   const [activeTab, setActiveTab] = useState<string>(GLOBAL_TAB_VALUE)
+  const [rotationInterval, setRotationInterval] = useState<RotationInterval>(10000)
+  const [focusWithin, setFocusWithin] = useState(false)
 
   const aggregate = useMemo(() => aggregateEngines(engines), [engines])
+
+  const tabOrder = useMemo(
+    () => [GLOBAL_TAB_VALUE, ...engines.map((e) => `${e.engine_type}-${e.endpoint}`)],
+    [engines],
+  )
+
+  const rotationEnabled = rotationInterval !== 'off' && !focusWithin && tabOrder.length > 1
+  const { cycle, activeIntervalMs } = useTabRotation({
+    order: tabOrder,
+    activeTab,
+    onAdvance: setActiveTab,
+    intervalMs: rotationInterval === 'off' ? 0 : rotationInterval,
+    enabled: rotationEnabled,
+  })
 
   // Empty state: no engines detected at all
   if (engines.length === 0) {
@@ -62,7 +133,6 @@ export function EngineSection({
     )
   }
 
-  // Find the engine that matches the active tab, if any.
   const activeEngine = engines.find(
     (e) => `${e.engine_type}-${e.endpoint}` === activeTab,
   )
@@ -71,45 +141,98 @@ export function EngineSection({
   const headerTitle = isGlobal
     ? 'All Engines'
     : activeEngine?.model?.name ?? 'No Model Loaded'
-  const headerDetail = isGlobal
-    ? undefined
-    : activeEngine?.model
-      ? [activeEngine.model.parameter_size, activeEngine.model.quantization]
-          .filter(Boolean)
-          .join(' ') || undefined
-      : undefined
+
+  const headerProviderLogo = !isGlobal ? getProviderLogo(activeEngine?.model?.name) : null
+  const globalDetail = isGlobal && aggregate.total_count > 0
+    ? `${aggregate.total_count} ${aggregate.total_count === 1 ? 'engine' : 'engines'} · ${aggregate.running_count} running`
+    : undefined
 
   return (
     <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as string)} className="h-full">
       <Card className="bg-[#0d0d10] border-white/[0.04] h-full">
         <CardHeader className="flex flex-row justify-between items-center gap-4 min-w-0">
-          <div className="shrink-0">
-            <CardTitle className="text-2xl font-bold text-zinc-100 tracking-tight">{headerTitle}</CardTitle>
-            {headerDetail && <p className="text-sm text-zinc-500 mt-0.5">{headerDetail}</p>}
+          <div className="shrink-0 flex items-center gap-4 min-w-0">
+            {headerProviderLogo && (
+              <div className="shrink-0 h-14 w-14 rounded-xl bg-white p-2 flex items-center justify-center ring-1 ring-white/[0.06]">
+                <img
+                  src={headerProviderLogo.url}
+                  alt={headerProviderLogo.alt}
+                  className="h-full w-full object-contain"
+                  onError={(e) => {
+                    const tile = e.currentTarget.parentElement
+                    if (tile) tile.style.display = 'none'
+                  }}
+                />
+              </div>
+            )}
+            <div className="min-w-0">
+              <CardTitle className="text-2xl font-bold text-zinc-100 tracking-tight truncate" title={headerTitle}>
+                {headerTitle}
+              </CardTitle>
+              {isGlobal ? (
+                globalDetail && <p className="text-sm text-zinc-500 mt-0.5">{globalDetail}</p>
+              ) : activeEngine ? (
+                <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+                  <EngineChip
+                    label={engineDisplayName(activeEngine.engine_type)}
+                    iconSrc={ENGINE_ICON[activeEngine.engine_type]}
+                  />
+                  <DeploymentChip mode={activeEngine.deployment_mode} />
+                  {activeEngine.model?.parameter_size && (
+                    <EngineChip label={activeEngine.model.parameter_size} />
+                  )}
+                  {activeEngine.model?.quantization && (
+                    <EngineChip label={activeEngine.model.quantization} />
+                  )}
+                </div>
+              ) : null}
+            </div>
           </div>
-          <TabsList
-            variant="line"
-            className="bg-transparent flex-1 min-w-0 justify-end overflow-hidden flex-nowrap"
-          >
-            <GlobalEngineTab
-              runningCount={aggregate.running_count}
-              totalCount={aggregate.total_count}
-            />
-            {engines.map((engine) => (
-              <EngineTab
-                key={`${engine.engine_type}-${engine.endpoint}`}
-                engine={engine}
+          <div className="flex items-center gap-3 flex-1 min-w-0 justify-end">
+            <TabsList
+              variant="line"
+              className="bg-transparent min-w-0 flex-nowrap gap-2 !h-auto overflow-x-auto overflow-y-visible py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              onFocus={() => setFocusWithin(true)}
+              onBlur={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                  setFocusWithin(false)
+                }
+              }}
+            >
+              <GlobalEngineTab
+                runningCount={aggregate.running_count}
+                cycle={cycle}
+                intervalMs={activeIntervalMs}
+                showCountdown={isGlobal && rotationEnabled}
               />
-            ))}
-          </TabsList>
+              {engines.length > 0 && (
+                <span
+                  aria-hidden="true"
+                  className="self-center h-4 w-px bg-white/[0.06] mx-1 shrink-0"
+                />
+              )}
+              {engines.map((engine) => {
+                const engineKey = `${engine.engine_type}-${engine.endpoint}`
+                const isActive = engineKey === activeTab
+                return (
+                  <EngineTab
+                    key={engineKey}
+                    engine={engine}
+                    cycle={cycle}
+                    intervalMs={activeIntervalMs}
+                    showCountdown={isActive && rotationEnabled}
+                  />
+                )
+              })}
+            </TabsList>
+            <TabRotationControl value={rotationInterval} onChange={setRotationInterval} />
+          </div>
         </CardHeader>
         <CardContent className="flex-1 min-h-0 flex flex-col">
-          {/* Global aggregate tab content */}
           <TabsContent value={GLOBAL_TAB_VALUE}>
             <GlobalEngineCard snapshot={aggregate} />
           </TabsContent>
 
-          {/* Per-engine tab contents */}
           {engines.map((engine) => {
             const engineKey = `${engine.engine_type}-${engine.endpoint}`
 

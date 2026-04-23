@@ -1,9 +1,16 @@
 import { TabsTrigger } from '@/components/ui/tabs'
 import { engineDisplayName } from '@/lib/format'
+import { getProviderLogo } from '@/lib/providerLogo'
 import type { EngineSnapshot } from '@/types/metrics'
 
 interface EngineTabProps {
   engine: EngineSnapshot
+  /** Rotation cycle counter — used as `key` so the CSS countdown animation restarts per cycle. */
+  cycle?: number
+  /** Current cycle duration in ms. `0` disables the countdown animation. */
+  intervalMs?: number
+  /** `true` when this tab is the active tab AND rotation is enabled. */
+  showCountdown?: boolean
 }
 
 /**
@@ -26,7 +33,7 @@ function portFromEndpoint(endpoint: string): string | null {
   }
 }
 
-export function EngineTab({ engine }: EngineTabProps) {
+export function EngineTab({ engine, cycle, intervalMs, showCountdown }: EngineTabProps) {
   const displayName = engineDisplayName(engine.engine_type)
   const statusLabel = engine.status.type === 'Error'
     ? `Error: ${engine.status.message}`
@@ -35,31 +42,34 @@ export function EngineTab({ engine }: EngineTabProps) {
   const isDocker = engine.deployment_mode === 'Docker'
   const modeLabel = isDocker ? 'Docker' : 'Direct'
 
-  // Differentiator: model name preferred, endpoint port as fallback.
   const instanceLabel = engine.model?.name
     ? shortenModelName(engine.model.name)
     : portFromEndpoint(engine.endpoint) ?? displayName
 
-  // Status dot color per UI-SPEC color table
-  const dotColor: Record<string, string> = {
-    Running: 'bg-green-500',
-    Loading: 'bg-yellow-500',
-    Stopped: 'bg-red-500',
-    Error: 'bg-red-500',
-  }
+  const providerLogo = getProviderLogo(engine.model?.name)
+
+  const showBar = showCountdown === true && typeof intervalMs === 'number' && intervalMs > 0
 
   return (
     <TabsTrigger
       value={`${engine.engine_type}-${engine.endpoint}`}
-      className={`flex items-center gap-1.5 px-3 py-1.5 leading-none transition-opacity duration-300 min-w-0 ${
+      className={`relative flex items-center gap-2.5 px-6 py-4 leading-none rounded-md transition-colors duration-200 min-w-0 !flex-initial hover:bg-white/[0.03] data-[active]:bg-white/[0.05] ${
         isStopped ? 'opacity-40' : ''
       } data-[active]:border-b-2 data-[active]:border-[#76B900]`}
       aria-label={`${displayName} ${instanceLabel} · ${modeLabel} - ${statusLabel}`}
     >
-      <span className={`inline-block w-2 h-2 rounded-full shrink-0 ${dotColor[engine.status.type]}`} />
-      <img src="/icons/vllm.svg" alt="" aria-hidden="true" className="h-3.5 w-auto block shrink-0" />
-      {isDocker && (
-        <img src="/icons/docker.svg" alt="" aria-hidden="true" className="h-3.5 w-auto block shrink-0" />
+      {providerLogo && (
+        <span className="h-5 w-5 shrink-0 rounded bg-white p-0.5 flex items-center justify-center ring-1 ring-white/[0.06]">
+          <img
+            src={providerLogo.url}
+            alt={providerLogo.alt}
+            className="h-full w-full object-contain"
+            onError={(e) => {
+              const tile = e.currentTarget.parentElement
+              if (tile) tile.style.display = 'none'
+            }}
+          />
+        </span>
       )}
       <span
         className={`text-xs font-semibold tracking-tight leading-none truncate min-w-0 ${
@@ -69,10 +79,14 @@ export function EngineTab({ engine }: EngineTabProps) {
       >
         {instanceLabel}
       </span>
-      <span className="text-zinc-600 leading-none shrink-0">·</span>
-      <span className={`text-[11px] leading-none shrink-0 ${isStopped ? 'text-zinc-600' : 'text-zinc-400'}`}>
-        {modeLabel}
-      </span>
+      {showBar && (
+        <span
+          key={cycle}
+          aria-hidden="true"
+          className="tab-rotation-bar absolute left-0 bottom-0 h-0.5 w-full bg-[#76B900]/70"
+          style={{ ['--rotation-duration' as string]: `${intervalMs}ms` }}
+        />
+      )}
     </TabsTrigger>
   )
 }

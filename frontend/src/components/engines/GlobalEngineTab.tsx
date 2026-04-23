@@ -4,28 +4,39 @@ export const GLOBAL_TAB_VALUE = '__global'
 
 interface GlobalEngineTabProps {
   runningCount: number
-  totalCount: number
+  /** Rotation cycle counter — used as `key` to restart the CSS countdown animation. */
+  cycle?: number
+  /** Current cycle duration in ms. `0` disables the countdown animation. */
+  intervalMs?: number
+  /** `true` when this tab is active AND rotation is enabled. */
+  showCountdown?: boolean
 }
 
-export function GlobalEngineTab({ runningCount, totalCount }: GlobalEngineTabProps) {
-  const hasRunning = runningCount > 0
-  const dotColor = hasRunning ? 'bg-[#76B900]' : 'bg-zinc-600'
-  const pulseClass = hasRunning ? 'animate-pulse' : ''
+export function GlobalEngineTab({
+  runningCount,
+  cycle,
+  intervalMs,
+  showCountdown,
+}: GlobalEngineTabProps) {
+  const showBar = showCountdown === true && typeof intervalMs === 'number' && intervalMs > 0
 
   return (
     <TabsTrigger
       value={GLOBAL_TAB_VALUE}
-      className="flex items-center gap-1.5 px-3 py-1.5 leading-none data-[active]:border-b-2 data-[active]:border-[#76B900]"
-      aria-label={`Global aggregate · ${runningCount} of ${totalCount} engines running`}
+      className="relative flex items-center gap-2.5 px-6 py-4 leading-none rounded-md transition-colors duration-200 !flex-initial hover:bg-white/[0.03] data-[active]:bg-white/[0.05] data-[active]:border-b-2 data-[active]:border-[#76B900]"
+      aria-label={`Global aggregate view · ${runningCount} engines running`}
     >
-      <span className={`inline-block w-2 h-2 rounded-full ${dotColor} ${pulseClass}`} />
       <span className="text-xs font-semibold tracking-tight leading-none text-zinc-200">
         Global
       </span>
-      <span className="text-zinc-600 leading-none">·</span>
-      <span className="text-[11px] leading-none text-zinc-400 tabular-nums">
-        {runningCount}/{totalCount} running
-      </span>
+      {showBar && (
+        <span
+          key={cycle}
+          aria-hidden="true"
+          className="tab-rotation-bar absolute left-0 bottom-0 h-0.5 w-full bg-[#76B900]/70"
+          style={{ ['--rotation-duration' as string]: `${intervalMs}ms` }}
+        />
+      )}
     </TabsTrigger>
   )
 }
