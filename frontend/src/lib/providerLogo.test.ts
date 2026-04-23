@@ -30,6 +30,32 @@ describe('getProviderLogo', () => {
     expect(logo?.url).toBe('/icons/providers/moonshot-ai.svg')
   })
 
+  it('maps unsloth to the unsloth webp asset', () => {
+    const logo = getProviderLogo('unsloth/Llama-3.2-3B-Instruct')
+    expect(logo?.slug).toBe('unsloth')
+    expect(logo?.url).toBe('/icons/providers/unsloth.webp')
+  })
+
+  it('maps zai-org to the z-ai asset', () => {
+    const logo = getProviderLogo('zai-org/GLM-4.5')
+    expect(logo?.slug).toBe('z-ai')
+    expect(logo?.url).toBe('/icons/providers/z-ai.svg')
+  })
+
+  it('maps minimaxai to the minimax asset', () => {
+    const logo = getProviderLogo('MiniMaxAI/MiniMax-M1-80k')
+    expect(logo?.slug).toBe('minimax')
+    expect(logo?.url).toBe('/icons/providers/minimax.svg')
+  })
+
+  it('keyword-matches a glm model id to z-ai', () => {
+    expect(getProviderLogo('glm-4.5-air')?.slug).toBe('z-ai')
+  })
+
+  it('keyword-matches a bare minimax model id', () => {
+    expect(getProviderLogo('minimax-m1')?.slug).toBe('minimax')
+  })
+
   it('is case-insensitive on the org prefix', () => {
     expect(getProviderLogo('QWEN/Qwen2.5')?.slug).toBe('qwen')
     expect(getProviderLogo('OpenAI/gpt-oss')?.slug).toBe('openai')

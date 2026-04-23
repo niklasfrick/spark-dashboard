@@ -14,6 +14,11 @@ const ORG_ALIAS: Record<string, string> = {
   'deepseek-ai': 'deepseek',
   'meta-llama': 'meta',
   moonshotai: 'moonshot-ai',
+  'unsloth-ai': 'unsloth',
+  zai: 'z-ai',
+  'zai-org': 'z-ai',
+  minimaxai: 'minimax',
+  'minimax-ai': 'minimax',
 }
 
 /** Providers whose HF org prefix (lowercased) matches the local slug exactly. */
@@ -27,7 +32,19 @@ const ORG_IDENTITY: ReadonlySet<string> = new Set([
   'deepseek',
   'mistral-ai',
   'moonshot-ai',
+  'unsloth',
+  'z-ai',
+  'minimax',
 ])
+
+/**
+ * Providers whose local asset is not an SVG. Most assets are SVGs, so SVG
+ * stays the default — add an entry here only when a vector logo isn't
+ * available and a raster fallback is shipped instead.
+ */
+const SLUG_EXTENSION: Record<string, string> = {
+  unsloth: 'webp',
+}
 
 /**
  * Keyword fallback used when the model name has no `Org/` prefix, or the
@@ -45,13 +62,16 @@ const KEYWORD_FALLBACKS: { keyword: string; slug: string; alt: string }[] = [
   { keyword: 'gemini', slug: 'google', alt: 'Google' },
   { keyword: 'phi-', slug: 'microsoft', alt: 'Microsoft' },
   { keyword: 'kimi', slug: 'moonshot-ai', alt: 'Moonshot AI' },
+  { keyword: 'glm-', slug: 'z-ai', alt: 'Z.ai' },
+  { keyword: 'minimax', slug: 'minimax', alt: 'MiniMax' },
   { keyword: 'gpt-', slug: 'openai', alt: 'OpenAI' },
 ]
 
 const ASSET_BASE = '/icons/providers'
 
 function buildLogo(slug: string, alt: string): ProviderLogo {
-  return { url: `${ASSET_BASE}/${slug}.svg`, alt, slug }
+  const ext = SLUG_EXTENSION[slug] ?? 'svg'
+  return { url: `${ASSET_BASE}/${slug}.${ext}`, alt, slug }
 }
 
 export function getProviderLogo(modelName: string | null | undefined): ProviderLogo | null {
