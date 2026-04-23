@@ -113,6 +113,33 @@ export function EngineSection({
     }
   })
   const [focusWithin, setFocusWithin] = useState(false)
+  const [userPaused, setUserPaused] = useState(false)
+
+  useEffect(() => {
+    if (!userPaused) return
+    const handlePointerDown = (e: PointerEvent) => {
+      const target = e.target as HTMLElement | null
+      if (!target || !target.closest('[data-slot="tabs-list"]')) {
+        setUserPaused(false)
+        setFocusWithin(false)
+      }
+    }
+    document.addEventListener('pointerdown', handlePointerDown)
+    return () => document.removeEventListener('pointerdown', handlePointerDown)
+  }, [userPaused])
+
+  const handleTabChange = (v: string) => {
+    setActiveTab(v)
+    setUserPaused(true)
+  }
+
+  const handleRotationIntervalChange = (next: RotationInterval) => {
+    setRotationInterval(next)
+    if (next !== 'off') {
+      setUserPaused(false)
+      setFocusWithin(false)
+    }
+  }
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -133,7 +160,8 @@ export function EngineSection({
     [engines],
   )
 
-  const rotationEnabled = rotationInterval !== 'off' && !focusWithin && tabOrder.length > 1
+  const rotationEnabled =
+    rotationInterval !== 'off' && !focusWithin && !userPaused && tabOrder.length > 1
   const { cycle, activeIntervalMs } = useTabRotation({
     order: tabOrder,
     activeTab,
@@ -174,7 +202,11 @@ export function EngineSection({
     : undefined
 
   return (
-    <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as string)} className="h-full">
+    <Tabs
+      value={activeTab}
+      onValueChange={(v) => handleTabChange(v as string)}
+      className="h-full"
+    >
       <Card className="bg-[#0d0d10] border-white/[0.04] h-full">
         <CardHeader className="flex flex-row justify-between items-center gap-4 min-w-0">
           <div className="shrink-0 flex items-center gap-4 min-w-0">
@@ -218,6 +250,7 @@ export function EngineSection({
             <TabsList
               variant="line"
               className="bg-transparent min-w-0 flex-nowrap gap-2 !h-auto overflow-x-auto overflow-y-visible py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              onPointerDown={() => setUserPaused(true)}
               onFocus={() => setFocusWithin(true)}
               onBlur={(e) => {
                 if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
@@ -251,7 +284,7 @@ export function EngineSection({
                 )
               })}
             </TabsList>
-            <TabRotationControl value={rotationInterval} onChange={setRotationInterval} />
+            <TabRotationControl value={rotationInterval} onChange={handleRotationIntervalChange} />
           </div>
         </CardHeader>
         <CardContent className="flex-1 min-h-0 flex flex-col">
