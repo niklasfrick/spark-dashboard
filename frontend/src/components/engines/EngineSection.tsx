@@ -7,8 +7,8 @@ import { GlobalEngineTab, GLOBAL_TAB_VALUE } from './GlobalEngineTab'
 import { GlobalEngineCard } from './GlobalEngineCard'
 import {
   TabRotationControl,
-  parseRotationInterval,
-  serializeRotationInterval,
+  parseRotationState,
+  serializeRotationState,
   type RotationInterval,
 } from './TabRotationControl'
 import { aggregateEngines, groupRunningByProvider } from '@/lib/engineAggregate'
@@ -104,10 +104,18 @@ export function EngineSection({
   requests,
 }: EngineSectionProps) {
   const [activeTab, setActiveTab] = useState<string>(GLOBAL_TAB_VALUE)
+  const [rotationEnabledState, setRotationEnabledState] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true
+    try {
+      return parseRotationState(window.localStorage.getItem(ROTATION_INTERVAL_STORAGE_KEY)).enabled
+    } catch {
+      return true
+    }
+  })
   const [rotationInterval, setRotationInterval] = useState<RotationInterval>(() => {
     if (typeof window === 'undefined') return 10000
     try {
-      return parseRotationInterval(window.localStorage.getItem(ROTATION_INTERVAL_STORAGE_KEY))
+      return parseRotationState(window.localStorage.getItem(ROTATION_INTERVAL_STORAGE_KEY)).interval
     } catch {
       return 10000
     }
@@ -133,12 +141,18 @@ export function EngineSection({
     setUserPaused(true)
   }
 
-  const handleRotationIntervalChange = (next: RotationInterval) => {
-    setRotationInterval(next)
-    if (next !== 'off') {
+  const handleRotationEnabledChange = (next: boolean) => {
+    setRotationEnabledState(next)
+    if (next) {
       setUserPaused(false)
       setFocusWithin(false)
     }
+  }
+
+  const handleRotationIntervalChange = (next: RotationInterval) => {
+    setRotationInterval(next)
+    setUserPaused(false)
+    setFocusWithin(false)
   }
 
   useEffect(() => {
@@ -146,12 +160,12 @@ export function EngineSection({
     try {
       window.localStorage.setItem(
         ROTATION_INTERVAL_STORAGE_KEY,
-        serializeRotationInterval(rotationInterval),
+        serializeRotationState({ enabled: rotationEnabledState, interval: rotationInterval }),
       )
     } catch {
       // ignore storage errors (private mode, quota, etc.)
     }
-  }, [rotationInterval])
+  }, [rotationEnabledState, rotationInterval])
 
   const aggregate = useMemo(() => aggregateEngines(engines), [engines])
   const providerGroups = useMemo(() => groupRunningByProvider(engines), [engines])
@@ -175,12 +189,12 @@ export function EngineSection({
   )
 
   const rotationEnabled =
-    rotationInterval !== 'off' && !focusWithin && !userPaused && tabOrder.length > 1
+    rotationEnabledState && !focusWithin && !userPaused && tabOrder.length > 1
   const { cycle, activeIntervalMs } = useTabRotation({
     order: tabOrder,
     activeTab,
     onAdvance: setActiveTab,
-    intervalMs: rotationInterval === 'off' ? 0 : rotationInterval,
+    intervalMs: rotationInterval,
     enabled: rotationEnabled,
   })
 
@@ -310,7 +324,18 @@ export function EngineSection({
               })}
             </TabsList>
             {showGlobalControls && (
-              <TabRotationControl value={rotationInterval} onChange={handleRotationIntervalChange} />
+              <>
+                <span
+                  aria-hidden="true"
+                  className="self-center h-5 w-px bg-white/[0.08] shrink-0"
+                />
+                <TabRotationControl
+                  enabled={rotationEnabledState}
+                  interval={rotationInterval}
+                  onEnabledChange={handleRotationEnabledChange}
+                  onIntervalChange={handleRotationIntervalChange}
+                />
+              </>
             )}
           </div>
         </CardHeader>
