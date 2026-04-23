@@ -11,9 +11,9 @@ memory.
 | Service       | Host port | Model                       | `--gpu-memory-utilization` | `--max-model-len` |
 |---------------|-----------|-----------------------------|----------------------------|-------------------|
 | `vllm-proxy`  | **8000**  | OpenResty reverse proxy     | —                          | —                 |
-| `vllm-small`  | 8001      | `Qwen/Qwen2.5-0.5B-Instruct`| 0.15                       | 4096              |
+| `vllm-small`  | 8001      | `unsloth/Llama-3.2-1B-Instruct` | 0.15                       | 4096              |
 | `vllm-medium` | 8002      | `Qwen/Qwen2.5-3B-Instruct`  | 0.20                       | 4096              |
-| `vllm-large`  | 8003      | `Qwen/Qwen2.5-7B-Instruct`  | 0.35                       | 4096              |
+| `vllm-large`  | 8003      | `google/gemma-4-E2B-it`     | 0.18                       | 4096              |
 
 Dashboard integration: the three vLLM containers are published on
 `:8001`, `:8002`, `:8003` so the dashboard's Docker detector sees each as
@@ -23,9 +23,11 @@ Sum of GPU memory reservations = 0.75 of the GPU-visible pool, leaving
 ~30 GB for the host OS, CPU workloads, and the dashboard itself on the
 Spark's ~120 GB GPU-addressable slice.
 
-All three models are open-weight and pullable without a HuggingFace auth
-token. Set `HF_TOKEN` in a sibling `.env` if you're rate-limited by
-`huggingface.co`.
+The small and medium models are open-weight and pullable without auth.
+The large slot (`google/gemma-4-E2B-it`) is **gated** — accept the model
+license on Hugging Face and put `HF_TOKEN=<your-token>` in a sibling
+`.env` before `docker compose up`. The same `.env` also avoids
+rate-limit pushback from `huggingface.co`.
 
 ## Prereqs
 
@@ -75,9 +77,9 @@ Accepted model ids (what goes in the `model` field of a request, or what
 
 | Id             | Upstream     | Aliases accepted                  |
 |----------------|--------------|-----------------------------------|
-| `qwen2.5-0.5b` | `vllm-small` | `Qwen/Qwen2.5-0.5B-Instruct`      |
+| `llama-3.2-1b` | `vllm-small` | `unsloth/Llama-3.2-1B-Instruct`   |
 | `qwen2.5-3b`   | `vllm-medium`| `Qwen/Qwen2.5-3B-Instruct`        |
-| `qwen2.5-7b`   | `vllm-large` | `Qwen/Qwen2.5-7B-Instruct`        |
+| `gemma-4-e2b`  | `vllm-large` | `google/gemma-4-E2B-it`           |
 
 Unknown model ids return a standard OpenAI error envelope with
 `code: "model_not_found"` (HTTP 404). Missing `model` in the body returns
@@ -88,9 +90,9 @@ Unknown model ids return a standard OpenAI error envelope with
 ```bash
 curl -sS http://localhost:8000/v1/models | jq .
 # -> { "object": "list", "data": [
-#      {"id": "qwen2.5-0.5b", ...},
+#      {"id": "llama-3.2-1b", ...},
 #      {"id": "qwen2.5-3b",   ...},
-#      {"id": "qwen2.5-7b",   ...}
+#      {"id": "gemma-4-e2b",  ...}
 #    ]}
 ```
 
@@ -100,7 +102,7 @@ curl -sS http://localhost:8000/v1/models | jq .
 curl -sS http://localhost:8000/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
-    "model": "qwen2.5-7b",
+    "model": "gemma-4-e2b",
     "messages": [{"role": "user", "content": "say hi"}],
     "max_tokens": 32
   }' | jq .
@@ -113,7 +115,7 @@ from openai import OpenAI
 client = OpenAI(base_url="http://<host>:8000/v1", api_key="dummy")
 
 print([m.id for m in client.models.list().data])
-# ['qwen2.5-0.5b', 'qwen2.5-3b', 'qwen2.5-7b']
+# ['llama-3.2-1b', 'qwen2.5-3b', 'gemma-4-e2b']
 
 resp = client.chat.completions.create(
     model="qwen2.5-3b",
@@ -157,7 +159,7 @@ the dev loop in `dev/dev.sh`), open the dashboard and:
 1. The **Global** tab should be selected by default and show
    `3 of 3 running`.
 2. Each of the three per-engine tabs should show its distinct model name
-   (`qwen2.5-0.5b`, `qwen2.5-3b`, `qwen2.5-7b`).
+   (`llama-3.2-1b`, `qwen2.5-3b`, `gemma-4-e2b`).
 3. Sending a request to one port lights up that engine's tab (active
    requests, throughput) while the Global tab aggregates across all three.
 

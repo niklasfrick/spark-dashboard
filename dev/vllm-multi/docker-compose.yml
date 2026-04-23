@@ -36,8 +36,8 @@ services:
     environment:
       - HF_TOKEN=${HF_TOKEN:-}
     command: >-
-      --model Qwen/Qwen2.5-0.5B-Instruct
-      --served-model-name qwen2.5-0.5b
+      --model unsloth/Llama-3.2-1B-Instruct
+      --served-model-name llama-3.2-1b
       --host 0.0.0.0
       --port 8000
       --gpu-memory-utilization 0.15
@@ -108,11 +108,11 @@ services:
     environment:
       - HF_TOKEN=${HF_TOKEN:-}
     command: >-
-      --model Qwen/Qwen2.5-7B-Instruct
-      --served-model-name qwen2.5-7b
+      --model google/gemma-4-E2B-it
+      --served-model-name gemma-4-e2b
       --host 0.0.0.0
       --port 8000
-      --gpu-memory-utilization 0.35
+      --gpu-memory-utilization 0.18
       --max-model-len 4096
       --enforce-eager
     deploy:
