@@ -1,11 +1,16 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList } from '@/components/ui/tabs'
 import { EngineTab } from './EngineTab'
 import { EngineCard } from './EngineCard'
 import { GlobalEngineTab, GLOBAL_TAB_VALUE } from './GlobalEngineTab'
 import { GlobalEngineCard } from './GlobalEngineCard'
-import { TabRotationControl, type RotationInterval } from './TabRotationControl'
+import {
+  TabRotationControl,
+  parseRotationInterval,
+  serializeRotationInterval,
+  type RotationInterval,
+} from './TabRotationControl'
 import { aggregateEngines } from '@/lib/engineAggregate'
 import { engineDisplayName } from '@/lib/format'
 import { getProviderLogo } from '@/lib/providerLogo'
@@ -17,6 +22,8 @@ import type { InferenceRequest } from '@/types/events'
 const ENGINE_ICON: Record<EngineType, string> = {
   Vllm: '/icons/vllm.svg',
 }
+
+const ROTATION_INTERVAL_STORAGE_KEY = 'spark-dashboard:engine-rotation-interval'
 
 function EngineChip({ label, iconSrc }: { label: string; iconSrc?: string }) {
   return (
@@ -97,8 +104,27 @@ export function EngineSection({
   requests,
 }: EngineSectionProps) {
   const [activeTab, setActiveTab] = useState<string>(GLOBAL_TAB_VALUE)
-  const [rotationInterval, setRotationInterval] = useState<RotationInterval>(10000)
+  const [rotationInterval, setRotationInterval] = useState<RotationInterval>(() => {
+    if (typeof window === 'undefined') return 10000
+    try {
+      return parseRotationInterval(window.localStorage.getItem(ROTATION_INTERVAL_STORAGE_KEY))
+    } catch {
+      return 10000
+    }
+  })
   const [focusWithin, setFocusWithin] = useState(false)
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      window.localStorage.setItem(
+        ROTATION_INTERVAL_STORAGE_KEY,
+        serializeRotationInterval(rotationInterval),
+      )
+    } catch {
+      // ignore storage errors (private mode, quota, etc.)
+    }
+  }, [rotationInterval])
 
   const aggregate = useMemo(() => aggregateEngines(engines), [engines])
 

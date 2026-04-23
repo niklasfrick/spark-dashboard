@@ -13,11 +13,11 @@ const OPTIONS: { value: RotationInterval; label: string }[] = [
   { value: 'off', label: 'Off' },
 ]
 
-function serialize(value: RotationInterval): string {
+export function serializeRotationInterval(value: RotationInterval): string {
   return value === 'off' ? 'off' : String(value)
 }
 
-function parse(raw: string): RotationInterval {
+export function parseRotationInterval(raw: string | null | undefined): RotationInterval {
   if (raw === 'off') return 'off'
   const n = Number(raw)
   if (n === 3000 || n === 5000 || n === 10000 || n === 20000) return n
@@ -31,15 +31,15 @@ export function TabRotationControl({ value, onChange }: TabRotationControlProps)
       <div className="relative">
         <select
           aria-label="Tab rotation interval"
-          value={serialize(value)}
+          value={serializeRotationInterval(value)}
           onChange={(e) => {
-            onChange(parse(e.target.value))
+            onChange(parseRotationInterval(e.target.value))
             e.currentTarget.blur()
           }}
           className="appearance-none bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.06] rounded-md pl-2 pr-6 py-1 text-[11px] text-zinc-200 tabular-nums leading-none focus:outline-none focus:ring-1 focus:ring-[#76B900]/60 transition-colors"
         >
           {OPTIONS.map((opt) => (
-            <option key={opt.label} value={serialize(opt.value)} className="bg-[#0d0d10] text-zinc-200">
+            <option key={opt.label} value={serializeRotationInterval(opt.value)} className="bg-[#0d0d10] text-zinc-200">
               {opt.label}
             </option>
           ))}
