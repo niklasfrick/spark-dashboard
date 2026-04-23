@@ -119,7 +119,7 @@ export function EngineCard({
           {/* ── Grouped metrics with trend arrows — 4 categories ── */}
           <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 py-1.5">
             {/* Prefill Throughput */}
-            <div className="bg-white/[0.02] rounded-md px-2.5 py-2">
+            <div className="bg-white/[0.02] rounded-md px-4 py-3.5">
               <div className="text-sm font-semibold text-zinc-300 tracking-tight mb-2">Prompt Processing / Prefill Throughput</div>
               <div className="grid grid-cols-1 gap-2">
                 <MetricTile label="Live" value={fmtVal(promptTps, formatTps)} unit="tok/s" trend={promptTpsTrend} />
@@ -129,7 +129,7 @@ export function EngineCard({
             </div>
 
             {/* Decode Throughput */}
-            <div className="bg-white/[0.02] rounded-md px-2.5 py-2">
+            <div className="bg-white/[0.02] rounded-md px-4 py-3.5">
               <div className="text-sm font-semibold text-zinc-300 tracking-tight mb-2">Token Generation / Decode Throughput</div>
               <div className="grid grid-cols-1 gap-2">
                 <MetricTile label="Live" value={fmtVal(tps, formatTps)} unit="tok/s" trend={tpsTrend} />
@@ -139,7 +139,7 @@ export function EngineCard({
             </div>
 
             {/* Latency */}
-            <div className="bg-white/[0.02] rounded-md px-2.5 py-2">
+            <div className="bg-white/[0.02] rounded-md px-4 py-3.5">
               <div className="text-sm font-semibold text-zinc-300 tracking-tight mb-2">Latency</div>
               <div className="grid grid-cols-2 gap-2">
                 <MetricTile label="TTFT" value={fmtVal(ttft, formatTtft)} unit="ms" trend={ttftTrend} invertTrend />
@@ -150,7 +150,7 @@ export function EngineCard({
             </div>
 
             {/* Requests */}
-            <div className="bg-white/[0.02] rounded-md px-2.5 py-2">
+            <div className="bg-white/[0.02] rounded-md px-4 py-3.5">
               <div className="text-sm font-semibold text-zinc-300 tracking-tight mb-2">Requests</div>
               <div className="grid grid-cols-2 gap-2">
                 <MetricTile label="Active" value={fmtInt(activeReqs)} />
@@ -166,7 +166,7 @@ export function EngineCard({
             </div>
 
             {/* Cache */}
-            <div className="bg-white/[0.02] rounded-md px-2.5 py-2">
+            <div className="bg-white/[0.02] rounded-md px-4 py-3.5">
               <div className="text-sm font-semibold text-zinc-300 tracking-tight mb-2">Cache</div>
               <div className="grid grid-cols-2 gap-2">
                 <div className="flex flex-col gap-0.5 min-w-0">

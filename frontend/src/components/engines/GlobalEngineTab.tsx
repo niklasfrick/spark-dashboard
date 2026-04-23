@@ -24,10 +24,10 @@ export function GlobalEngineTab({
     <TabsTrigger
       value={GLOBAL_TAB_VALUE}
       className="relative flex items-center gap-2.5 px-6 py-4 leading-none rounded-md transition-colors duration-200 !flex-initial hover:bg-white/[0.03] data-[active]:bg-white/[0.05] data-[active]:border-b-2 data-[active]:border-[#76B900]"
-      aria-label={`Global aggregate view · ${runningCount} engines running`}
+      aria-label={`All engines aggregate view · ${runningCount} engines running`}
     >
       <span className="text-xs font-semibold tracking-tight leading-none text-zinc-200">
-        Global
+        All
       </span>
       {showBar && (
         <span

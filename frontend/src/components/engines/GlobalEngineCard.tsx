@@ -9,7 +9,7 @@ interface GlobalEngineCardProps {
 /** Styled to match the metric-group tiles below (same bg/radius/padding idiom). */
 function RunningCountCard({ count }: { count: number }) {
   return (
-    <div className="bg-white/[0.02] rounded-md px-2.5 py-2 w-fit">
+    <div className="bg-white/[0.02] rounded-md px-4 py-3.5 w-fit">
       <div className="text-sm font-semibold text-zinc-300 tracking-tight mb-2">
         Engines Running
       </div>
@@ -65,7 +65,7 @@ export function GlobalEngineCard({ snapshot }: GlobalEngineCardProps) {
       {/* ── Grouped aggregate metrics — matches EngineCard layout ── */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 py-1.5">
         {/* Prefill Throughput */}
-        <div className="bg-white/[0.02] rounded-md px-2.5 py-2">
+        <div className="bg-white/[0.02] rounded-md px-4 py-3.5">
           <div className="text-sm font-semibold text-zinc-300 tracking-tight mb-2">
             Prompt Processing / Prefill Throughput
             <span className="ml-1 text-[10px] font-normal text-zinc-500">(sum)</span>
@@ -78,7 +78,7 @@ export function GlobalEngineCard({ snapshot }: GlobalEngineCardProps) {
         </div>
 
         {/* Decode Throughput */}
-        <div className="bg-white/[0.02] rounded-md px-2.5 py-2">
+        <div className="bg-white/[0.02] rounded-md px-4 py-3.5">
           <div className="text-sm font-semibold text-zinc-300 tracking-tight mb-2">
             Token Generation / Decode Throughput
             <span className="ml-1 text-[10px] font-normal text-zinc-500">(sum)</span>
@@ -91,7 +91,7 @@ export function GlobalEngineCard({ snapshot }: GlobalEngineCardProps) {
         </div>
 
         {/* Latency */}
-        <div className="bg-white/[0.02] rounded-md px-2.5 py-2">
+        <div className="bg-white/[0.02] rounded-md px-4 py-3.5">
           <div className="text-sm font-semibold text-zinc-300 tracking-tight mb-2">
             Latency
             <span className="ml-1 text-[10px] font-normal text-zinc-500">(weighted)</span>
@@ -105,7 +105,7 @@ export function GlobalEngineCard({ snapshot }: GlobalEngineCardProps) {
         </div>
 
         {/* Requests */}
-        <div className="bg-white/[0.02] rounded-md px-2.5 py-2">
+        <div className="bg-white/[0.02] rounded-md px-4 py-3.5">
           <div className="text-sm font-semibold text-zinc-300 tracking-tight mb-2">
             Requests
             <span className="ml-1 text-[10px] font-normal text-zinc-500">(sum)</span>
@@ -124,7 +124,7 @@ export function GlobalEngineCard({ snapshot }: GlobalEngineCardProps) {
         </div>
 
         {/* Cache */}
-        <div className="bg-white/[0.02] rounded-md px-2.5 py-2">
+        <div className="bg-white/[0.02] rounded-md px-4 py-3.5">
           <div className="text-sm font-semibold text-zinc-300 tracking-tight mb-2">
             Cache
             <span className="ml-1 text-[10px] font-normal text-zinc-500">(avg)</span>
