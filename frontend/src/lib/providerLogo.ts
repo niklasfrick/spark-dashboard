@@ -13,8 +13,7 @@ const ORG_ALIAS: Record<string, string> = {
   mistralai: 'mistral-ai',
   'deepseek-ai': 'deepseek',
   'meta-llama': 'meta',
-  huggingface: 'hugging-face',
-  xai: 'grok',
+  moonshotai: 'moonshot-ai',
 }
 
 /** Providers whose HF org prefix (lowercased) matches the local slug exactly. */
@@ -23,14 +22,11 @@ const ORG_IDENTITY: ReadonlySet<string> = new Set([
   'google',
   'openai',
   'microsoft',
-  'perplexity',
-  'ollama',
   'meta',
   'nvidia',
   'deepseek',
-  'grok',
-  'hugging-face',
   'mistral-ai',
+  'moonshot-ai',
 ])
 
 /**
@@ -48,7 +44,7 @@ const KEYWORD_FALLBACKS: { keyword: string; slug: string; alt: string }[] = [
   { keyword: 'gemma', slug: 'google', alt: 'Google' },
   { keyword: 'gemini', slug: 'google', alt: 'Google' },
   { keyword: 'phi-', slug: 'microsoft', alt: 'Microsoft' },
-  { keyword: 'grok', slug: 'grok', alt: 'Grok' },
+  { keyword: 'kimi', slug: 'moonshot-ai', alt: 'Moonshot AI' },
   { keyword: 'gpt-', slug: 'openai', alt: 'OpenAI' },
 ]
 

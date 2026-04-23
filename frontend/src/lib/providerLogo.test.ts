@@ -24,12 +24,10 @@ describe('getProviderLogo', () => {
     expect(getProviderLogo('deepseek-ai/DeepSeek-V3')?.slug).toBe('deepseek')
   })
 
-  it('maps xai to the grok asset', () => {
-    expect(getProviderLogo('xai/grok-1')?.slug).toBe('grok')
-  })
-
-  it('maps huggingface to the hugging-face asset', () => {
-    expect(getProviderLogo('huggingface/zephyr-7b-beta')?.slug).toBe('hugging-face')
+  it('maps moonshotai to the moonshot-ai asset', () => {
+    const logo = getProviderLogo('moonshotai/Kimi-K2-Instruct')
+    expect(logo?.slug).toBe('moonshot-ai')
+    expect(logo?.url).toBe('/icons/providers/moonshot-ai.svg')
   })
 
   it('is case-insensitive on the org prefix', () => {
