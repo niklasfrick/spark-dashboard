@@ -1,4 +1,5 @@
 import type { EngineSnapshot } from '@/types/metrics'
+import { getProviderLogo, type ProviderLogo } from './providerLogo'
 
 /**
  * Aggregated metrics across multiple engines for the "Global" dashboard tab.
@@ -105,6 +106,69 @@ function emptySnapshot(totalCount: number): AggregateSnapshot {
     kv_cache_percent: null,
     prefix_cache_hit_rate: null,
   }
+}
+
+/**
+ * One entry per distinct provider among the running engines — used by the
+ * "All Engines" header to show per-provider pill chips in place of a subtitle.
+ */
+export interface ProviderGroup {
+  /** Null when the served model has no recognizable provider. */
+  logo: ProviderLogo | null
+  /** Display label: resolved provider name, raw `Org/` prefix, or 'Unknown'. */
+  label: string
+  /** Stable React key — slug for resolved providers, fallback key otherwise. */
+  key: string
+  /** Count of running engines whose served model maps to this provider. */
+  count: number
+}
+
+/**
+ * Groups running engines by the provider of their served model. Providers
+ * with no resolvable logo fall back to the raw `Org/` prefix or 'unknown'
+ * so every running engine is still accounted for.
+ */
+export function groupRunningByProvider(
+  engines: readonly EngineSnapshot[],
+): ProviderGroup[] {
+  const groups = new Map<string, ProviderGroup>()
+  for (const e of engines) {
+    if (e.status.type !== 'Running') continue
+    const name = e.model?.name ?? null
+    const logo = getProviderLogo(name)
+
+    let key: string
+    let label: string
+    if (logo) {
+      key = logo.slug
+      label = logo.alt
+    } else if (name) {
+      const slashIdx = name.indexOf('/')
+      const rawPrefix = slashIdx > 0 ? name.slice(0, slashIdx).trim() : ''
+      if (rawPrefix) {
+        key = `raw:${rawPrefix.toLowerCase()}`
+        label = rawPrefix
+      } else {
+        key = 'unknown'
+        label = 'Unknown'
+      }
+    } else {
+      key = 'unknown'
+      label = 'Unknown'
+    }
+
+    const existing = groups.get(key)
+    if (existing) {
+      existing.count += 1
+    } else {
+      groups.set(key, { logo, label, key, count: 1 })
+    }
+  }
+
+  return [...groups.values()].sort((a, b) => {
+    if (b.count !== a.count) return b.count - a.count
+    return a.label.localeCompare(b.label)
+  })
 }
 
 export function aggregateEngines(engines: readonly EngineSnapshot[]): AggregateSnapshot {

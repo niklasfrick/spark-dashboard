@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { aggregateEngines } from './engineAggregate'
+import { aggregateEngines, groupRunningByProvider } from './engineAggregate'
 import type { EngineMetrics, EngineSnapshot, EngineStatus } from '@/types/metrics'
 
 function fullMetrics(overrides: Partial<EngineMetrics> = {}): EngineMetrics {
@@ -152,5 +152,89 @@ describe('aggregateEngines', () => {
     expect(snap.running_count).toBe(0)
     expect(snap.total_count).toBe(2)
     expect(snap.tokens_per_sec).toBeNull()
+  })
+})
+
+function engineWithModel(
+  status: EngineStatus['type'],
+  modelName: string | null,
+  endpoint = 'http://localhost:8000',
+): EngineSnapshot {
+  return {
+    engine_type: 'Vllm',
+    endpoint,
+    status: status === 'Error' ? { type: 'Error', message: 'boom' } : { type: status },
+    model: modelName === null ? null : { name: modelName, parameter_size: null, quantization: null },
+    metrics: null,
+    recent_requests: [],
+    deployment_mode: 'Docker',
+  }
+}
+
+describe('groupRunningByProvider', () => {
+  it('returns [] for no engines', () => {
+    expect(groupRunningByProvider([])).toEqual([])
+  })
+
+  it('groups two running engines from the same provider into one entry with count 2', () => {
+    const groups = groupRunningByProvider([
+      engineWithModel('Running', 'meta-llama/Llama-3.1-8B-Instruct', 'a'),
+      engineWithModel('Running', 'meta-llama/Llama-3.2-3B-Instruct', 'b'),
+    ])
+    expect(groups).toHaveLength(1)
+    expect(groups[0].key).toBe('meta')
+    expect(groups[0].label).toBe('meta-llama')
+    expect(groups[0].count).toBe(2)
+    expect(groups[0].logo?.slug).toBe('meta')
+  })
+
+  it('ignores non-Running engines', () => {
+    const groups = groupRunningByProvider([
+      engineWithModel('Running', 'Qwen/Qwen2.5-7B-Instruct', 'a'),
+      engineWithModel('Stopped', 'Qwen/Qwen2.5-14B', 'b'),
+      engineWithModel('Loading', 'meta-llama/Llama-3.1-8B-Instruct', 'c'),
+      engineWithModel('Error', 'OpenAI/gpt-oss', 'd'),
+    ])
+    expect(groups).toHaveLength(1)
+    expect(groups[0].key).toBe('qwen')
+    expect(groups[0].count).toBe(1)
+  })
+
+  it('sorts groups by count desc, then label asc', () => {
+    const groups = groupRunningByProvider([
+      engineWithModel('Running', 'Qwen/Qwen2.5-7B', 'a'),
+      engineWithModel('Running', 'meta-llama/Llama-3.1-8B', 'b'),
+      engineWithModel('Running', 'meta-llama/Llama-3.2-3B', 'c'),
+      engineWithModel('Running', 'OpenAI/gpt-oss-20b', 'd'),
+    ])
+    expect(groups.map((g) => [g.key, g.count])).toEqual([
+      ['meta', 2],
+      ['openai', 1],
+      ['qwen', 1],
+    ])
+  })
+
+  it('falls back to raw org prefix with null logo for unrecognized providers', () => {
+    const groups = groupRunningByProvider([
+      engineWithModel('Running', 'some-random-org/weird-model', 'a'),
+      engineWithModel('Running', 'some-random-org/other-model', 'b'),
+    ])
+    expect(groups).toHaveLength(1)
+    expect(groups[0].logo).toBeNull()
+    expect(groups[0].label).toBe('some-random-org')
+    expect(groups[0].key).toBe('raw:some-random-org')
+    expect(groups[0].count).toBe(2)
+  })
+
+  it('falls back to Unknown when the model has no name or no org prefix', () => {
+    const groups = groupRunningByProvider([
+      engineWithModel('Running', null, 'a'),
+      engineWithModel('Running', 'totally-opaque-name', 'b'),
+    ])
+    expect(groups).toHaveLength(1)
+    expect(groups[0].key).toBe('unknown')
+    expect(groups[0].label).toBe('Unknown')
+    expect(groups[0].logo).toBeNull()
+    expect(groups[0].count).toBe(2)
   })
 })

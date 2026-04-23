@@ -27,7 +27,7 @@ export function GlobalEngineTab({
       aria-label={`All engines aggregate view · ${runningCount} engines running`}
     >
       <span className="text-xs font-semibold tracking-tight leading-none text-zinc-200">
-        All
+        All ({runningCount})
       </span>
       {showBar && (
         <span

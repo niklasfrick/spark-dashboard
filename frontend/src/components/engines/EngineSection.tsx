@@ -11,7 +11,7 @@ import {
   serializeRotationInterval,
   type RotationInterval,
 } from './TabRotationControl'
-import { aggregateEngines } from '@/lib/engineAggregate'
+import { aggregateEngines, groupRunningByProvider } from '@/lib/engineAggregate'
 import { engineDisplayName } from '@/lib/format'
 import { getProviderLogo } from '@/lib/providerLogo'
 import { useTabRotation } from '@/hooks/useTabRotation'
@@ -154,6 +154,7 @@ export function EngineSection({
   }, [rotationInterval])
 
   const aggregate = useMemo(() => aggregateEngines(engines), [engines])
+  const providerGroups = useMemo(() => groupRunningByProvider(engines), [engines])
 
   const tabOrder = useMemo(
     () => [GLOBAL_TAB_VALUE, ...engines.map((e) => `${e.engine_type}-${e.endpoint}`)],
@@ -197,9 +198,6 @@ export function EngineSection({
     : activeEngine?.model?.name ?? 'No Model Loaded'
 
   const headerProviderLogo = !isGlobal ? getProviderLogo(activeEngine?.model?.name) : null
-  const globalDetail = isGlobal && aggregate.total_count > 0
-    ? `${aggregate.total_count} ${aggregate.total_count === 1 ? 'engine' : 'engines'} · ${aggregate.running_count} running`
-    : undefined
 
   return (
     <Tabs
@@ -228,7 +226,17 @@ export function EngineSection({
                 {headerTitle}
               </CardTitle>
               {isGlobal ? (
-                globalDetail && <p className="text-sm text-zinc-500 mt-0.5">{globalDetail}</p>
+                providerGroups.length > 0 && (
+                  <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+                    {providerGroups.map((g) => (
+                      <EngineChip
+                        key={g.key}
+                        label={`${g.label} (${g.count})`}
+                        iconSrc={g.logo?.url}
+                      />
+                    ))}
+                  </div>
+                )
               ) : activeEngine ? (
                 <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
                   <EngineChip
