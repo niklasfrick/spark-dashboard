@@ -207,10 +207,11 @@ export function EngineCard({
                 requests={requestSpans}
               />
               <TimeSeriesChart
-                title="TTFT & Queue"
+                title="TTFT, Queue & ITL"
                 series={[
                   { data: chartData.ttft, label: 'TTFT', color: '#f59e0b' },
                   { data: chartData.queueTime, label: 'Queue', color: '#8b5cf6' },
+                  { data: chartData.interTokenLatency, label: 'ITL', color: '#14b8a6' },
                 ]}
                 unit="ms"
                 height={120}
