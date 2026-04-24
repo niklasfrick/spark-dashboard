@@ -106,6 +106,7 @@ export interface EngineMetrics {
   swapped_requests: number | null
   prefix_cache_hit_rate: number | null
   queue_time_ms: number | null
+  inter_token_latency_ms: number | null
   preemptions_total: number | null
   avg_batch_size: number | null
 }

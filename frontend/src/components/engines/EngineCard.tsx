@@ -54,6 +54,7 @@ interface EngineCardProps {
     avgPromptTps: ChartDataPoint[]
     perReqPromptTps: ChartDataPoint[]
     queueTime: ChartDataPoint[]
+    interTokenLatency: ChartDataPoint[]
     batchSize: ChartDataPoint[]
   }
   requests?: InferenceRequest[]
@@ -82,6 +83,7 @@ export function EngineCard({
   const ttft = v('ttft_ms')
   const e2eLatency = v('e2e_latency_ms')
   const queueTime = v('queue_time_ms')
+  const interTokenLatency = v('inter_token_latency_ms')
   const batchSize = v('avg_batch_size')
   const activeReqs = v('active_requests')
   const queuedReqs = v('queued_requests')
@@ -103,6 +105,7 @@ export function EngineCard({
   const ttftTrend: Trend = chartData ? computeTrend(chartData.ttft) : 'stable'
   const e2eTrend: Trend = chartData ? computeTrend(chartData.e2eLatency) : 'stable'
   const queueTrend: Trend = chartData ? computeTrend(chartData.queueTime) : 'stable'
+  const itlTrend: Trend = chartData ? computeTrend(chartData.interTokenLatency) : 'stable'
   const batchTrend: Trend = chartData ? computeTrend(chartData.batchSize) : 'stable'
   const kvTrend: Trend = chartData ? computeTrend(chartData.kv) : 'stable'
 
@@ -145,6 +148,7 @@ export function EngineCard({
                 <MetricTile label="TTFT" value={fmtVal(ttft, formatTtft)} unit="ms" trend={ttftTrend} invertTrend />
                 <MetricTile label="E2E" value={e2eFmt.value} unit={e2eFmt.unit} trend={e2eTrend} invertTrend />
                 <MetricTile label="Queue Wait" value={fmtVal(queueTime, formatTtft)} unit="ms" trend={queueTrend} invertTrend />
+                <MetricTile label="ITL" value={fmtVal(interTokenLatency, formatTtft)} unit="ms" trend={itlTrend} invertTrend />
                 <MetricTile label="Batch Size" value={batchSize !== null ? batchSize.toFixed(1) : '--'} unit="/step" trend={batchTrend} />
               </div>
             </div>

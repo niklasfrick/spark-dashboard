@@ -73,6 +73,9 @@ pub struct EngineMetrics {
     pub prefix_cache_hit_rate: Option<f64>,
     /// Average time a request spends waiting in the queue (ms).
     pub queue_time_ms: Option<f64>,
+    /// Average inter-token latency during decode in milliseconds
+    /// (gap between successive generated tokens).
+    pub inter_token_latency_ms: Option<f64>,
     /// Cumulative count of scheduling preemptions.
     pub preemptions_total: Option<u64>,
     /// Average tokens processed per engine iteration step (batch size proxy).

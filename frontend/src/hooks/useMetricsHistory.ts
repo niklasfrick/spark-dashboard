@@ -118,6 +118,7 @@ export function useMetricsHistory(
           avgPromptTps: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
           perReqPromptTps: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
           queueTime: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
+          interTokenLatency: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
           batchSize: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
         }
       }
@@ -155,6 +156,9 @@ export function useMetricsHistory(
         }
         if (engine.metrics.queue_time_ms !== null) {
           eb.queueTime.push({ timestamp: ts, value: engine.metrics.queue_time_ms })
+        }
+        if (engine.metrics.inter_token_latency_ms !== null) {
+          eb.interTokenLatency.push({ timestamp: ts, value: engine.metrics.inter_token_latency_ms })
         }
         if (engine.metrics.avg_batch_size !== null) {
           eb.batchSize.push({ timestamp: ts, value: engine.metrics.avg_batch_size })

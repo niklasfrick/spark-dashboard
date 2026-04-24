@@ -91,6 +91,33 @@ vllm:prefix_cache_hits_total 42.0
         );
     }
 
+    /// vLLM exposes inter-token latency as a histogram. The `_sum` / `_count`
+    /// samples come through as Untyped lines, and must land in `counters`
+    /// under the colon-normalized name so the vllm adapter can compute
+    /// `sum / count` for the average ITL tile.
+    #[test]
+    fn captures_inter_token_latency_histogram() {
+        let body = "\
+# HELP vllm:inter_token_latency_seconds Histogram of inter-token latency in seconds.
+# TYPE vllm:inter_token_latency_seconds histogram
+vllm:inter_token_latency_seconds_bucket{le=\"0.01\"} 10
+vllm:inter_token_latency_seconds_bucket{le=\"+Inf\"} 100
+vllm:inter_token_latency_seconds_sum 5.0
+vllm:inter_token_latency_seconds_count 100.0
+";
+        let parsed = parse_prometheus_text(body).expect("parse");
+        assert_eq!(
+            parsed.counters.get("vllm_inter_token_latency_seconds_sum"),
+            Some(&5.0)
+        );
+        assert_eq!(
+            parsed
+                .counters
+                .get("vllm_inter_token_latency_seconds_count"),
+            Some(&100.0)
+        );
+    }
+
     #[test]
     fn missing_prefix_cache_counters_parse_cleanly() {
         let body = "\

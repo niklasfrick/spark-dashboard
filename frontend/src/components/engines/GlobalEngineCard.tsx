@@ -33,6 +33,7 @@ export function GlobalEngineCard({ snapshot }: GlobalEngineCardProps) {
     ttft_ms,
     e2e_latency_ms,
     queue_time_ms,
+    inter_token_latency_ms,
     avg_batch_size,
     active_requests,
     queued_requests,
@@ -100,6 +101,7 @@ export function GlobalEngineCard({ snapshot }: GlobalEngineCardProps) {
             <MetricTile label="TTFT" value={fmtVal(ttft_ms, formatTtft)} unit="ms" />
             <MetricTile label="E2E" value={e2eFmt.value} unit={e2eFmt.unit} />
             <MetricTile label="Queue Wait" value={fmtVal(queue_time_ms, formatTtft)} unit="ms" />
+            <MetricTile label="ITL" value={fmtVal(inter_token_latency_ms, formatTtft)} unit="ms" />
             <MetricTile label="Batch Size" value={avg_batch_size !== null ? avg_batch_size.toFixed(1) : '--'} unit="/step" />
           </div>
         </div>

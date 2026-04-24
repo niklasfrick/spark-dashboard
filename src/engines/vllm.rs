@@ -324,6 +324,20 @@ impl EngineAdapter for VllmAdapter {
             }
         };
 
+        // Average inter-token latency during decode (from histogram).
+        // Guard against count == 0 so the tile stays blank until the engine
+        // has streamed at least one inter-token gap.
+        let inter_token_latency_ms = {
+            let sum = parsed.counters.get("vllm_inter_token_latency_seconds_sum");
+            let count = parsed
+                .counters
+                .get("vllm_inter_token_latency_seconds_count");
+            match (sum, count) {
+                (Some(&s), Some(&c)) if c > 0.0 => Some((s / c) * 1000.0),
+                _ => None,
+            }
+        };
+
         Some(EngineMetrics {
             tokens_per_sec,
             avg_tokens_per_sec,
@@ -341,6 +355,7 @@ impl EngineAdapter for VllmAdapter {
             swapped_requests,
             prefix_cache_hit_rate,
             queue_time_ms,
+            inter_token_latency_ms,
             preemptions_total,
             avg_batch_size,
         })

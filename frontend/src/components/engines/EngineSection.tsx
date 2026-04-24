@@ -87,6 +87,7 @@ interface EngineChartData {
   avgPromptTps: ChartDataPoint[]
   perReqPromptTps: ChartDataPoint[]
   queueTime: ChartDataPoint[]
+  interTokenLatency: ChartDataPoint[]
   batchSize: ChartDataPoint[]
 }
 
@@ -359,6 +360,7 @@ export function EngineSection({
                   avgPromptTps: getChartData(`${engineKey}:avgPromptTps`),
                   perReqPromptTps: getChartData(`${engineKey}:perReqPromptTps`),
                   queueTime: getChartData(`${engineKey}:queueTime`),
+                  interTokenLatency: getChartData(`${engineKey}:interTokenLatency`),
                   batchSize: getChartData(`${engineKey}:batchSize`),
                 }
               : undefined
