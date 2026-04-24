@@ -99,13 +99,11 @@ vllm:prefix_cache_hits_total 42.0
 vllm:num_requests_running 0.0
 ";
         let parsed = parse_prometheus_text(body).expect("parse");
-        assert!(parsed
+        assert!(!parsed
             .counters
-            .get("vllm_prefix_cache_hits_total")
-            .is_none());
-        assert!(parsed
+            .contains_key("vllm_prefix_cache_hits_total"));
+        assert!(!parsed
             .counters
-            .get("vllm_prefix_cache_queries_total")
-            .is_none());
+            .contains_key("vllm_prefix_cache_queries_total"));
     }
 }
