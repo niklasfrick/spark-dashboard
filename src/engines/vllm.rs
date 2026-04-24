@@ -285,11 +285,18 @@ impl EngineAdapter for VllmAdapter {
             .get("vllm_num_requests_swapped")
             .map(|v| *v as u64);
 
-        // GPU prefix cache hit rate (0.0-1.0 gauge → 0-100%)
-        let prefix_cache_hit_rate = parsed
-            .gauges
-            .get("vllm_gpu_prefix_cache_hit_rate")
-            .map(|v| v * 100.0);
+        // Prefix cache hit rate as percentage, computed from the two counters
+        // vLLM exposes (vllm:prefix_cache_hits / vllm:prefix_cache_queries).
+        // Guard against queries == 0 so the tile stays blank until the engine
+        // has served at least one prompt.
+        let prefix_cache_hit_rate = {
+            let hits = parsed.counters.get("vllm_prefix_cache_hits_total");
+            let queries = parsed.counters.get("vllm_prefix_cache_queries_total");
+            match (hits, queries) {
+                (Some(&h), Some(&q)) if q > 0.0 => Some((h / q) * 100.0),
+                _ => None,
+            }
+        };
 
         // Average queue wait time (from histogram)
         let queue_time_ms = {

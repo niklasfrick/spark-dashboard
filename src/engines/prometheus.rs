@@ -61,3 +61,51 @@ pub fn parse_prometheus_text(body: &str) -> Option<ParsedMetrics> {
 
     Some(ParsedMetrics { gauges, counters })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// vLLM exposes prefix cache activity as two counters. The Prometheus
+    /// client library auto-appends `_total` in the exposition format, and our
+    /// normalizer rewrites `vllm:` to `vllm_`. Both names must land in
+    /// `counters` for the hit-rate computation in vllm.rs to work.
+    #[test]
+    fn captures_prefix_cache_counters() {
+        let body = "\
+# HELP vllm:prefix_cache_queries Cached tokens queried.
+# TYPE vllm:prefix_cache_queries counter
+vllm:prefix_cache_queries_total 100.0
+# HELP vllm:prefix_cache_hits Cached tokens hit.
+# TYPE vllm:prefix_cache_hits counter
+vllm:prefix_cache_hits_total 42.0
+";
+        let parsed = parse_prometheus_text(body).expect("parse");
+        assert_eq!(
+            parsed.counters.get("vllm_prefix_cache_queries_total"),
+            Some(&100.0)
+        );
+        assert_eq!(
+            parsed.counters.get("vllm_prefix_cache_hits_total"),
+            Some(&42.0)
+        );
+    }
+
+    #[test]
+    fn missing_prefix_cache_counters_parse_cleanly() {
+        let body = "\
+# HELP vllm:num_requests_running Running requests.
+# TYPE vllm:num_requests_running gauge
+vllm:num_requests_running 0.0
+";
+        let parsed = parse_prometheus_text(body).expect("parse");
+        assert!(parsed
+            .counters
+            .get("vllm_prefix_cache_hits_total")
+            .is_none());
+        assert!(parsed
+            .counters
+            .get("vllm_prefix_cache_queries_total")
+            .is_none());
+    }
+}
