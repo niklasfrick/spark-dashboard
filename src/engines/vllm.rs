@@ -1,7 +1,8 @@
-use super::histogram::percentile;
+use super::histogram::{fraction_le, percentile};
 use super::prometheus::parse_prometheus_text;
 use super::{
     EngineAdapter, EngineMetrics, EngineStatus, EngineType, LatencyPercentiles, ModelInfo,
+    E2E_SLO_MS, ITL_SLO_MS, TTFT_SLO_MS,
 };
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -366,6 +367,17 @@ impl EngineAdapter for VllmAdapter {
         let itl_percentiles = percentiles_ms("vllm_inter_token_latency_seconds");
         let e2e_percentiles = percentiles_ms("vllm_e2e_request_latency_seconds");
 
+        // Goodput: % of histogram observations meeting the SLO. Thresholds
+        // come in milliseconds; the histograms are in seconds, so divide by
+        // 1000 before passing to fraction_le.
+        let goodput_pct = |metric: &str, slo_ms: f64| -> Option<f64> {
+            let buckets = parsed.histograms.get(metric)?;
+            fraction_le(buckets, slo_ms / 1000.0).map(|f| f * 100.0)
+        };
+        let ttft_goodput_pct = goodput_pct("vllm_time_to_first_token_seconds", TTFT_SLO_MS);
+        let itl_goodput_pct = goodput_pct("vllm_inter_token_latency_seconds", ITL_SLO_MS);
+        let e2e_goodput_pct = goodput_pct("vllm_e2e_request_latency_seconds", E2E_SLO_MS);
+
         Some(EngineMetrics {
             tokens_per_sec,
             avg_tokens_per_sec,
@@ -389,6 +401,9 @@ impl EngineAdapter for VllmAdapter {
             ttft_percentiles,
             itl_percentiles,
             e2e_percentiles,
+            ttft_goodput_pct,
+            itl_goodput_pct,
+            e2e_goodput_pct,
         })
     }
 }
