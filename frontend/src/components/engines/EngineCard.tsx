@@ -68,6 +68,9 @@ interface EngineCardProps {
     e2eP50: ChartDataPoint[]
     e2eP95: ChartDataPoint[]
     e2eP99: ChartDataPoint[]
+    activeRequests: ChartDataPoint[]
+    queuedRequests: ChartDataPoint[]
+    totalRequests: ChartDataPoint[]
   }
   requests?: InferenceRequest[]
   latencyMode?: LatencyMode
@@ -249,7 +252,7 @@ export function EngineCard({
           {/* ── Charts sit directly under the metric grid, aligned to the same 6-col layout ── */}
           {/* Chart columns mirror metric-card columns:
            *   1 Prefill · 2 Decode · 3 Latency · 4 SLO Goodput · 5 Requests · 6 Cache
-           * E2E sits under SLO Goodput (col 4); KV under Cache (col 6); col 5 (Requests) has no chart. */}
+           * E2E sits under SLO Goodput (col 4); Requests under col 5; KV under Cache (col 6). */}
           {showCharts && chartData && (
             <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 pt-1">
               <TimeSeriesChart
@@ -288,12 +291,22 @@ export function EngineCard({
                 requests={requestSpans}
               />
               <TimeSeriesChart
+                title="Requests"
+                series={[
+                  { data: chartData.activeRequests, label: 'Active', color: '#76B900', axis: 'left' },
+                  { data: chartData.queuedRequests, label: 'Queued', color: '#f59e0b', axis: 'left' },
+                  { data: chartData.totalRequests, label: 'Total', color: '#3b82f6', axis: 'right' },
+                ]}
+                unit=""
+                height="clamp(72px, 13vh, 200px)"
+                requests={requestSpans}
+              />
+              <TimeSeriesChart
                 title="KV Cache"
                 data={chartData.kv}
                 yDomain={[0, 100]}
                 unit="%"
                 height="clamp(72px, 13vh, 200px)"
-                className="md:col-start-3 xl:col-start-6"
               />
             </div>
           )}

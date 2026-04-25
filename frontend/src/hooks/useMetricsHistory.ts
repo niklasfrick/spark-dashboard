@@ -129,6 +129,9 @@ export function useMetricsHistory(
           e2eP50: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
           e2eP95: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
           e2eP99: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
+          activeRequests: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
+          queuedRequests: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
+          totalRequests: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
         }
       }
       const eb = engineBuffersRef.current[engineKey]
@@ -189,6 +192,15 @@ export function useMetricsHistory(
           if (ep.p50_ms !== null) eb.e2eP50.push({ timestamp: ts, value: ep.p50_ms })
           if (ep.p95_ms !== null) eb.e2eP95.push({ timestamp: ts, value: ep.p95_ms })
           if (ep.p99_ms !== null) eb.e2eP99.push({ timestamp: ts, value: ep.p99_ms })
+        }
+        if (engine.metrics.active_requests !== null) {
+          eb.activeRequests.push({ timestamp: ts, value: engine.metrics.active_requests })
+        }
+        if (engine.metrics.queued_requests !== null) {
+          eb.queuedRequests.push({ timestamp: ts, value: engine.metrics.queued_requests })
+        }
+        if (engine.metrics.total_requests !== null) {
+          eb.totalRequests.push({ timestamp: ts, value: engine.metrics.total_requests })
         }
       }
 

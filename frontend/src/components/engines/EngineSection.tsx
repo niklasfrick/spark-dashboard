@@ -105,6 +105,9 @@ interface EngineChartData {
   e2eP50: ChartDataPoint[]
   e2eP95: ChartDataPoint[]
   e2eP99: ChartDataPoint[]
+  activeRequests: ChartDataPoint[]
+  queuedRequests: ChartDataPoint[]
+  totalRequests: ChartDataPoint[]
 }
 
 interface EngineSectionProps {
@@ -408,6 +411,9 @@ export function EngineSection({
                   e2eP50: getChartData(`${engineKey}:e2eP50`),
                   e2eP95: getChartData(`${engineKey}:e2eP95`),
                   e2eP99: getChartData(`${engineKey}:e2eP99`),
+                  activeRequests: getChartData(`${engineKey}:activeRequests`),
+                  queuedRequests: getChartData(`${engineKey}:queuedRequests`),
+                  totalRequests: getChartData(`${engineKey}:totalRequests`),
                 }
               : undefined
 
