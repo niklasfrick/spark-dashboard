@@ -1,9 +1,11 @@
 import { formatTps, formatTtft, formatDurationMs } from '@/lib/format'
 import type { AggregateSnapshot } from '@/lib/engineAggregate'
 import { MetricTile, KvBar, fmtVal, fmtInt } from './EngineCardPrimitives'
+import { type LatencyMode, latencyModeLabel, pickLatencyValue } from './LatencyModeControl'
 
 interface GlobalEngineCardProps {
   snapshot: AggregateSnapshot
+  latencyMode?: LatencyMode
 }
 
 /** Styled to match the metric-group tiles below (same bg/radius/padding idiom). */
@@ -20,7 +22,7 @@ function RunningCountCard({ count }: { count: number }) {
   )
 }
 
-export function GlobalEngineCard({ snapshot }: GlobalEngineCardProps) {
+export function GlobalEngineCard({ snapshot, latencyMode = 'avg' }: GlobalEngineCardProps) {
   const {
     running_count,
     total_count,
@@ -42,9 +44,16 @@ export function GlobalEngineCard({ snapshot }: GlobalEngineCardProps) {
     preemptions_total,
     kv_cache_percent,
     prefix_cache_hit_rate,
+    ttft_percentiles,
+    itl_percentiles,
+    e2e_percentiles,
   } = snapshot
 
-  const e2eFmt = formatDurationMs(e2e_latency_ms)
+  const ttftDisplay = pickLatencyValue(latencyMode, ttft_ms, ttft_percentiles)
+  const itlDisplay = pickLatencyValue(latencyMode, inter_token_latency_ms, itl_percentiles)
+  const e2eDisplay = pickLatencyValue(latencyMode, e2e_latency_ms, e2e_percentiles)
+  const e2eFmt = formatDurationMs(e2eDisplay)
+  const latencyHeading = `Latency · ${latencyModeLabel(latencyMode)}`
 
   if (running_count === 0) {
     return (
@@ -94,14 +103,14 @@ export function GlobalEngineCard({ snapshot }: GlobalEngineCardProps) {
         {/* Latency */}
         <div className="bg-white/[0.02] rounded-md px-4 py-3.5">
           <div className="text-sm font-semibold text-zinc-300 tracking-tight mb-2">
-            Latency
+            {latencyHeading}
             <span className="ml-1 text-[10px] font-normal text-zinc-500">(weighted)</span>
           </div>
           <div className="grid grid-cols-2 gap-2">
-            <MetricTile label="TTFT" value={fmtVal(ttft_ms, formatTtft)} unit="ms" />
+            <MetricTile label="TTFT" value={fmtVal(ttftDisplay, formatTtft)} unit="ms" />
             <MetricTile label="E2E" value={e2eFmt.value} unit={e2eFmt.unit} />
             <MetricTile label="Queue Wait" value={fmtVal(queue_time_ms, formatTtft)} unit="ms" />
-            <MetricTile label="ITL" value={fmtVal(inter_token_latency_ms, formatTtft)} unit="ms" />
+            <MetricTile label="ITL" value={fmtVal(itlDisplay, formatTtft)} unit="ms" />
             <MetricTile label="Batch Size" value={avg_batch_size !== null ? avg_batch_size.toFixed(1) : '--'} unit="/step" />
           </div>
         </div>

@@ -12,6 +12,7 @@ import {
   fmtVal,
   fmtInt,
 } from './EngineCardPrimitives'
+import { type LatencyMode, latencyModeLabel, pickLatencyValue } from './LatencyModeControl'
 
 function decodeTokenSeries(chartData: {
   tps: ChartDataPoint[]
@@ -56,8 +57,18 @@ interface EngineCardProps {
     queueTime: ChartDataPoint[]
     interTokenLatency: ChartDataPoint[]
     batchSize: ChartDataPoint[]
+    ttftP50: ChartDataPoint[]
+    ttftP95: ChartDataPoint[]
+    ttftP99: ChartDataPoint[]
+    itlP50: ChartDataPoint[]
+    itlP95: ChartDataPoint[]
+    itlP99: ChartDataPoint[]
+    e2eP50: ChartDataPoint[]
+    e2eP95: ChartDataPoint[]
+    e2eP99: ChartDataPoint[]
   }
   requests?: InferenceRequest[]
+  latencyMode?: LatencyMode
 }
 
 export function EngineCard({
@@ -65,6 +76,7 @@ export function EngineCard({
   showCharts = false,
   chartData,
   requests,
+  latencyMode = 'avg',
 }: EngineCardProps) {
   const noModel = engine.model === null
   const isWaitingForMetrics = engine.metrics === null
@@ -93,7 +105,17 @@ export function EngineCard({
   const prefixCacheHit = v('prefix_cache_hit_rate')
   const preemptions = v('preemptions_total')
 
-  const e2eFmt = formatDurationMs(e2eLatency)
+  // Resolve latency tile values according to the global mode setting
+  // (avg / p50 / p95 / p99). Avg falls back to the histogram-derived
+  // sum/count means; percentile modes pull from the histograms struct.
+  const ttftPctl = noModel ? null : (m?.ttft_percentiles ?? null)
+  const itlPctl = noModel ? null : (m?.itl_percentiles ?? null)
+  const e2ePctl = noModel ? null : (m?.e2e_percentiles ?? null)
+  const ttftDisplay = pickLatencyValue(latencyMode, ttft, ttftPctl)
+  const itlDisplay = pickLatencyValue(latencyMode, interTokenLatency, itlPctl)
+  const e2eDisplay = pickLatencyValue(latencyMode, e2eLatency, e2ePctl)
+  const e2eFmt = formatDurationMs(e2eDisplay)
+  const latencyHeading = `Latency · ${latencyModeLabel(latencyMode)}`
 
   // Compute trends from chart data
   const tpsTrend: Trend = chartData ? computeTrend(chartData.tps) : 'stable'
@@ -102,10 +124,28 @@ export function EngineCard({
   const promptTpsTrend: Trend = chartData ? computeTrend(chartData.promptTps) : 'stable'
   const avgPromptTpsTrend: Trend = chartData ? computeTrend(chartData.avgPromptTps) : 'stable'
   const perReqPromptTpsTrend: Trend = chartData ? computeTrend(chartData.perReqPromptTps) : 'stable'
-  const ttftTrend: Trend = chartData ? computeTrend(chartData.ttft) : 'stable'
-  const e2eTrend: Trend = chartData ? computeTrend(chartData.e2eLatency) : 'stable'
+  const ttftSeries = chartData
+    ? (latencyMode === 'p50' ? chartData.ttftP50
+       : latencyMode === 'p95' ? chartData.ttftP95
+       : latencyMode === 'p99' ? chartData.ttftP99
+       : chartData.ttft)
+    : []
+  const itlSeries = chartData
+    ? (latencyMode === 'p50' ? chartData.itlP50
+       : latencyMode === 'p95' ? chartData.itlP95
+       : latencyMode === 'p99' ? chartData.itlP99
+       : chartData.interTokenLatency)
+    : []
+  const e2eSeries = chartData
+    ? (latencyMode === 'p50' ? chartData.e2eP50
+       : latencyMode === 'p95' ? chartData.e2eP95
+       : latencyMode === 'p99' ? chartData.e2eP99
+       : chartData.e2eLatency)
+    : []
+  const ttftTrend: Trend = chartData ? computeTrend(ttftSeries) : 'stable'
+  const e2eTrend: Trend = chartData ? computeTrend(e2eSeries) : 'stable'
   const queueTrend: Trend = chartData ? computeTrend(chartData.queueTime) : 'stable'
-  const itlTrend: Trend = chartData ? computeTrend(chartData.interTokenLatency) : 'stable'
+  const itlTrend: Trend = chartData ? computeTrend(itlSeries) : 'stable'
   const batchTrend: Trend = chartData ? computeTrend(chartData.batchSize) : 'stable'
   const kvTrend: Trend = chartData ? computeTrend(chartData.kv) : 'stable'
 
@@ -143,12 +183,12 @@ export function EngineCard({
 
             {/* Latency */}
             <div className="bg-white/[0.02] rounded-md px-4 py-3.5">
-              <div className="text-sm font-semibold text-zinc-300 tracking-tight mb-2">Latency</div>
+              <div className="text-sm font-semibold text-zinc-300 tracking-tight mb-2">{latencyHeading}</div>
               <div className="grid grid-cols-2 gap-2">
-                <MetricTile label="TTFT" value={fmtVal(ttft, formatTtft)} unit="ms" trend={ttftTrend} invertTrend />
+                <MetricTile label="TTFT" value={fmtVal(ttftDisplay, formatTtft)} unit="ms" trend={ttftTrend} invertTrend />
                 <MetricTile label="E2E" value={e2eFmt.value} unit={e2eFmt.unit} trend={e2eTrend} invertTrend />
                 <MetricTile label="Queue Wait" value={fmtVal(queueTime, formatTtft)} unit="ms" trend={queueTrend} invertTrend />
-                <MetricTile label="ITL" value={fmtVal(interTokenLatency, formatTtft)} unit="ms" trend={itlTrend} invertTrend />
+                <MetricTile label="ITL" value={fmtVal(itlDisplay, formatTtft)} unit="ms" trend={itlTrend} invertTrend />
                 <MetricTile label="Batch Size" value={batchSize !== null ? batchSize.toFixed(1) : '--'} unit="/step" trend={batchTrend} />
               </div>
             </div>
@@ -207,19 +247,22 @@ export function EngineCard({
                 requests={requestSpans}
               />
               <TimeSeriesChart
-                title="TTFT, Queue & ITL"
+                title={`Latency · ${latencyModeLabel(latencyMode)}`}
                 series={[
-                  { data: chartData.ttft, label: 'TTFT', color: '#f59e0b' },
-                  { data: chartData.queueTime, label: 'Queue', color: '#8b5cf6' },
-                  { data: chartData.interTokenLatency, label: 'ITL', color: '#14b8a6' },
+                  // TTFT lives on the left axis (typically hundreds of ms).
+                  // Queue + ITL share a right axis (often single/double digits)
+                  // so small variations remain visible against the TTFT scale.
+                  { data: ttftSeries, label: 'TTFT', color: '#f59e0b', axis: 'left' },
+                  { data: chartData.queueTime, label: 'Queue', color: '#8b5cf6', axis: 'right' },
+                  { data: itlSeries, label: 'ITL', color: '#14b8a6', axis: 'right' },
                 ]}
                 unit="ms"
                 height={120}
                 requests={requestSpans}
               />
               <TimeSeriesChart
-                title="E2E Latency"
-                data={chartData.e2eLatency.map(p => ({ ...p, value: p.value / 1000 }))}
+                title={`E2E Latency · ${latencyModeLabel(latencyMode)}`}
+                data={e2eSeries.map(p => ({ ...p, value: p.value / 1000 }))}
                 unit="s"
                 height={120}
                 requests={requestSpans}

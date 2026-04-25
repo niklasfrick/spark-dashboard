@@ -11,6 +11,12 @@ import {
   serializeRotationState,
   type RotationInterval,
 } from './TabRotationControl'
+import {
+  LatencyModeControl,
+  parseLatencyMode,
+  serializeLatencyMode,
+  type LatencyMode,
+} from './LatencyModeControl'
 import { aggregateEngines, groupRunningByProvider } from '@/lib/engineAggregate'
 import { engineDisplayName } from '@/lib/format'
 import { getProviderLogo } from '@/lib/providerLogo'
@@ -24,6 +30,7 @@ const ENGINE_ICON: Record<EngineType, string> = {
 }
 
 const ROTATION_INTERVAL_STORAGE_KEY = 'spark-dashboard:engine-rotation-interval'
+const LATENCY_MODE_STORAGE_KEY = 'spark-dashboard:latency-mode'
 
 function EngineChip({ label, iconSrc }: { label: string; iconSrc?: string }) {
   return (
@@ -89,6 +96,15 @@ interface EngineChartData {
   queueTime: ChartDataPoint[]
   interTokenLatency: ChartDataPoint[]
   batchSize: ChartDataPoint[]
+  ttftP50: ChartDataPoint[]
+  ttftP95: ChartDataPoint[]
+  ttftP99: ChartDataPoint[]
+  itlP50: ChartDataPoint[]
+  itlP95: ChartDataPoint[]
+  itlP99: ChartDataPoint[]
+  e2eP50: ChartDataPoint[]
+  e2eP95: ChartDataPoint[]
+  e2eP99: ChartDataPoint[]
 }
 
 interface EngineSectionProps {
@@ -119,6 +135,14 @@ export function EngineSection({
       return parseRotationState(window.localStorage.getItem(ROTATION_INTERVAL_STORAGE_KEY)).interval
     } catch {
       return 10000
+    }
+  })
+  const [latencyMode, setLatencyMode] = useState<LatencyMode>(() => {
+    if (typeof window === 'undefined') return 'avg'
+    try {
+      return parseLatencyMode(window.localStorage.getItem(LATENCY_MODE_STORAGE_KEY))
+    } catch {
+      return 'avg'
     }
   })
   const [focusWithin, setFocusWithin] = useState(false)
@@ -167,6 +191,15 @@ export function EngineSection({
       // ignore storage errors (private mode, quota, etc.)
     }
   }, [rotationEnabledState, rotationInterval])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      window.localStorage.setItem(LATENCY_MODE_STORAGE_KEY, serializeLatencyMode(latencyMode))
+    } catch {
+      // ignore storage errors
+    }
+  }, [latencyMode])
 
   const aggregate = useMemo(() => aggregateEngines(engines), [engines])
   const providerGroups = useMemo(() => groupRunningByProvider(engines), [engines])
@@ -324,6 +357,11 @@ export function EngineSection({
                 )
               })}
             </TabsList>
+            <span
+              aria-hidden="true"
+              className="self-center h-5 w-px bg-white/[0.08] shrink-0"
+            />
+            <LatencyModeControl mode={latencyMode} onModeChange={setLatencyMode} />
             {showGlobalControls && (
               <>
                 <span
@@ -342,7 +380,7 @@ export function EngineSection({
         </CardHeader>
         <CardContent className="flex-1 min-h-0 flex flex-col">
           <TabsContent value={GLOBAL_TAB_VALUE}>
-            <GlobalEngineCard snapshot={aggregate} />
+            <GlobalEngineCard snapshot={aggregate} latencyMode={latencyMode} />
           </TabsContent>
 
           {engines.map((engine) => {
@@ -362,6 +400,15 @@ export function EngineSection({
                   queueTime: getChartData(`${engineKey}:queueTime`),
                   interTokenLatency: getChartData(`${engineKey}:interTokenLatency`),
                   batchSize: getChartData(`${engineKey}:batchSize`),
+                  ttftP50: getChartData(`${engineKey}:ttftP50`),
+                  ttftP95: getChartData(`${engineKey}:ttftP95`),
+                  ttftP99: getChartData(`${engineKey}:ttftP99`),
+                  itlP50: getChartData(`${engineKey}:itlP50`),
+                  itlP95: getChartData(`${engineKey}:itlP95`),
+                  itlP99: getChartData(`${engineKey}:itlP99`),
+                  e2eP50: getChartData(`${engineKey}:e2eP50`),
+                  e2eP95: getChartData(`${engineKey}:e2eP95`),
+                  e2eP99: getChartData(`${engineKey}:e2eP99`),
                 }
               : undefined
 
@@ -375,6 +422,7 @@ export function EngineSection({
                   showCharts={showCharts}
                   chartData={chartDataForEngine}
                   requests={requests}
+                  latencyMode={latencyMode}
                 />
               </TabsContent>
             )
