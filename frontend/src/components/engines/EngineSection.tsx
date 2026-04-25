@@ -31,6 +31,7 @@ const ENGINE_ICON: Record<EngineType, string> = {
 
 const ROTATION_INTERVAL_STORAGE_KEY = 'spark-dashboard:engine-rotation-interval'
 const LATENCY_MODE_STORAGE_KEY = 'spark-dashboard:latency-mode'
+const ACTIVE_TAB_STORAGE_KEY = 'spark-dashboard:active-tab'
 
 function EngineChip({ label, iconSrc }: { label: string; iconSrc?: string }) {
   return (
@@ -123,7 +124,14 @@ export function EngineSection({
   getChartData,
   requests,
 }: EngineSectionProps) {
-  const [activeTab, setActiveTab] = useState<string>(GLOBAL_TAB_VALUE)
+  const [activeTab, setActiveTab] = useState<string>(() => {
+    if (typeof window === 'undefined') return GLOBAL_TAB_VALUE
+    try {
+      return window.localStorage.getItem(ACTIVE_TAB_STORAGE_KEY) ?? GLOBAL_TAB_VALUE
+    } catch {
+      return GLOBAL_TAB_VALUE
+    }
+  })
   const [rotationEnabledState, setRotationEnabledState] = useState<boolean>(() => {
     if (typeof window === 'undefined') return true
     try {
@@ -167,6 +175,13 @@ export function EngineSection({
   const handleTabChange = (v: string) => {
     setActiveTab(v)
     setUserPaused(true)
+    if (typeof window !== 'undefined') {
+      try {
+        window.localStorage.setItem(ACTIVE_TAB_STORAGE_KEY, v)
+      } catch {
+        // ignore storage errors (private mode, quota, etc.)
+      }
+    }
   }
 
   const handleRotationEnabledChange = (next: boolean) => {
@@ -224,6 +239,20 @@ export function EngineSection({
     ],
     [engines, showGlobalControls],
   )
+
+  useEffect(() => {
+    if (engines.length === 0) return
+    if (activeTab === GLOBAL_TAB_VALUE) return
+    if (tabOrder.includes(activeTab)) return
+    setActiveTab(GLOBAL_TAB_VALUE)
+    if (typeof window !== 'undefined') {
+      try {
+        window.localStorage.removeItem(ACTIVE_TAB_STORAGE_KEY)
+      } catch {
+        // ignore storage errors
+      }
+    }
+  }, [engines.length, activeTab, tabOrder])
 
   const rotationEnabled =
     rotationEnabledState && !focusWithin && !userPaused && tabOrder.length > 1
