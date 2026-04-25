@@ -1,5 +1,8 @@
+use super::histogram::percentile;
 use super::prometheus::parse_prometheus_text;
-use super::{EngineAdapter, EngineMetrics, EngineStatus, EngineType, ModelInfo};
+use super::{
+    EngineAdapter, EngineMetrics, EngineStatus, EngineType, LatencyPercentiles, ModelInfo,
+};
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::time::{Duration, Instant};
@@ -338,6 +341,31 @@ impl EngineAdapter for VllmAdapter {
             }
         };
 
+        // Tail latency percentiles. vLLM exposes `_bucket{le="..."}` lines for
+        // each request-level histogram. We linearly interpolate p50/p95/p99 in
+        // milliseconds (engine emits seconds). Returns `None` for the whole
+        // struct when no buckets exist or the engine has not observed any
+        // requests yet — the UI then renders dashes.
+        let percentiles_ms = |metric: &str| -> Option<LatencyPercentiles> {
+            let buckets = parsed.histograms.get(metric)?;
+            let to_ms = |q: f64| percentile(buckets, q).map(|s| s * 1000.0);
+            let p = LatencyPercentiles {
+                p50_ms: to_ms(0.50),
+                p95_ms: to_ms(0.95),
+                p99_ms: to_ms(0.99),
+            };
+            // If every quantile is None (e.g. only +Inf bucket present),
+            // collapse to None so the JSON payload stays compact.
+            if p.p50_ms.is_none() && p.p95_ms.is_none() && p.p99_ms.is_none() {
+                None
+            } else {
+                Some(p)
+            }
+        };
+        let ttft_percentiles = percentiles_ms("vllm_time_to_first_token_seconds");
+        let itl_percentiles = percentiles_ms("vllm_inter_token_latency_seconds");
+        let e2e_percentiles = percentiles_ms("vllm_e2e_request_latency_seconds");
+
         Some(EngineMetrics {
             tokens_per_sec,
             avg_tokens_per_sec,
@@ -358,6 +386,47 @@ impl EngineAdapter for VllmAdapter {
             inter_token_latency_ms,
             preemptions_total,
             avg_batch_size,
+            ttft_percentiles,
+            itl_percentiles,
+            e2e_percentiles,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Sanity check: percentiles flow from the parser through the adapter.
+    /// We don't spin up an HTTP mock here — `parse_prometheus_text` is the
+    /// boundary we care about, so we assert the percentile pipeline against
+    /// a representative `/metrics` body. p50 < p95 < p99 must hold.
+    #[test]
+    fn ttft_percentiles_roundtrip_from_metrics_body() {
+        let body = "\
+# HELP vllm:time_to_first_token_seconds TTFT histogram.
+# TYPE vllm:time_to_first_token_seconds histogram
+vllm:time_to_first_token_seconds_bucket{le=\"0.05\"} 50
+vllm:time_to_first_token_seconds_bucket{le=\"0.1\"} 80
+vllm:time_to_first_token_seconds_bucket{le=\"0.5\"} 95
+vllm:time_to_first_token_seconds_bucket{le=\"1.0\"} 99
+vllm:time_to_first_token_seconds_bucket{le=\"+Inf\"} 100
+vllm:time_to_first_token_seconds_sum 12.0
+vllm:time_to_first_token_seconds_count 100.0
+";
+        let parsed = parse_prometheus_text(body).expect("parse");
+        let buckets = parsed
+            .histograms
+            .get("vllm_time_to_first_token_seconds")
+            .expect("histogram");
+        let p50 = percentile(buckets, 0.5).expect("p50") * 1000.0;
+        let p95 = percentile(buckets, 0.95).expect("p95") * 1000.0;
+        let p99 = percentile(buckets, 0.99).expect("p99") * 1000.0;
+        assert!(p50 < p95, "p50 {p50} < p95 {p95}");
+        assert!(p95 < p99, "p95 {p95} < p99 {p99}");
+        // p50 lands at the 0.05 boundary (cumulative count exactly 50).
+        // p99 lands inside the (0.5, 1.0] bucket.
+        assert!((40.0..=60.0).contains(&p50), "p50 {p50} near 50ms");
+        assert!(p99 > 500.0 && p99 <= 1000.0, "p99 {p99} in (500, 1000]");
     }
 }

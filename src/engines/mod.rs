@@ -1,4 +1,5 @@
 pub mod detector;
+pub mod histogram;
 pub mod prometheus;
 pub mod vllm;
 
@@ -47,6 +48,16 @@ pub struct ModelInfo {
     pub quantization: Option<String>,
 }
 
+/// Tail-latency percentiles in milliseconds, derived from a Prometheus
+/// histogram. Any quantile may be `None` if the histogram has not yet
+/// observed enough data to interpolate.
+#[derive(Clone, Debug, serde::Serialize, Default)]
+pub struct LatencyPercentiles {
+    pub p50_ms: Option<f64>,
+    pub p95_ms: Option<f64>,
+    pub p99_ms: Option<f64>,
+}
+
 #[derive(Clone, Debug, serde::Serialize, Default)]
 pub struct EngineMetrics {
     pub tokens_per_sec: Option<f64>,
@@ -80,6 +91,12 @@ pub struct EngineMetrics {
     pub preemptions_total: Option<u64>,
     /// Average tokens processed per engine iteration step (batch size proxy).
     pub avg_batch_size: Option<f64>,
+    /// Tail latency percentiles for time-to-first-token (ms).
+    pub ttft_percentiles: Option<LatencyPercentiles>,
+    /// Tail latency percentiles for inter-token latency during decode (ms).
+    pub itl_percentiles: Option<LatencyPercentiles>,
+    /// Tail latency percentiles for end-to-end request latency (ms).
+    pub e2e_percentiles: Option<LatencyPercentiles>,
 }
 
 /// A per-request inference metric record.
