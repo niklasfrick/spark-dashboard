@@ -45,6 +45,8 @@ interface TimeSeriesChartProps {
   /** Pixel number, or any CSS length (`"clamp(80px, 13vh, 120px)"`, etc.). */
   height?: number | string
   title?: string
+  /** Extra classes applied to the outer wrapper (e.g. grid column placement). */
+  className?: string
 }
 
 function formatTime(timestamp: number): string {
@@ -118,6 +120,7 @@ export const TimeSeriesChart = React.memo(function TimeSeriesChart({
   unit,
   height = 160,
   title,
+  className,
 }: TimeSeriesChartProps) {
   const isMulti = series && series.length > 0
 
@@ -143,13 +146,17 @@ export const TimeSeriesChart = React.memo(function TimeSeriesChart({
     lineKeys = [{ key: 'value', color: lineColor, axis: 'left' }]
   }
   const hasRightAxis = lineKeys.some((l) => l.axis === 'right')
+  // Tight y-axis width so the plot area sits close to the card's left
+  // edge — keeps chart lines roughly aligned with the title/legend above.
+  const Y_AXIS_WIDTH = 32
 
   return (
-    <div>
+    <div className={className}>
       {/* Reserve a fixed header band so charts with wrapping multi-series
           legends (Prefill / Decode / Latency) line up with single-title
-          charts (KV / E2E) along the bottom. */}
-      <div className="flex items-start gap-4 mb-1 flex-wrap min-h-[2.25rem]">
+          charts (KV / E2E) along the bottom. Legend always sits on its own
+          line below the title for consistent layout across charts. */}
+      <div className="flex flex-col gap-1 mb-1 min-h-[2.25rem]">
         {title && (
           <h3 className="text-xs font-medium text-zinc-500">{title}</h3>
         )}
@@ -189,6 +196,7 @@ export const TimeSeriesChart = React.memo(function TimeSeriesChart({
           />
           <YAxis
             yAxisId="left"
+            width={Y_AXIS_WIDTH}
             stroke={NVIDIA_THEME.chartAxis}
             fontSize={11}
             tickLine={false}
@@ -198,6 +206,7 @@ export const TimeSeriesChart = React.memo(function TimeSeriesChart({
           {hasRightAxis && (
             <YAxis
               yAxisId="right"
+              width={Y_AXIS_WIDTH}
               orientation="right"
               stroke={NVIDIA_THEME.chartAxis}
               fontSize={11}

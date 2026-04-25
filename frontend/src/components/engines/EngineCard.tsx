@@ -246,9 +246,12 @@ export function EngineCard({
             </div>
           </div>
 
-          {/* ── Charts sit directly under the metric grid (no flex spacer) ── */}
+          {/* ── Charts sit directly under the metric grid, aligned to the same 6-col layout ── */}
+          {/* Chart columns mirror metric-card columns:
+           *   1 Prefill · 2 Decode · 3 Latency · 4 SLO Goodput · 5 Requests · 6 Cache
+           * E2E sits under SLO Goodput (col 4); KV under Cache (col 6); col 5 (Requests) has no chart. */}
           {showCharts && chartData && (
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 pt-1">
+            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 pt-1">
               <TimeSeriesChart
                 title="Prefill Throughput"
                 series={prefillTokenSeries(chartData)}
@@ -290,6 +293,7 @@ export function EngineCard({
                 yDomain={[0, 100]}
                 unit="%"
                 height="clamp(72px, 13vh, 200px)"
+                className="md:col-start-3 xl:col-start-6"
               />
             </div>
           )}
