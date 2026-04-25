@@ -264,10 +264,9 @@ export function EngineSection({
     <Tabs
       value={activeTab}
       onValueChange={(v) => handleTabChange(v as string)}
-      className="h-full"
     >
-      <Card className="bg-[#0d0d10] border-white/[0.04] h-full">
-        <CardHeader className="flex flex-row justify-between items-center gap-4 min-w-0">
+      <Card size="sm" className="bg-[#0d0d10] border-white/[0.04] overflow-hidden">
+        <CardHeader className="flex flex-row justify-between items-center gap-4 min-w-0 shrink-0">
           <div className="shrink-0 flex items-center gap-4 min-w-0">
             {headerProviderLogo && (
               <div className="shrink-0 h-14 w-14 rounded-xl bg-white p-2 flex items-center justify-center ring-1 ring-white/[0.06]">
@@ -378,8 +377,8 @@ export function EngineSection({
             )}
           </div>
         </CardHeader>
-        <CardContent className="flex-1 min-h-0 flex flex-col">
-          <TabsContent value={GLOBAL_TAB_VALUE}>
+        <CardContent className="flex flex-col">
+          <TabsContent value={GLOBAL_TAB_VALUE} className="data-[state=active]:flex flex-col">
             <GlobalEngineCard snapshot={aggregate} latencyMode={latencyMode} />
           </TabsContent>
 
@@ -416,6 +415,7 @@ export function EngineSection({
               <TabsContent
                 key={engineKey}
                 value={engineKey}
+                className="data-[state=active]:flex flex-col"
               >
                 <EngineCard
                   engine={engine}

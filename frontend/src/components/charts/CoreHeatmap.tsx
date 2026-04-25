@@ -27,8 +27,8 @@ export const CoreHeatmap = React.memo(function CoreHeatmap({ cores }: CoreHeatma
   const cols = Math.ceil(Math.sqrt(cores.length * 4))
 
   return (
-    <div className="relative">
-      <h3 className="text-[10px] font-medium text-zinc-500 mb-0.5">Core Heatmap</h3>
+    <div className="relative shrink-0 mt-0.5 lg:mt-1">
+      <h3 className="text-[9px] lg:text-[10px] font-medium text-zinc-500 mb-0.5 truncate">Core Heatmap</h3>
       <div
         className="grid w-full"
         style={{
@@ -39,7 +39,7 @@ export const CoreHeatmap = React.memo(function CoreHeatmap({ cores }: CoreHeatma
         {cores.map((core) => (
           <div
             key={core.id}
-            className="h-[12px] rounded-[1px] transition-colors duration-300"
+            className="h-[6px] lg:h-[10px] 2xl:h-[12px] rounded-[1px] transition-colors duration-300"
             style={{ backgroundColor: coreColor(core.usage_percent) }}
             onMouseEnter={(e) => handleMouseEnter(core, e)}
             onMouseLeave={handleMouseLeave}
