@@ -1,4 +1,4 @@
-import type { EngineSnapshot } from '@/types/metrics'
+import type { EngineSnapshot, LatencyPercentiles } from '@/types/metrics'
 import { getProviderLogo, type ProviderLogo } from './providerLogo'
 
 /**
@@ -37,6 +37,15 @@ export interface AggregateSnapshot {
   avg_batch_size: number | null
   kv_cache_percent: number | null
   prefix_cache_hit_rate: number | null
+
+  // Tail-latency percentiles, weighted-mean per quantile.
+  // NOTE: Cross-engine percentile averaging is approximate — true tail
+  // latency would require merging the underlying histograms. We use the
+  // same weighted-mean approach as the per-engine averages above for
+  // visual consistency on the global card.
+  ttft_percentiles: LatencyPercentiles | null
+  itl_percentiles: LatencyPercentiles | null
+  e2e_percentiles: LatencyPercentiles | null
 }
 
 function sumOrNull(values: Array<number | null | undefined>): number | null {
@@ -107,6 +116,36 @@ function emptySnapshot(totalCount: number): AggregateSnapshot {
     avg_batch_size: null,
     kv_cache_percent: null,
     prefix_cache_hit_rate: null,
+    ttft_percentiles: null,
+    itl_percentiles: null,
+    e2e_percentiles: null,
+  }
+}
+
+/**
+ * Aggregates a single percentile field across running engines using a
+ * weighted mean (same weighting as the latency averages). Returns null
+ * when no engine reports the field. Each quantile is independently
+ * aggregated; if every engine has the percentiles object but a given
+ * quantile is null, that quantile stays null.
+ */
+function aggregatePercentiles(
+  perEngine: Array<LatencyPercentiles | null | undefined>,
+  weights: Array<number | null | undefined>,
+): LatencyPercentiles | null {
+  const present = perEngine.some((p) => p !== null && p !== undefined)
+  if (!present) return null
+  const quantile = (key: keyof LatencyPercentiles) =>
+    weightedMeanOrNull(
+      perEngine.map((p, i) => ({
+        value: p ? (p[key] as number | null) : null,
+        weight: weights[i],
+      })),
+    )
+  return {
+    p50_ms: quantile('p50_ms'),
+    p95_ms: quantile('p95_ms'),
+    p99_ms: quantile('p99_ms'),
   }
 }
 
@@ -216,5 +255,19 @@ export function aggregateEngines(engines: readonly EngineSnapshot[]): AggregateS
     avg_batch_size: meanOrNull(get('avg_batch_size')),
     kv_cache_percent: meanOrNull(get('kv_cache_percent')),
     prefix_cache_hit_rate: meanOrNull(get('prefix_cache_hit_rate')),
+
+    // Tail latency — weighted mean per quantile.
+    ttft_percentiles: aggregatePercentiles(
+      metrics.map((m) => m?.ttft_percentiles ?? null),
+      weights,
+    ),
+    itl_percentiles: aggregatePercentiles(
+      metrics.map((m) => m?.itl_percentiles ?? null),
+      weights,
+    ),
+    e2e_percentiles: aggregatePercentiles(
+      metrics.map((m) => m?.e2e_percentiles ?? null),
+      weights,
+    ),
   }
 }

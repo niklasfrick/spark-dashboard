@@ -23,6 +23,9 @@ function fullMetrics(overrides: Partial<EngineMetrics> = {}): EngineMetrics {
     inter_token_latency_ms: 25,
     preemptions_total: 0,
     avg_batch_size: 4,
+    ttft_percentiles: null,
+    itl_percentiles: null,
+    e2e_percentiles: null,
     ...overrides,
   }
 }

@@ -88,6 +88,15 @@ export interface ModelInfo {
   quantization: string | null
 }
 
+/** Tail-latency percentiles in milliseconds, derived from a Prometheus
+ *  histogram on the backend. Any quantile may be null when there is not
+ *  yet enough data to interpolate. */
+export interface LatencyPercentiles {
+  p50_ms: number | null
+  p95_ms: number | null
+  p99_ms: number | null
+}
+
 export interface EngineMetrics {
   tokens_per_sec: number | null
   avg_tokens_per_sec: number | null
@@ -109,6 +118,9 @@ export interface EngineMetrics {
   inter_token_latency_ms: number | null
   preemptions_total: number | null
   avg_batch_size: number | null
+  ttft_percentiles: LatencyPercentiles | null
+  itl_percentiles: LatencyPercentiles | null
+  e2e_percentiles: LatencyPercentiles | null
 }
 
 export interface EngineSnapshot {
