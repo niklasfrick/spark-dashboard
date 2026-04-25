@@ -55,6 +55,13 @@ describe('getProviderLogo', () => {
     expect(logo?.url).toBe('/icons/providers/minimax.svg')
   })
 
+  it('maps Intel to the intel asset', () => {
+    const logo = getProviderLogo('Intel/neural-chat-7b-v3-3')
+    expect(logo?.slug).toBe('intel')
+    expect(logo?.alt).toBe('Intel')
+    expect(logo?.url).toBe('/icons/providers/intel.svg')
+  })
+
   it('keyword-matches a glm model id to z-ai', () => {
     expect(getProviderLogo('glm-4.5-air')?.slug).toBe('z-ai')
   })

@@ -36,6 +36,7 @@ const ORG_IDENTITY: ReadonlySet<string> = new Set([
   'z-ai',
   'minimax',
   'huggingfacetb',
+  'intel',
 ])
 
 /**
