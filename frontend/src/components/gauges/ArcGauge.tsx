@@ -7,10 +7,14 @@ interface ArcGaugeProps {
   label: string
   unit: string
   thresholds?: { warning: number; critical: number }
-  size?: number
+  /** Rendered size — number (px) or any CSS length (`"clamp(56px, 6vw, 96px)"`). */
+  size?: number | string
   /** Override the displayed number in the gauge center (e.g. show watts instead of percentage) */
   displayValue?: number
 }
+
+// Fixed internal viewBox; the SVG element scales to the user-supplied size.
+const VIEWBOX = 208 // historical 160 * 1.3 — preserves visual proportions
 
 export const ArcGauge = React.memo(function ArcGauge({
   value,
@@ -22,8 +26,7 @@ export const ArcGauge = React.memo(function ArcGauge({
   displayValue,
 }: ArcGaugeProps) {
   const filterId = useId()
-  // Scale up the SVG viewBox to fit value + unit text comfortably
-  const svgSize = Math.round(size * 1.3)
+  const svgSize = VIEWBOX
   const strokeWidth = Math.max(8, svgSize * 0.06)
   const radius = (svgSize - strokeWidth * 2) / 2
   const circumference = radius * 2 * Math.PI
@@ -37,9 +40,12 @@ export const ArcGauge = React.memo(function ArcGauge({
     ? thresholdColor(value, thresholds.warning, thresholds.critical)
     : NVIDIA_THEME.accent
 
+  // Render width/height: pass through string CSS lengths verbatim, otherwise px.
+  const renderSize = typeof size === 'number' ? `${size}px` : size
+
   return (
     <div className="flex flex-col items-center">
-      <svg width={size} height={size} viewBox={`0 0 ${svgSize} ${svgSize}`}>
+      <svg style={{ width: renderSize, height: renderSize }} viewBox={`0 0 ${svgSize} ${svgSize}`}>
         <defs>
           <filter id={filterId} x="-40%" y="-40%" width="180%" height="180%">
             <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="blur" />
@@ -109,7 +115,7 @@ export const ArcGauge = React.memo(function ArcGauge({
           {unit}
         </text>
       </svg>
-      <span className="text-[11px] text-zinc-300 -mt-0.5">{label}</span>
+      <span className="hidden lg:inline text-[10px] 2xl:text-[11px] text-zinc-300 -mt-0.5 truncate max-w-full">{label}</span>
     </div>
   )
 })

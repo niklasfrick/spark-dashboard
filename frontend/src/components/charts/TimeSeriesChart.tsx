@@ -42,7 +42,8 @@ interface TimeSeriesChartProps {
   requests?: Array<{ start: number; end: number; tps: number; ttft: number }>
   yDomain?: [number, number]
   unit?: string
-  height?: number
+  /** Pixel number, or any CSS length (`"clamp(80px, 13vh, 120px)"`, etc.). */
+  height?: number | string
   title?: string
 }
 
@@ -166,7 +167,11 @@ export const TimeSeriesChart = React.memo(function TimeSeriesChart({
           </div>
         )}
       </div>
-      <ChartContainer config={chartConfig} style={{ height: `${height}px` }} className="w-full">
+      <ChartContainer
+        config={chartConfig}
+        style={{ height: typeof height === 'number' ? `${height}px` : height }}
+        className="w-full"
+      >
         <LineChart data={chartData}>
           <CartesianGrid
             stroke={NVIDIA_THEME.chartGrid}
