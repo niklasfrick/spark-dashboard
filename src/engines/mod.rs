@@ -2,6 +2,7 @@ pub mod detector;
 pub mod histogram;
 pub mod prometheus;
 pub mod vllm;
+pub mod warmup;
 
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -111,6 +112,11 @@ pub struct EngineMetrics {
     pub itl_goodput_pct: Option<f64>,
     /// Goodput: percentage (0-100) of E2E observations meeting `E2E_SLO_MS`.
     pub e2e_goodput_pct: Option<f64>,
+    /// True while the engine is still in warmup — histogram-derived fields
+    /// (averages, percentiles, goodput, rates) are intentionally `None` so the
+    /// first slow inference does not pollute steady-state metrics. See
+    /// `engines::warmup` for the state machine.
+    pub warming_up: bool,
 }
 
 /// A per-request inference metric record.
