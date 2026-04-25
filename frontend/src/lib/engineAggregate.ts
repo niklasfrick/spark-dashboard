@@ -46,6 +46,11 @@ export interface AggregateSnapshot {
   ttft_percentiles: LatencyPercentiles | null
   itl_percentiles: LatencyPercentiles | null
   e2e_percentiles: LatencyPercentiles | null
+
+  // Goodput (% meeting SLO), weighted mean by total_requests.
+  ttft_goodput_pct: number | null
+  itl_goodput_pct: number | null
+  e2e_goodput_pct: number | null
 }
 
 function sumOrNull(values: Array<number | null | undefined>): number | null {
@@ -119,6 +124,9 @@ function emptySnapshot(totalCount: number): AggregateSnapshot {
     ttft_percentiles: null,
     itl_percentiles: null,
     e2e_percentiles: null,
+    ttft_goodput_pct: null,
+    itl_goodput_pct: null,
+    e2e_goodput_pct: null,
   }
 }
 
@@ -269,5 +277,10 @@ export function aggregateEngines(engines: readonly EngineSnapshot[]): AggregateS
       metrics.map((m) => m?.e2e_percentiles ?? null),
       weights,
     ),
+
+    // Goodput — weighted mean by total_requests, same caveat as percentiles.
+    ttft_goodput_pct: weightedBy('ttft_goodput_pct'),
+    itl_goodput_pct: weightedBy('itl_goodput_pct'),
+    e2e_goodput_pct: weightedBy('e2e_goodput_pct'),
   }
 }

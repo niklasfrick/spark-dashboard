@@ -121,6 +121,12 @@ export interface EngineMetrics {
   ttft_percentiles: LatencyPercentiles | null
   itl_percentiles: LatencyPercentiles | null
   e2e_percentiles: LatencyPercentiles | null
+  /** % of TTFT observations meeting the TTFT SLO threshold. */
+  ttft_goodput_pct: number | null
+  /** % of ITL observations meeting the ITL SLO threshold. */
+  itl_goodput_pct: number | null
+  /** % of E2E observations meeting the E2E SLO threshold. */
+  e2e_goodput_pct: number | null
 }
 
 export interface EngineSnapshot {

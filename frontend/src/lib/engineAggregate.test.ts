@@ -26,6 +26,9 @@ function fullMetrics(overrides: Partial<EngineMetrics> = {}): EngineMetrics {
     ttft_percentiles: null,
     itl_percentiles: null,
     e2e_percentiles: null,
+    ttft_goodput_pct: null,
+    itl_goodput_pct: null,
+    e2e_goodput_pct: null,
     ...overrides,
   }
 }
