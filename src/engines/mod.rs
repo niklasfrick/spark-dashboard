@@ -1,6 +1,8 @@
 pub mod detector;
+pub mod histogram;
 pub mod prometheus;
 pub mod vllm;
+pub mod warmup;
 
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -47,6 +49,24 @@ pub struct ModelInfo {
     pub quantization: Option<String>,
 }
 
+/// Tail-latency percentiles in milliseconds, derived from a Prometheus
+/// histogram. Any quantile may be `None` if the histogram has not yet
+/// observed enough data to interpolate.
+#[derive(Clone, Debug, serde::Serialize, Default)]
+pub struct LatencyPercentiles {
+    pub p50_ms: Option<f64>,
+    pub p95_ms: Option<f64>,
+    pub p99_ms: Option<f64>,
+}
+
+/// SLO threshold for time-to-first-token (ms). Requests slower than this
+/// are considered to have missed the SLO when computing goodput.
+pub const TTFT_SLO_MS: f64 = 500.0;
+/// SLO threshold for inter-token latency during decode (ms).
+pub const ITL_SLO_MS: f64 = 50.0;
+/// SLO threshold for end-to-end request latency (ms).
+pub const E2E_SLO_MS: f64 = 5000.0;
+
 #[derive(Clone, Debug, serde::Serialize, Default)]
 pub struct EngineMetrics {
     pub tokens_per_sec: Option<f64>,
@@ -73,10 +93,30 @@ pub struct EngineMetrics {
     pub prefix_cache_hit_rate: Option<f64>,
     /// Average time a request spends waiting in the queue (ms).
     pub queue_time_ms: Option<f64>,
+    /// Average inter-token latency during decode in milliseconds
+    /// (gap between successive generated tokens).
+    pub inter_token_latency_ms: Option<f64>,
     /// Cumulative count of scheduling preemptions.
     pub preemptions_total: Option<u64>,
     /// Average tokens processed per engine iteration step (batch size proxy).
     pub avg_batch_size: Option<f64>,
+    /// Tail latency percentiles for time-to-first-token (ms).
+    pub ttft_percentiles: Option<LatencyPercentiles>,
+    /// Tail latency percentiles for inter-token latency during decode (ms).
+    pub itl_percentiles: Option<LatencyPercentiles>,
+    /// Tail latency percentiles for end-to-end request latency (ms).
+    pub e2e_percentiles: Option<LatencyPercentiles>,
+    /// Goodput: percentage (0-100) of TTFT observations meeting `TTFT_SLO_MS`.
+    pub ttft_goodput_pct: Option<f64>,
+    /// Goodput: percentage (0-100) of ITL observations meeting `ITL_SLO_MS`.
+    pub itl_goodput_pct: Option<f64>,
+    /// Goodput: percentage (0-100) of E2E observations meeting `E2E_SLO_MS`.
+    pub e2e_goodput_pct: Option<f64>,
+    /// True while the engine is still in warmup — histogram-derived fields
+    /// (averages, percentiles, goodput, rates) are intentionally `None` so the
+    /// first slow inference does not pollute steady-state metrics. See
+    /// `engines::warmup` for the state machine.
+    pub warming_up: bool,
 }
 
 /// A per-request inference metric record.

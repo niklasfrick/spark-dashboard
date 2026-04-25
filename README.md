@@ -50,10 +50,11 @@ for details on what each script does.
 
 **LLM Engine Monitoring** (vLLM via Prometheus metrics)
 - Tokens per second (generation + prompt)
-- Time to first token, end-to-end latency, queue time
+- Time to first token, inter-token latency, end-to-end latency, queue time
 - Active/queued requests, batch size
 - KV cache utilization, prefix cache hit rate
 - Automatic engine discovery via process scan and Docker API
+- SLO Goodput
 
 **Multi-Engine Support**
 - Run and monitor any number of inference engines side by side — each
@@ -104,12 +105,12 @@ edit:
 cp .env.example .env
 ```
 
-| Variable           | Purpose                                                      |
-|--------------------|--------------------------------------------------------------|
-| `DEPLOY_USER`      | SSH user on the remote host (required)                       |
-| `DEPLOY_HOST`      | Hostname or IP of the remote host (required)                 |
+| Variable           | Purpose                                                                              |
+| ------------------ | ------------------------------------------------------------------------------------ |
+| `DEPLOY_USER`      | SSH user on the remote host (required)                                               |
+| `DEPLOY_HOST`      | Hostname or IP of the remote host (required)                                         |
 | `DEPLOY_DIR`       | Project path on the remote host, relative to remote home (default `spark-dashboard`) |
-| `VITE_BACKEND_URL` | Where Vite proxies `/ws` and `/api` (default `http://localhost:3000`) |
+| `VITE_BACKEND_URL` | Where Vite proxies `/ws` and `/api` (default `http://localhost:3000`)                |
 
 Legacy `SPARK_USER` / `SPARK_HOST` / `SPARK_DIR` are still accepted as a
 fallback when `DEPLOY_*` are unset — `dev.sh` prints a one-line deprecation
@@ -238,9 +239,9 @@ The script handles everything:
 4. **Starts** the Vite dev server locally (port 5173)
 5. **Watches** `src/` and `Cargo.toml` for Rust changes — auto-syncs and rebuilds on the remote host
 
-| What you edit                      | What happens                                                      |
-|------------------------------------|-------------------------------------------------------------------|
-| Frontend files (`frontend/src/`)   | Vite hot-reloads instantly in the browser                         |
+| What you edit                        | What happens                                                             |
+| ------------------------------------ | ------------------------------------------------------------------------ |
+| Frontend files (`frontend/src/`)     | Vite hot-reloads instantly in the browser                                |
 | Backend files (`src/`, `Cargo.toml`) | Auto-detected → rsync to remote host → rebuild → restart (~compile time) |
 
 Useful while `dev.sh` is running:

@@ -41,7 +41,7 @@ function App() {
         <ConnectionBadge status={connectionStatus} isStale={isStale} />
       </header>
 
-      <main className={`flex-1 min-h-0 flex flex-col p-3 lg:p-4 ${isStale ? 'opacity-50' : ''}`}>
+      <main className={`flex-1 min-h-0 flex flex-col p-3 lg:p-4 2xl:p-5 min-[1920px]:p-6 ${isStale ? 'opacity-50' : ''}`}>
         {!metrics && connectionStatus !== 'connected' && (
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center">

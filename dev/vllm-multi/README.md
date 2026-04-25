@@ -151,6 +151,28 @@ curl -sS http://localhost:8003/v1/chat/completions  -d '{...}'   # large
 `{"status":"ok","upstreams":[...]}` once the proxy is up. Individual
 upstream readiness is still visible via each container's own `/health`.
 
+## Generating demo load
+
+For a live dashboard demo, drive realistic traffic with
+[`dev/demo-load.sh`](../demo-load.sh). It discovers models on each
+endpoint via `/v1/models` and runs parallel multi-turn conversations
+forever (Ctrl+C to stop).
+
+```bash
+# All three models behind the proxy, 2 conversations per model:
+dev/demo-load.sh localhost:8000
+
+# Hit each container directly so per-engine tabs each see distinct load:
+dev/demo-load.sh localhost:8001 localhost:8002 localhost:8003 -c 3 -t 5
+
+# Remote DGX Spark deployment:
+dev/demo-load.sh 192.168.1.77:8000 -c 4 -t 6
+```
+
+Requires `bash`, `curl`, and `jq`. See `dev/demo-load.sh -h` for all
+options (turn count, max tokens, temperature, think time, model
+override).
+
 ## Verifying the dashboard picks them up
 
 With `spark-dashboard` running (via `systemctl start spark-dashboard` or

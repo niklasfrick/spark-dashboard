@@ -118,7 +118,20 @@ export function useMetricsHistory(
           avgPromptTps: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
           perReqPromptTps: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
           queueTime: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
+          interTokenLatency: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
           batchSize: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
+          ttftP50: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
+          ttftP95: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
+          ttftP99: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
+          itlP50: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
+          itlP95: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
+          itlP99: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
+          e2eP50: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
+          e2eP95: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
+          e2eP99: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
+          activeRequests: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
+          queuedRequests: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
+          totalRequests: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
         }
       }
       const eb = engineBuffersRef.current[engineKey]
@@ -156,8 +169,38 @@ export function useMetricsHistory(
         if (engine.metrics.queue_time_ms !== null) {
           eb.queueTime.push({ timestamp: ts, value: engine.metrics.queue_time_ms })
         }
+        if (engine.metrics.inter_token_latency_ms !== null) {
+          eb.interTokenLatency.push({ timestamp: ts, value: engine.metrics.inter_token_latency_ms })
+        }
         if (engine.metrics.avg_batch_size !== null) {
           eb.batchSize.push({ timestamp: ts, value: engine.metrics.avg_batch_size })
+        }
+        const tp = engine.metrics.ttft_percentiles
+        if (tp) {
+          if (tp.p50_ms !== null) eb.ttftP50.push({ timestamp: ts, value: tp.p50_ms })
+          if (tp.p95_ms !== null) eb.ttftP95.push({ timestamp: ts, value: tp.p95_ms })
+          if (tp.p99_ms !== null) eb.ttftP99.push({ timestamp: ts, value: tp.p99_ms })
+        }
+        const ip = engine.metrics.itl_percentiles
+        if (ip) {
+          if (ip.p50_ms !== null) eb.itlP50.push({ timestamp: ts, value: ip.p50_ms })
+          if (ip.p95_ms !== null) eb.itlP95.push({ timestamp: ts, value: ip.p95_ms })
+          if (ip.p99_ms !== null) eb.itlP99.push({ timestamp: ts, value: ip.p99_ms })
+        }
+        const ep = engine.metrics.e2e_percentiles
+        if (ep) {
+          if (ep.p50_ms !== null) eb.e2eP50.push({ timestamp: ts, value: ep.p50_ms })
+          if (ep.p95_ms !== null) eb.e2eP95.push({ timestamp: ts, value: ep.p95_ms })
+          if (ep.p99_ms !== null) eb.e2eP99.push({ timestamp: ts, value: ep.p99_ms })
+        }
+        if (engine.metrics.active_requests !== null) {
+          eb.activeRequests.push({ timestamp: ts, value: engine.metrics.active_requests })
+        }
+        if (engine.metrics.queued_requests !== null) {
+          eb.queuedRequests.push({ timestamp: ts, value: engine.metrics.queued_requests })
+        }
+        if (engine.metrics.total_requests !== null) {
+          eb.totalRequests.push({ timestamp: ts, value: engine.metrics.total_requests })
         }
       }
 

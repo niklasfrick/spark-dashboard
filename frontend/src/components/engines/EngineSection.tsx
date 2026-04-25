@@ -11,6 +11,12 @@ import {
   serializeRotationState,
   type RotationInterval,
 } from './TabRotationControl'
+import {
+  LatencyModeControl,
+  parseLatencyMode,
+  serializeLatencyMode,
+  type LatencyMode,
+} from './LatencyModeControl'
 import { aggregateEngines, groupRunningByProvider } from '@/lib/engineAggregate'
 import { engineDisplayName } from '@/lib/format'
 import { getProviderLogo } from '@/lib/providerLogo'
@@ -24,6 +30,8 @@ const ENGINE_ICON: Record<EngineType, string> = {
 }
 
 const ROTATION_INTERVAL_STORAGE_KEY = 'spark-dashboard:engine-rotation-interval'
+const LATENCY_MODE_STORAGE_KEY = 'spark-dashboard:latency-mode'
+const ACTIVE_TAB_STORAGE_KEY = 'spark-dashboard:active-tab'
 
 function EngineChip({ label, iconSrc }: { label: string; iconSrc?: string }) {
   return (
@@ -87,7 +95,20 @@ interface EngineChartData {
   avgPromptTps: ChartDataPoint[]
   perReqPromptTps: ChartDataPoint[]
   queueTime: ChartDataPoint[]
+  interTokenLatency: ChartDataPoint[]
   batchSize: ChartDataPoint[]
+  ttftP50: ChartDataPoint[]
+  ttftP95: ChartDataPoint[]
+  ttftP99: ChartDataPoint[]
+  itlP50: ChartDataPoint[]
+  itlP95: ChartDataPoint[]
+  itlP99: ChartDataPoint[]
+  e2eP50: ChartDataPoint[]
+  e2eP95: ChartDataPoint[]
+  e2eP99: ChartDataPoint[]
+  activeRequests: ChartDataPoint[]
+  queuedRequests: ChartDataPoint[]
+  totalRequests: ChartDataPoint[]
 }
 
 interface EngineSectionProps {
@@ -103,7 +124,14 @@ export function EngineSection({
   getChartData,
   requests,
 }: EngineSectionProps) {
-  const [activeTab, setActiveTab] = useState<string>(GLOBAL_TAB_VALUE)
+  const [activeTab, setActiveTab] = useState<string>(() => {
+    if (typeof window === 'undefined') return GLOBAL_TAB_VALUE
+    try {
+      return window.localStorage.getItem(ACTIVE_TAB_STORAGE_KEY) ?? GLOBAL_TAB_VALUE
+    } catch {
+      return GLOBAL_TAB_VALUE
+    }
+  })
   const [rotationEnabledState, setRotationEnabledState] = useState<boolean>(() => {
     if (typeof window === 'undefined') return true
     try {
@@ -118,6 +146,14 @@ export function EngineSection({
       return parseRotationState(window.localStorage.getItem(ROTATION_INTERVAL_STORAGE_KEY)).interval
     } catch {
       return 10000
+    }
+  })
+  const [latencyMode, setLatencyMode] = useState<LatencyMode>(() => {
+    if (typeof window === 'undefined') return 'avg'
+    try {
+      return parseLatencyMode(window.localStorage.getItem(LATENCY_MODE_STORAGE_KEY))
+    } catch {
+      return 'avg'
     }
   })
   const [focusWithin, setFocusWithin] = useState(false)
@@ -139,6 +175,13 @@ export function EngineSection({
   const handleTabChange = (v: string) => {
     setActiveTab(v)
     setUserPaused(true)
+    if (typeof window !== 'undefined') {
+      try {
+        window.localStorage.setItem(ACTIVE_TAB_STORAGE_KEY, v)
+      } catch {
+        // ignore storage errors (private mode, quota, etc.)
+      }
+    }
   }
 
   const handleRotationEnabledChange = (next: boolean) => {
@@ -167,6 +210,15 @@ export function EngineSection({
     }
   }, [rotationEnabledState, rotationInterval])
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      window.localStorage.setItem(LATENCY_MODE_STORAGE_KEY, serializeLatencyMode(latencyMode))
+    } catch {
+      // ignore storage errors
+    }
+  }, [latencyMode])
+
   const aggregate = useMemo(() => aggregateEngines(engines), [engines])
   const providerGroups = useMemo(() => groupRunningByProvider(engines), [engines])
 
@@ -187,6 +239,20 @@ export function EngineSection({
     ],
     [engines, showGlobalControls],
   )
+
+  useEffect(() => {
+    if (engines.length === 0) return
+    if (activeTab === GLOBAL_TAB_VALUE) return
+    if (tabOrder.includes(activeTab)) return
+    setActiveTab(GLOBAL_TAB_VALUE)
+    if (typeof window !== 'undefined') {
+      try {
+        window.localStorage.removeItem(ACTIVE_TAB_STORAGE_KEY)
+      } catch {
+        // ignore storage errors
+      }
+    }
+  }, [engines.length, activeTab, tabOrder])
 
   const rotationEnabled =
     rotationEnabledState && !focusWithin && !userPaused && tabOrder.length > 1
@@ -230,10 +296,9 @@ export function EngineSection({
     <Tabs
       value={activeTab}
       onValueChange={(v) => handleTabChange(v as string)}
-      className="h-full"
     >
-      <Card className="bg-[#0d0d10] border-white/[0.04] h-full">
-        <CardHeader className="flex flex-row justify-between items-center gap-4 min-w-0">
+      <Card size="sm" className="bg-[#0d0d10] border-white/[0.04] overflow-hidden">
+        <CardHeader className="flex flex-row justify-between items-center gap-4 min-w-0 shrink-0">
           <div className="shrink-0 flex items-center gap-4 min-w-0">
             {headerProviderLogo && (
               <div className="shrink-0 h-14 w-14 rounded-xl bg-white p-2 flex items-center justify-center ring-1 ring-white/[0.06]">
@@ -323,6 +388,11 @@ export function EngineSection({
                 )
               })}
             </TabsList>
+            <span
+              aria-hidden="true"
+              className="self-center h-5 w-px bg-white/[0.08] shrink-0"
+            />
+            <LatencyModeControl mode={latencyMode} onModeChange={setLatencyMode} />
             {showGlobalControls && (
               <>
                 <span
@@ -339,9 +409,9 @@ export function EngineSection({
             )}
           </div>
         </CardHeader>
-        <CardContent className="flex-1 min-h-0 flex flex-col">
-          <TabsContent value={GLOBAL_TAB_VALUE}>
-            <GlobalEngineCard snapshot={aggregate} />
+        <CardContent className="flex flex-col">
+          <TabsContent value={GLOBAL_TAB_VALUE} className="data-[state=active]:flex flex-col">
+            <GlobalEngineCard snapshot={aggregate} latencyMode={latencyMode} />
           </TabsContent>
 
           {engines.map((engine) => {
@@ -359,7 +429,20 @@ export function EngineSection({
                   avgPromptTps: getChartData(`${engineKey}:avgPromptTps`),
                   perReqPromptTps: getChartData(`${engineKey}:perReqPromptTps`),
                   queueTime: getChartData(`${engineKey}:queueTime`),
+                  interTokenLatency: getChartData(`${engineKey}:interTokenLatency`),
                   batchSize: getChartData(`${engineKey}:batchSize`),
+                  ttftP50: getChartData(`${engineKey}:ttftP50`),
+                  ttftP95: getChartData(`${engineKey}:ttftP95`),
+                  ttftP99: getChartData(`${engineKey}:ttftP99`),
+                  itlP50: getChartData(`${engineKey}:itlP50`),
+                  itlP95: getChartData(`${engineKey}:itlP95`),
+                  itlP99: getChartData(`${engineKey}:itlP99`),
+                  e2eP50: getChartData(`${engineKey}:e2eP50`),
+                  e2eP95: getChartData(`${engineKey}:e2eP95`),
+                  e2eP99: getChartData(`${engineKey}:e2eP99`),
+                  activeRequests: getChartData(`${engineKey}:activeRequests`),
+                  queuedRequests: getChartData(`${engineKey}:queuedRequests`),
+                  totalRequests: getChartData(`${engineKey}:totalRequests`),
                 }
               : undefined
 
@@ -367,12 +450,14 @@ export function EngineSection({
               <TabsContent
                 key={engineKey}
                 value={engineKey}
+                className="data-[state=active]:flex flex-col"
               >
                 <EngineCard
                   engine={engine}
                   showCharts={showCharts}
                   chartData={chartDataForEngine}
                   requests={requests}
+                  latencyMode={latencyMode}
                 />
               </TabsContent>
             )

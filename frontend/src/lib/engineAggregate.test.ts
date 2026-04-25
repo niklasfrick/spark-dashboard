@@ -20,8 +20,15 @@ function fullMetrics(overrides: Partial<EngineMetrics> = {}): EngineMetrics {
     swapped_requests: 0,
     prefix_cache_hit_rate: 30,
     queue_time_ms: 50,
+    inter_token_latency_ms: 25,
     preemptions_total: 0,
     avg_batch_size: 4,
+    ttft_percentiles: null,
+    itl_percentiles: null,
+    e2e_percentiles: null,
+    ttft_goodput_pct: null,
+    itl_goodput_pct: null,
+    e2e_goodput_pct: null,
     ...overrides,
   }
 }
@@ -84,6 +91,17 @@ describe('aggregateEngines', () => {
     ]
     const snap = aggregateEngines(engines)
     expect(snap.ttft_ms).toBeCloseTo(460, 5)
+  })
+
+  it('weighted mean applies to inter-token latency', () => {
+    // Engine A: ITL 20ms, 10 requests; Engine B: ITL 80ms, 40 requests
+    // Weighted mean = (20*10 + 80*40) / 50 = 68
+    const engines = [
+      engine('Running', fullMetrics({ inter_token_latency_ms: 20, total_requests: 10 })),
+      engine('Running', fullMetrics({ inter_token_latency_ms: 80, total_requests: 40 })),
+    ]
+    const snap = aggregateEngines(engines)
+    expect(snap.inter_token_latency_ms).toBeCloseTo(68, 5)
   })
 
   it('weighted mean falls back to simple mean when all weights are zero', () => {

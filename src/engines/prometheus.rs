@@ -5,6 +5,10 @@ use std::io::BufRead;
 pub struct ParsedMetrics {
     pub gauges: HashMap<String, f64>,
     pub counters: HashMap<String, f64>,
+    /// Histogram bucket data, keyed by the base metric name (without the
+    /// `_bucket` suffix). Each entry is a list of `(le, cumulative_count)`
+    /// pairs sorted ascending by `le`, including the `+Inf` bucket if present.
+    pub histograms: HashMap<String, Vec<(f64, f64)>>,
 }
 
 /// Parse a Prometheus text exposition format body into typed metrics.
@@ -26,6 +30,7 @@ pub fn parse_prometheus_text(body: &str) -> Option<ParsedMetrics> {
 
     let mut gauges = HashMap::new();
     let mut counters = HashMap::new();
+    let mut histograms: HashMap<String, Vec<(f64, f64)>> = HashMap::new();
 
     for sample in &scrape.samples {
         match &sample.value {
@@ -35,10 +40,16 @@ pub fn parse_prometheus_text(body: &str) -> Option<ParsedMetrics> {
             prometheus_parse::Value::Counter(v) => {
                 counters.insert(sample.metric.clone(), *v);
             }
-            prometheus_parse::Value::Histogram(_) => {
-                // Histogram bucket data is aggregated by prometheus-parse.
-                // The _sum and _count lines for histograms appear as Untyped
-                // samples and are captured below.
+            prometheus_parse::Value::Histogram(buckets) => {
+                // `prometheus-parse` aggregates `_bucket` lines into a single
+                // sample keyed by the base metric name. Counts are cumulative
+                // (Prometheus convention) and the `+Inf` bucket (if present)
+                // carries the total. Sort defensively in case the exposition
+                // order is non-monotonic.
+                let mut bs: Vec<(f64, f64)> =
+                    buckets.iter().map(|b| (b.less_than, b.count)).collect();
+                bs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+                histograms.insert(sample.metric.clone(), bs);
             }
             prometheus_parse::Value::Summary(_) => {
                 // Summary quantile data handled by prometheus-parse.
@@ -59,7 +70,11 @@ pub fn parse_prometheus_text(body: &str) -> Option<ParsedMetrics> {
         }
     }
 
-    Some(ParsedMetrics { gauges, counters })
+    Some(ParsedMetrics {
+        gauges,
+        counters,
+        histograms,
+    })
 }
 
 #[cfg(test)]
@@ -89,6 +104,62 @@ vllm:prefix_cache_hits_total 42.0
             parsed.counters.get("vllm_prefix_cache_hits_total"),
             Some(&42.0)
         );
+    }
+
+    /// vLLM exposes inter-token latency as a histogram. The `_sum` / `_count`
+    /// samples come through as Untyped lines, and must land in `counters`
+    /// under the colon-normalized name so the vllm adapter can compute
+    /// `sum / count` for the average ITL tile.
+    #[test]
+    fn captures_inter_token_latency_histogram() {
+        let body = "\
+# HELP vllm:inter_token_latency_seconds Histogram of inter-token latency in seconds.
+# TYPE vllm:inter_token_latency_seconds histogram
+vllm:inter_token_latency_seconds_bucket{le=\"0.01\"} 10
+vllm:inter_token_latency_seconds_bucket{le=\"+Inf\"} 100
+vllm:inter_token_latency_seconds_sum 5.0
+vllm:inter_token_latency_seconds_count 100.0
+";
+        let parsed = parse_prometheus_text(body).expect("parse");
+        assert_eq!(
+            parsed.counters.get("vllm_inter_token_latency_seconds_sum"),
+            Some(&5.0)
+        );
+        assert_eq!(
+            parsed
+                .counters
+                .get("vllm_inter_token_latency_seconds_count"),
+            Some(&100.0)
+        );
+    }
+
+    /// Histogram bucket lines must land in `histograms` keyed by the base
+    /// metric name (no `_bucket` suffix), with cumulative counts preserved.
+    /// Required for percentile computation in the vLLM adapter.
+    #[test]
+    fn captures_histogram_buckets() {
+        let body = "\
+# HELP vllm:time_to_first_token_seconds TTFT histogram.
+# TYPE vllm:time_to_first_token_seconds histogram
+vllm:time_to_first_token_seconds_bucket{le=\"0.1\"} 10
+vllm:time_to_first_token_seconds_bucket{le=\"0.5\"} 50
+vllm:time_to_first_token_seconds_bucket{le=\"1.0\"} 90
+vllm:time_to_first_token_seconds_bucket{le=\"+Inf\"} 100
+vllm:time_to_first_token_seconds_sum 25.0
+vllm:time_to_first_token_seconds_count 100.0
+";
+        let parsed = parse_prometheus_text(body).expect("parse");
+        let buckets = parsed
+            .histograms
+            .get("vllm_time_to_first_token_seconds")
+            .expect("histogram captured");
+        // Sorted ascending by le, +Inf last.
+        assert_eq!(buckets.len(), 4);
+        assert_eq!(buckets[0], (0.1, 10.0));
+        assert_eq!(buckets[1], (0.5, 50.0));
+        assert_eq!(buckets[2], (1.0, 90.0));
+        assert!(buckets[3].0.is_infinite() && buckets[3].0 > 0.0);
+        assert_eq!(buckets[3].1, 100.0);
     }
 
     #[test]

@@ -24,6 +24,12 @@ export interface ChartSeries {
   data: DataPoint[]
   label: string
   color: string
+  /**
+   * Axis to plot the series against. Defaults to "left". Set "right" on
+   * series with a different magnitude (e.g. ITL ~10ms vs TTFT ~300ms) so
+   * each line gets its own y-scale and small variations stay visible.
+   */
+  axis?: 'left' | 'right'
 }
 
 interface TimeSeriesChartProps {
@@ -36,8 +42,11 @@ interface TimeSeriesChartProps {
   requests?: Array<{ start: number; end: number; tps: number; ttft: number }>
   yDomain?: [number, number]
   unit?: string
-  height?: number
+  /** Pixel number, or any CSS length (`"clamp(80px, 13vh, 120px)"`, etc.). */
+  height?: number | string
   title?: string
+  /** Extra classes applied to the outer wrapper (e.g. grid column placement). */
+  className?: string
 }
 
 function formatTime(timestamp: number): string {
@@ -111,13 +120,14 @@ export const TimeSeriesChart = React.memo(function TimeSeriesChart({
   unit,
   height = 160,
   title,
+  className,
 }: TimeSeriesChartProps) {
   const isMulti = series && series.length > 0
 
   // Build chart config and data depending on mode
   let chartData: Array<Record<string, number>>
   let chartConfig: Record<string, { label: string; color: string }>
-  let lineKeys: Array<{ key: string; color: string }>
+  let lineKeys: Array<{ key: string; color: string; axis: 'left' | 'right' }>
 
   if (isMulti) {
     chartData = mergeSeries(series)
@@ -126,39 +136,49 @@ export const TimeSeriesChart = React.memo(function TimeSeriesChart({
     for (let i = 0; i < series.length; i++) {
       const key = `s${i}`
       chartConfig[key] = { label: series[i].label, color: series[i].color }
-      lineKeys.push({ key, color: series[i].color })
+      lineKeys.push({ key, color: series[i].color, axis: series[i].axis ?? 'left' })
     }
   } else {
     const lineColor = color ?? NVIDIA_THEME.chartLine
     const paddedData = padData(data ?? [])
     chartData = paddedData.map((d) => ({ timestamp: d.timestamp, value: d.value }))
     chartConfig = { value: { label: unit ?? '', color: lineColor } }
-    lineKeys = [{ key: 'value', color: lineColor }]
+    lineKeys = [{ key: 'value', color: lineColor, axis: 'left' }]
   }
+  const hasRightAxis = lineKeys.some((l) => l.axis === 'right')
+  // Tight y-axis width so the plot area sits close to the card's left
+  // edge — keeps chart lines roughly aligned with the title/legend above.
+  const Y_AXIS_WIDTH = 32
 
   return (
-    <div>
-      {(title || isMulti) && (
-        <div className="flex items-center gap-4 mb-1 flex-wrap">
-          {title && (
-            <h3 className="text-xs font-medium text-zinc-500">{title}</h3>
-          )}
-          {isMulti && (
-            <div className="flex items-center gap-3">
-              {series.map((s, i) => (
-                <div key={i} className="flex items-center gap-1.5">
-                  <span
-                    className="inline-block w-2.5 h-[2px] rounded-full"
-                    style={{ backgroundColor: s.color }}
-                  />
-                  <span className="text-[11px] text-zinc-500">{s.label}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-      <ChartContainer config={chartConfig} style={{ height: `${height}px` }} className="w-full">
+    <div className={className}>
+      {/* Reserve a fixed header band so charts with wrapping multi-series
+          legends (Prefill / Decode / Latency) line up with single-title
+          charts (KV / E2E) along the bottom. Legend always sits on its own
+          line below the title for consistent layout across charts. */}
+      <div className="flex flex-col gap-1 mb-1 min-h-[2.25rem]">
+        {title && (
+          <h3 className="text-xs font-medium text-zinc-500">{title}</h3>
+        )}
+        {isMulti && (
+          <div className="flex items-center gap-3 flex-wrap">
+            {series.map((s, i) => (
+              <div key={i} className="flex items-center gap-1.5">
+                <span
+                  className="inline-block w-2.5 h-[2px] rounded-full"
+                  style={{ backgroundColor: s.color }}
+                />
+                <span className="text-[11px] text-zinc-500">{s.label}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <ChartContainer
+        config={chartConfig}
+        style={{ height: typeof height === 'number' ? `${height}px` : height }}
+        className="w-full"
+      >
         <LineChart data={chartData}>
           <CartesianGrid
             stroke={NVIDIA_THEME.chartGrid}
@@ -175,16 +195,30 @@ export const TimeSeriesChart = React.memo(function TimeSeriesChart({
             minTickGap={60}
           />
           <YAxis
+            yAxisId="left"
+            width={Y_AXIS_WIDTH}
             stroke={NVIDIA_THEME.chartAxis}
             fontSize={11}
             tickLine={false}
             axisLine={false}
             domain={yDomain}
           />
+          {hasRightAxis && (
+            <YAxis
+              yAxisId="right"
+              width={Y_AXIS_WIDTH}
+              orientation="right"
+              stroke={NVIDIA_THEME.chartAxis}
+              fontSize={11}
+              tickLine={false}
+              axisLine={false}
+            />
+          )}
           <ChartTooltip content={<ChartTooltipContent />} />
           {requests?.map((req, i) => (
             <ReferenceArea
               key={`req-${i}`}
+              yAxisId="left"
               x1={req.start}
               x2={req.end}
               fill={NVIDIA_THEME.accent}
@@ -194,6 +228,7 @@ export const TimeSeriesChart = React.memo(function TimeSeriesChart({
           {events?.map((evt, i) => (
             <ReferenceLine
               key={`evt-${i}`}
+              yAxisId="left"
               x={evt.timestamp}
               stroke={eventStrokeColor(evt.type)}
               strokeDasharray="4 4"
@@ -206,9 +241,10 @@ export const TimeSeriesChart = React.memo(function TimeSeriesChart({
               }}
             />
           ))}
-          {lineKeys.map(({ key, color: c }) => (
+          {lineKeys.map(({ key, color: c, axis }) => (
             <Line
               key={key}
+              yAxisId={axis}
               type="monotone"
               dataKey={key}
               stroke={c}

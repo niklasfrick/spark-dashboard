@@ -1,4 +1,4 @@
-import type { EngineSnapshot } from '@/types/metrics'
+import type { EngineSnapshot, LatencyPercentiles } from '@/types/metrics'
 import { getProviderLogo, type ProviderLogo } from './providerLogo'
 
 /**
@@ -29,6 +29,7 @@ export interface AggregateSnapshot {
   ttft_ms: number | null
   e2e_latency_ms: number | null
   queue_time_ms: number | null
+  inter_token_latency_ms: number | null
   per_request_tps: number | null
   per_request_prompt_tps: number | null
 
@@ -36,6 +37,20 @@ export interface AggregateSnapshot {
   avg_batch_size: number | null
   kv_cache_percent: number | null
   prefix_cache_hit_rate: number | null
+
+  // Tail-latency percentiles, weighted-mean per quantile.
+  // NOTE: Cross-engine percentile averaging is approximate — true tail
+  // latency would require merging the underlying histograms. We use the
+  // same weighted-mean approach as the per-engine averages above for
+  // visual consistency on the global card.
+  ttft_percentiles: LatencyPercentiles | null
+  itl_percentiles: LatencyPercentiles | null
+  e2e_percentiles: LatencyPercentiles | null
+
+  // Goodput (% meeting SLO), weighted mean by total_requests.
+  ttft_goodput_pct: number | null
+  itl_goodput_pct: number | null
+  e2e_goodput_pct: number | null
 }
 
 function sumOrNull(values: Array<number | null | undefined>): number | null {
@@ -100,11 +115,45 @@ function emptySnapshot(totalCount: number): AggregateSnapshot {
     ttft_ms: null,
     e2e_latency_ms: null,
     queue_time_ms: null,
+    inter_token_latency_ms: null,
     per_request_tps: null,
     per_request_prompt_tps: null,
     avg_batch_size: null,
     kv_cache_percent: null,
     prefix_cache_hit_rate: null,
+    ttft_percentiles: null,
+    itl_percentiles: null,
+    e2e_percentiles: null,
+    ttft_goodput_pct: null,
+    itl_goodput_pct: null,
+    e2e_goodput_pct: null,
+  }
+}
+
+/**
+ * Aggregates a single percentile field across running engines using a
+ * weighted mean (same weighting as the latency averages). Returns null
+ * when no engine reports the field. Each quantile is independently
+ * aggregated; if every engine has the percentiles object but a given
+ * quantile is null, that quantile stays null.
+ */
+function aggregatePercentiles(
+  perEngine: Array<LatencyPercentiles | null | undefined>,
+  weights: Array<number | null | undefined>,
+): LatencyPercentiles | null {
+  const present = perEngine.some((p) => p !== null && p !== undefined)
+  if (!present) return null
+  const quantile = (key: keyof LatencyPercentiles) =>
+    weightedMeanOrNull(
+      perEngine.map((p, i) => ({
+        value: p ? (p[key] as number | null) : null,
+        weight: weights[i],
+      })),
+    )
+  return {
+    p50_ms: quantile('p50_ms'),
+    p95_ms: quantile('p95_ms'),
+    p99_ms: quantile('p99_ms'),
   }
 }
 
@@ -206,6 +255,7 @@ export function aggregateEngines(engines: readonly EngineSnapshot[]): AggregateS
     ttft_ms: weightedBy('ttft_ms'),
     e2e_latency_ms: weightedBy('e2e_latency_ms'),
     queue_time_ms: weightedBy('queue_time_ms'),
+    inter_token_latency_ms: weightedBy('inter_token_latency_ms'),
     per_request_tps: weightedBy('per_request_tps'),
     per_request_prompt_tps: weightedBy('per_request_prompt_tps'),
 
@@ -213,5 +263,24 @@ export function aggregateEngines(engines: readonly EngineSnapshot[]): AggregateS
     avg_batch_size: meanOrNull(get('avg_batch_size')),
     kv_cache_percent: meanOrNull(get('kv_cache_percent')),
     prefix_cache_hit_rate: meanOrNull(get('prefix_cache_hit_rate')),
+
+    // Tail latency — weighted mean per quantile.
+    ttft_percentiles: aggregatePercentiles(
+      metrics.map((m) => m?.ttft_percentiles ?? null),
+      weights,
+    ),
+    itl_percentiles: aggregatePercentiles(
+      metrics.map((m) => m?.itl_percentiles ?? null),
+      weights,
+    ),
+    e2e_percentiles: aggregatePercentiles(
+      metrics.map((m) => m?.e2e_percentiles ?? null),
+      weights,
+    ),
+
+    // Goodput — weighted mean by total_requests, same caveat as percentiles.
+    ttft_goodput_pct: weightedBy('ttft_goodput_pct'),
+    itl_goodput_pct: weightedBy('itl_goodput_pct'),
+    e2e_goodput_pct: weightedBy('e2e_goodput_pct'),
   }
 }
