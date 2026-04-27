@@ -339,8 +339,20 @@ export function EngineSection({
                   {activeEngine.model?.parameter_size && (
                     <EngineChip label={activeEngine.model.parameter_size} />
                   )}
+                  {activeEngine.model?.precision && (
+                    <EngineChip label={activeEngine.model.precision} />
+                  )}
                   {activeEngine.model?.quantization && (
                     <EngineChip label={activeEngine.model.quantization} />
+                  )}
+                  {activeEngine.model?.tensor_type && (
+                    <EngineChip label={activeEngine.model.tensor_type} />
+                  )}
+                  {activeEngine.model?.model_type && (
+                    <EngineChip label={activeEngine.model.model_type} />
+                  )}
+                  {activeEngine.model?.pipeline_tag && (
+                    <EngineChip label={activeEngine.model.pipeline_tag} />
                   )}
                 </div>
               ) : null}

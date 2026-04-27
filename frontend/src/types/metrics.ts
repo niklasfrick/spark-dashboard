@@ -86,6 +86,10 @@ export interface ModelInfo {
   name: string
   parameter_size: string | null
   quantization: string | null
+  precision: string | null
+  tensor_type: string | null
+  model_type: string | null
+  pipeline_tag: string | null
 }
 
 /** Tail-latency percentiles in milliseconds, derived from a Prometheus
