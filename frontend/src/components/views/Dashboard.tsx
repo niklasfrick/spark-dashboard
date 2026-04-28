@@ -74,6 +74,32 @@ export function Dashboard({
     start: r.start_ms, end: r.end_ms, tps: r.tps, ttft: r.ttft_ms,
   }))
 
+  // Compute totals as sum of two series, aligned by timestamp.
+  const sumSeries = (
+    a: Array<{ timestamp: number; value: number }>,
+    b: Array<{ timestamp: number; value: number }>,
+  ): Array<{ timestamp: number; value: number }> => {
+    const map = new Map<number, number>()
+    for (const p of a) map.set(p.timestamp, p.value)
+    for (const p of b) map.set(p.timestamp, (map.get(p.timestamp) ?? 0) + p.value)
+    return Array.from(map.entries())
+      .sort((x, y) => x[0] - y[0])
+      .map(([timestamp, value]) => ({ timestamp, value }))
+  }
+
+  const diskRead = history.getChartData('diskRead')
+  const diskWrite = history.getChartData('diskWrite')
+  const diskTotal = sumSeries(diskRead, diskWrite)
+  const networkRx = history.getChartData('networkRx')
+  const networkTx = history.getChartData('networkTx')
+  const networkTotal = sumSeries(networkRx, networkTx)
+
+  const DISK_READ_COLOR = '#76B900'
+  const DISK_WRITE_COLOR = '#F59E0B'
+  const TOTAL_COLOR = '#A1A1AA'
+  const NET_RX_COLOR = '#3B82F6'
+  const NET_TX_COLOR = '#A855F7'
+
   return (
     <div className="flex flex-col flex-1 min-h-0 gap-2">
       {/* ── LLM Engines — auto-height, fits content; hardware fills remainder ── */}
@@ -171,7 +197,15 @@ export function Dashboard({
                 </div>
               </div>
               <div className="flex-1 min-w-0">
-                <TimeSeriesChart data={history.getChartData('diskRead')} unit="B/s" height={HW_CHART_HEIGHT} />
+                <TimeSeriesChart
+                  series={[
+                    { data: diskTotal, label: 'Total', color: TOTAL_COLOR },
+                    { data: diskRead, label: 'Read', color: DISK_READ_COLOR },
+                    { data: diskWrite, label: 'Write', color: DISK_WRITE_COLOR },
+                  ]}
+                  unit="B/s"
+                  height={HW_CHART_HEIGHT}
+                />
               </div>
             </div>
           </HwCard>
@@ -190,7 +224,15 @@ export function Dashboard({
                 </div>
               </div>
               <div className="flex-1 min-w-0">
-                <TimeSeriesChart data={history.getChartData('networkRx')} unit="B/s" height={HW_CHART_HEIGHT} />
+                <TimeSeriesChart
+                  series={[
+                    { data: networkTotal, label: 'Total', color: TOTAL_COLOR },
+                    { data: networkRx, label: 'RX', color: NET_RX_COLOR },
+                    { data: networkTx, label: 'TX', color: NET_TX_COLOR },
+                  ]}
+                  unit="B/s"
+                  height={HW_CHART_HEIGHT}
+                />
               </div>
             </div>
           </HwCard>
