@@ -152,7 +152,7 @@ export function Dashboard({
 
           {/* Memory */}
           <HwCard title="Memory" subtitle={`${totalGB} GB Unified`}>
-            <div className="flex justify-center py-1">
+            <div className="flex items-center justify-center min-h-0 flex-1 overflow-hidden">
               <ArcGauge value={memUsedPercent} label="" unit="%" segments={memorySegments} size={HW_GAUGE_PX} />
             </div>
           </HwCard>
