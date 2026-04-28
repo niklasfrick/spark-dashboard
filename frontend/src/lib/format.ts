@@ -1,10 +1,21 @@
 import type { EngineType } from '@/types/metrics'
 
-/** Format bytes to human-readable with auto-scaling: KB (<1MB), MB (<1GB), GB (>=1GB). One decimal. */
+const KIB = 1024
+const MIB = 1024 * 1024
+const GIB = 1024 * 1024 * 1024
+
+/** Format bytes to human-readable with auto-scaling: KB (<1MB), MB (<1GB), GB (>=1GB).
+ *  Uses binary scaling (1024) under the conventional "GB" labels, matching `free -h`,
+ *  `htop`, macOS, and Windows. */
 export function formatBytes(bytes: number): string {
-  if (bytes >= 1_000_000_000) return `${(bytes / 1_000_000_000).toFixed(1)} GB`
-  if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(1)} MB`
-  return `${(bytes / 1_000).toFixed(1)} KB`
+  if (bytes >= GIB) return `${(bytes / GIB).toFixed(1)} GB`
+  if (bytes >= MIB) return `${(bytes / MIB).toFixed(1)} MB`
+  return `${(bytes / KIB).toFixed(1)} KB`
+}
+
+/** Format bytes as binary GiB, labelled "GB" to match OS conventions. */
+export function formatGiB(bytes: number, decimals = 0): string {
+  return `${(bytes / GIB).toFixed(decimals)} GB`
 }
 
 /** Format bytes/sec to human-readable rate string */
