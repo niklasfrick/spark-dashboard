@@ -1,6 +1,6 @@
 import { MetricCard } from './MetricCard'
 import { ArcGauge, type GaugeSegment } from './gauges/ArcGauge'
-import { formatBytes } from '../lib/format'
+import { formatBytes, formatGiB } from '../lib/format'
 import type { MemoryMetrics } from '../types/metrics'
 
 interface MemoryCardProps {
@@ -16,15 +16,16 @@ const FREE_COLOR = '#27272A'
 export function MemoryCard({ metrics, gaugeSize }: MemoryCardProps) {
   if (!metrics) return <MetricCard title="Memory"><p className="text-zinc-500">Waiting for data...</p></MetricCard>
 
-  const totalGB = (metrics.total_bytes / 1_000_000_000).toFixed(0)
+  const headlineTotal = metrics.display_total_bytes ?? metrics.total_bytes
+  const totalGB = formatGiB(headlineTotal)
   const usedPercent = metrics.total_bytes > 0
     ? (metrics.used_bytes / metrics.total_bytes) * 100
     : 0
 
   const title = metrics.is_unified ? 'Unified Memory' : 'Memory'
   const subtitle = metrics.is_unified
-    ? `${totalGB} GB shared CPU + GPU`
-    : `${totalGB} GB system RAM`
+    ? `${totalGB} shared CPU + GPU`
+    : `${totalGB} system RAM`
 
   const gpuEst = metrics.is_unified ? (metrics.gpu_estimated_bytes ?? 0) : 0
   const cpuUsed = Math.max(0, metrics.used_bytes - gpuEst)
@@ -48,7 +49,7 @@ export function MemoryCard({ metrics, gaugeSize }: MemoryCardProps) {
   const vramUsed = metrics.gpu_memory_used_bytes ?? 0
   const hasDiscreteVram = !metrics.is_unified && vramTotal > 0
   const vramFree = Math.max(0, vramTotal - vramUsed)
-  const vramTotalGB = (vramTotal / 1_000_000_000).toFixed(0)
+  const vramTotalGB = formatGiB(vramTotal)
 
   const vramSegments: GaugeSegment[] = [
     { value: vramUsed, total: vramTotal, color: GPU_COLOR, label: `Used: ${formatBytes(vramUsed)}` },
@@ -78,7 +79,7 @@ export function MemoryCard({ metrics, gaugeSize }: MemoryCardProps) {
         <div className="mt-4 pt-4 border-t border-white/[0.04]">
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm font-medium text-zinc-300">GPU VRAM</span>
-            <span className="text-xs text-zinc-500">{vramTotalGB} GB total</span>
+            <span className="text-xs text-zinc-500">{vramTotalGB} total</span>
           </div>
           <div className="flex justify-center py-2">
             <ArcGauge

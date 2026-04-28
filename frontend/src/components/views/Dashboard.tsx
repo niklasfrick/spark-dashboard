@@ -3,7 +3,7 @@ import { CoreHeatmap } from '@/components/charts/CoreHeatmap'
 import { TimeSeriesChart } from '@/components/charts/TimeSeriesChart'
 import { EngineSection } from '@/components/engines/EngineSection'
 import { THRESHOLDS } from '@/lib/theme'
-import { formatBytes, formatMhz, formatRate } from '@/lib/format'
+import { formatBytes, formatGiB, formatMhz, formatRate } from '@/lib/format'
 import type { MetricsSnapshot } from '@/types/metrics'
 import type { GpuEvent, InferenceRequest } from '@/types/events'
 
@@ -58,7 +58,7 @@ export function Dashboard({
   const cpuUsed = Math.max(0, metrics.memory.used_bytes - gpuUsed)
   const cached = Math.min(metrics.memory.cached_bytes, metrics.memory.available_bytes)
   const free = Math.max(0, metrics.memory.available_bytes - cached)
-  const totalGB = (metrics.memory.total_bytes / 1_000_000_000).toFixed(0)
+  const totalGB = formatGiB(metrics.memory.display_total_bytes ?? metrics.memory.total_bytes)
 
   const memorySegments: GaugeSegment[] = [
     { value: gpuUsed, total: metrics.memory.total_bytes, color: '#76B900', label: `GPU: ${formatBytes(gpuUsed)}` },
@@ -73,6 +73,32 @@ export function Dashboard({
   const requestSpans = requests.map(r => ({
     start: r.start_ms, end: r.end_ms, tps: r.tps, ttft: r.ttft_ms,
   }))
+
+  // Compute totals as sum of two series, aligned by timestamp.
+  const sumSeries = (
+    a: Array<{ timestamp: number; value: number }>,
+    b: Array<{ timestamp: number; value: number }>,
+  ): Array<{ timestamp: number; value: number }> => {
+    const map = new Map<number, number>()
+    for (const p of a) map.set(p.timestamp, p.value)
+    for (const p of b) map.set(p.timestamp, (map.get(p.timestamp) ?? 0) + p.value)
+    return Array.from(map.entries())
+      .sort((x, y) => x[0] - y[0])
+      .map(([timestamp, value]) => ({ timestamp, value }))
+  }
+
+  const diskRead = history.getChartData('diskRead')
+  const diskWrite = history.getChartData('diskWrite')
+  const diskTotal = sumSeries(diskRead, diskWrite)
+  const networkRx = history.getChartData('networkRx')
+  const networkTx = history.getChartData('networkTx')
+  const networkTotal = sumSeries(networkRx, networkTx)
+
+  const DISK_READ_COLOR = '#76B900'
+  const DISK_WRITE_COLOR = '#F59E0B'
+  const TOTAL_COLOR = '#A1A1AA'
+  const NET_RX_COLOR = '#3B82F6'
+  const NET_TX_COLOR = '#A855F7'
 
   return (
     <div className="flex flex-col flex-1 min-h-0 gap-2">
@@ -92,7 +118,7 @@ export function Dashboard({
 
           {/* GPU Utilization */}
           <HwCard title="GPU Utilization" subtitle={metrics.gpu.name ?? undefined}>
-            <div className="flex items-start gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
+            <div className="flex items-center gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
               <ArcGauge value={metrics.gpu.utilization_percent ?? 0} label="GPU Util" unit="%" size={HW_GAUGE_PX} />
               <div className="flex-1 min-w-0">
                 <TimeSeriesChart data={history.getChartData('gpuUtil')} yDomain={[0, 100]} unit="%" events={allEvents} requests={requestSpans} height={HW_CHART_HEIGHT} />
@@ -102,7 +128,7 @@ export function Dashboard({
 
           {/* GPU Temperature */}
           <HwCard title="GPU Temp" subtitle={metrics.gpu.name ?? undefined}>
-            <div className="flex items-start gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
+            <div className="flex items-center gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
               <ArcGauge value={metrics.gpu.temperature_celsius ?? 0} label="GPU Temp" unit="°C" thresholds={THRESHOLDS.gpuTemp} size={HW_GAUGE_PX} />
               <div className="flex-1 min-w-0">
                 <TimeSeriesChart data={history.getChartData('gpuTemp')} yDomain={[0, 100]} unit="°C" height={HW_CHART_HEIGHT} />
@@ -112,7 +138,7 @@ export function Dashboard({
 
           {/* GPU Power */}
           <HwCard title="GPU Power" subtitle={metrics.gpu.name ?? undefined}>
-            <div className="flex items-start gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
+            <div className="flex items-center gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
               <ArcGauge
                 value={powerPercent}
                 label="GPU Power"
@@ -129,7 +155,7 @@ export function Dashboard({
 
           {/* GPU Clock */}
           <HwCard title="GPU Clock" subtitle={metrics.gpu.name ?? undefined}>
-            <div className="flex items-start gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
+            <div className="flex items-center gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
               <div className="flex flex-col items-center justify-center shrink-0" style={{ width: HW_GAUGE_PX, height: HW_GAUGE_PX }}>
                 <span className="text-sm 2xl:text-base min-[1920px]:text-lg font-bold text-zinc-100 font-mono">{formatMhz(metrics.gpu.clock_graphics_mhz)}</span>
               </div>
@@ -141,7 +167,7 @@ export function Dashboard({
 
           {/* CPU */}
           <HwCard title="CPU" subtitle={metrics.cpu.name ?? undefined}>
-            <div className="flex items-start gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
+            <div className="flex items-center gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
               <ArcGauge value={metrics.cpu.aggregate_percent} label="CPU" unit="%" thresholds={THRESHOLDS.cpuUsage} size={HW_GAUGE_PX} />
               <div className="flex-1 min-w-0">
                 <TimeSeriesChart data={history.getChartData('cpuAggregate')} yDomain={[0, 100]} unit="%" height={HW_CHART_HEIGHT} />
@@ -151,15 +177,15 @@ export function Dashboard({
           </HwCard>
 
           {/* Memory */}
-          <HwCard title="Memory" subtitle={`${totalGB} GB Unified`}>
-            <div className="flex justify-center py-1">
+          <HwCard title="Memory" subtitle={`${totalGB} Unified`}>
+            <div className="flex items-center justify-center min-h-0 flex-1 overflow-hidden">
               <ArcGauge value={memUsedPercent} label="" unit="%" segments={memorySegments} size={HW_GAUGE_PX} />
             </div>
           </HwCard>
 
           {/* Disk I/O */}
           <HwCard title="Disk I/O" subtitle={metrics.disk.name ?? undefined}>
-            <div className="flex items-start gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
+            <div className="flex items-center gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
               <div className="flex flex-col items-center justify-center gap-0.5 shrink-0" style={{ width: HW_GAUGE_PX, height: HW_GAUGE_PX }}>
                 <div className="flex items-baseline gap-1">
                   <span className="text-[9px] 2xl:text-[10px] min-[1920px]:text-xs text-zinc-500">R</span>
@@ -171,14 +197,22 @@ export function Dashboard({
                 </div>
               </div>
               <div className="flex-1 min-w-0">
-                <TimeSeriesChart data={history.getChartData('diskRead')} unit="B/s" height={HW_CHART_HEIGHT} />
+                <TimeSeriesChart
+                  series={[
+                    { data: diskTotal, label: 'Total', color: TOTAL_COLOR },
+                    { data: diskRead, label: 'Read', color: DISK_READ_COLOR },
+                    { data: diskWrite, label: 'Write', color: DISK_WRITE_COLOR },
+                  ]}
+                  unit="B/s"
+                  height={HW_CHART_HEIGHT}
+                />
               </div>
             </div>
           </HwCard>
 
           {/* Network I/O */}
           <HwCard title="Network" subtitle={metrics.network.name ?? undefined}>
-            <div className="flex items-start gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
+            <div className="flex items-center gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
               <div className="flex flex-col items-center justify-center gap-0.5 shrink-0" style={{ width: HW_GAUGE_PX, height: HW_GAUGE_PX }}>
                 <div className="flex items-baseline gap-1">
                   <span className="text-[9px] 2xl:text-[10px] min-[1920px]:text-xs text-zinc-500">RX</span>
@@ -190,7 +224,15 @@ export function Dashboard({
                 </div>
               </div>
               <div className="flex-1 min-w-0">
-                <TimeSeriesChart data={history.getChartData('networkRx')} unit="B/s" height={HW_CHART_HEIGHT} />
+                <TimeSeriesChart
+                  series={[
+                    { data: networkTotal, label: 'Total', color: TOTAL_COLOR },
+                    { data: networkRx, label: 'RX', color: NET_RX_COLOR },
+                    { data: networkTx, label: 'TX', color: NET_TX_COLOR },
+                  ]}
+                  unit="B/s"
+                  height={HW_CHART_HEIGHT}
+                />
               </div>
             </div>
           </HwCard>

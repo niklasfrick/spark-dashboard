@@ -3,25 +3,27 @@ import { render, screen } from '@testing-library/react'
 import { MemoryCard } from '../components/MemoryCard'
 import type { MemoryMetrics } from '../types/metrics'
 
+const GIB = 1_073_741_824
+
 const mockMemoryMetrics: MemoryMetrics = {
-  total_bytes: 128_000_000_000,
-  used_bytes: 64_000_000_000,
-  available_bytes: 44_000_000_000,
-  cached_bytes: 10_000_000_000,
-  gpu_estimated_bytes: 20_000_000_000,
+  total_bytes: 128 * GIB,
+  used_bytes: 64 * GIB,
+  available_bytes: 44 * GIB,
+  cached_bytes: 10 * GIB,
+  gpu_estimated_bytes: 20 * GIB,
   gpu_memory_total_bytes: null,
   gpu_memory_used_bytes: null,
   is_unified: true,
 }
 
 const discreteGpuMetrics: MemoryMetrics = {
-  total_bytes: 64_000_000_000,
-  used_bytes: 32_000_000_000,
-  available_bytes: 28_000_000_000,
-  cached_bytes: 6_000_000_000,
+  total_bytes: 64 * GIB,
+  used_bytes: 32 * GIB,
+  available_bytes: 28 * GIB,
+  cached_bytes: 6 * GIB,
   gpu_estimated_bytes: null,
-  gpu_memory_total_bytes: 24_000_000_000,
-  gpu_memory_used_bytes: 12_000_000_000,
+  gpu_memory_total_bytes: 24 * GIB,
+  gpu_memory_used_bytes: 12 * GIB,
   is_unified: false,
 }
 
