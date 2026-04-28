@@ -24,6 +24,48 @@ fn warmup_skip_from_env() -> u64 {
         .unwrap_or(DEFAULT_WARMUP_SKIP_REQUESTS)
 }
 
+/// Format a raw parameter count into a compact human-readable string.
+fn format_param_size(count: u64) -> String {
+    if count >= 1_000_000_000 {
+        format!("{:.1}B params", count as f64 / 1_000_000_000.0)
+    } else if count >= 1_000_000 {
+        format!("{:.1}M params", count as f64 / 1_000_000.0)
+    } else {
+        format!("{} params", count)
+    }
+}
+
+/// Format quantization method name into a human-readable label.
+fn format_quant_method(method: &str) -> String {
+    match method {
+        "auto-round" => "AutoRound".into(),
+        "gptq" => "GPTQ".into(),
+        "awq" => "AWQ".into(),
+        "bitsandbytes" => "BitsAndBytes".into(),
+        "fp8" => "FP8".into(),
+        other => other.to_string(),
+    }
+}
+
+/// Format quantization bits into a precision label.
+fn format_precision(bits: u64) -> String {
+    format!("{}-bit precision", bits)
+}
+
+/// Format the primary tensor dtype from safetensors parameter keys.
+/// Picks the key with the largest parameter count, excluding integer
+/// storage formats that represent packed quantized weights.
+fn format_tensor_type(params: &std::collections::HashMap<String, u64>) -> Option<String> {
+    // Prefer float dtypes over integer storage formats.
+    let float_keys: [&str; 5] = ["BF16", "F16", "F32", "F64", "FP8"];
+    for key in &float_keys {
+        if params.contains_key(*key) {
+            return Some(key.to_string());
+        }
+    }
+    params.keys().next().cloned()
+}
+
 pub struct VllmAdapter {
     client: reqwest::Client,
     endpoint: String,
@@ -44,6 +86,14 @@ pub struct VllmAdapter {
     /// observations from histogram-derived metrics so the slow first inference
     /// does not skew steady-state percentiles and averages.
     warmup: Mutex<WarmupTracker>,
+    /// Cached HuggingFace model metadata. Once successfully fetched, this
+    /// lives for the lifetime of the adapter (model params and quantization
+    /// do not change at runtime).
+    hf_model_cache: Mutex<Option<ModelInfo>>,
+    /// Wall-clock time of the most recent failed HF API attempt. Used to
+    /// enforce a cooldown so a transient HF outage does not trigger a
+    /// request on every 1-second poll cycle.
+    last_hf_error: Mutex<Option<Instant>>,
 }
 
 impl VllmAdapter {
@@ -57,7 +107,138 @@ impl VllmAdapter {
             avg_accum: Mutex::new((0.0, 0)),
             avg_prompt_accum: Mutex::new((0.0, 0)),
             warmup: Mutex::new(WarmupTracker::new(warmup_skip_from_env())),
+            hf_model_cache: Mutex::new(None),
+            last_hf_error: Mutex::new(None),
         }
+    }
+
+    /// Cooldown between HF API retries after a failed request.
+    const HF_RETRY_COOLDOWN: Duration = Duration::from_secs(60);
+
+    /// Fetch model metadata from the HuggingFace model-info API.
+    ///
+    /// Uses an internal cache so the API is called at most once per engine
+    /// lifetime. On failure, a 60-second cooldown prevents hammering the HF
+    /// API on every 1-second poll cycle.
+    async fn fetch_hf_model_info(&self, model_id: &str) -> Option<ModelInfo> {
+        // Cache hit — model metadata never changes at runtime.
+        {
+            let cache = self.hf_model_cache.lock().await;
+            if let Some(cached) = cache.as_ref() {
+                return Some(cached.clone());
+            }
+        }
+
+        // Cooldown check — don't retry on every 1-second poll.
+        {
+            let last = self.last_hf_error.lock().await;
+            if let Some(when) = *last {
+                if when.elapsed() < Self::HF_RETRY_COOLDOWN {
+                    return None;
+                }
+            }
+        }
+
+        // Only HF-format names can be resolved.
+        if !model_id.contains('/') {
+            return None;
+        }
+
+        let url = format!("https://huggingface.co/api/models/{}", model_id);
+
+        let hf_client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .ok()?;
+
+        let resp = match hf_client.get(&url).send().await {
+            Ok(r) if r.status().is_success() => r,
+            Ok(r) => {
+                tracing::warn!(
+                    endpoint = %self.endpoint,
+                    model_id = %model_id,
+                    status = %r.status(),
+                    "HF model info API returned non-success",
+                );
+                *self.last_hf_error.lock().await = Some(Instant::now());
+                return None;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    endpoint = %self.endpoint,
+                    model_id = %model_id,
+                    error = %e,
+                    "HF model info API request failed",
+                );
+                *self.last_hf_error.lock().await = Some(Instant::now());
+                return None;
+            }
+        };
+
+        let hf: HfModelResponse = match resp.json().await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(
+                    endpoint = %self.endpoint,
+                    model_id = %model_id,
+                    error = %e,
+                    "HF model info response deserialization failed",
+                );
+                *self.last_hf_error.lock().await = Some(Instant::now());
+                return None;
+            }
+        };
+
+        let parameter_size = hf
+            .safetensors
+            .as_ref()
+            .and_then(|s| s.total)
+            .map(format_param_size);
+
+        let quant_config = hf
+            .config
+            .as_ref()
+            .and_then(|c| c.quantization_config.as_ref());
+
+        let quantization = quant_config
+            .and_then(|q| q.quant_method.as_deref())
+            .map(format_quant_method);
+
+        let precision = quant_config.and_then(|q| q.bits).map(format_precision);
+
+        let tensor_type = hf
+            .safetensors
+            .as_ref()
+            .and_then(|s| s.parameters.as_ref())
+            .and_then(format_tensor_type);
+
+        let model_type = hf.config.as_ref().and_then(|c| c.model_type.clone());
+
+        let result = ModelInfo {
+            name: model_id.to_string(),
+            parameter_size,
+            quantization,
+            precision,
+            tensor_type,
+            model_type,
+            pipeline_tag: hf.pipeline_tag,
+        };
+
+        *self.hf_model_cache.lock().await = Some(result.clone());
+
+        tracing::info!(
+            endpoint = %self.endpoint,
+            model_id = %model_id,
+            parameter_size = ?result.parameter_size,
+            quantization = ?result.quantization,
+            precision = ?result.precision,
+            tensor_type = ?result.tensor_type,
+            model_type = ?result.model_type,
+            pipeline_tag = ?result.pipeline_tag,
+            "Fetched model info from HuggingFace",
+        );
+
+        Some(result)
     }
 }
 
@@ -70,6 +251,35 @@ struct OpenAIModelsResponse {
 #[derive(Deserialize)]
 struct OpenAIModel {
     id: String,
+}
+
+/// Response shape for GET https://huggingface.co/api/models/{model_id}
+#[derive(Deserialize)]
+struct HfModelResponse {
+    pipeline_tag: Option<String>,
+    safetensors: Option<HfSafetensors>,
+    #[serde(default)]
+    config: Option<HfConfig>,
+}
+
+#[derive(Deserialize)]
+struct HfSafetensors {
+    total: Option<u64>,
+    #[serde(default)]
+    parameters: Option<std::collections::HashMap<String, u64>>,
+}
+
+#[derive(Deserialize)]
+struct HfConfig {
+    #[serde(default)]
+    model_type: Option<String>,
+    quantization_config: Option<HfQuantizationConfig>,
+}
+
+#[derive(Deserialize)]
+struct HfQuantizationConfig {
+    bits: Option<u64>,
+    quant_method: Option<String>,
 }
 
 #[async_trait]
@@ -126,10 +336,20 @@ impl EngineAdapter for VllmAdapter {
             (None, None) => None,
         }?;
 
+        // Try HF enrichment — fetch_hf_model_info caches successes and
+        // throttles retries internally.
+        if let Some(enriched) = self.fetch_hf_model_info(&name).await {
+            return Some(enriched);
+        }
+
         Some(ModelInfo {
             name,
             parameter_size: None,
             quantization: None,
+            precision: None,
+            tensor_type: None,
+            model_type: None,
+            pipeline_tag: None,
         })
     }
 
@@ -611,5 +831,58 @@ vllm:time_to_first_token_seconds_count 0.0
             .expect("count delta");
         assert!((sum - 1.0).abs() < 1e-9, "sum delta {sum}");
         assert!((count - 100.0).abs() < 1e-9, "count delta {count}");
+    }
+
+    #[test]
+    fn format_param_size_formats_billions() {
+        assert_eq!(format_param_size(11_823_991_872), "11.8B params");
+        assert_eq!(format_param_size(7_000_000_000), "7.0B params");
+    }
+
+    #[test]
+    fn format_param_size_formats_millions() {
+        assert_eq!(format_param_size(500_000_000), "500.0M params");
+        assert_eq!(format_param_size(1_000_000), "1.0M params");
+    }
+
+    #[test]
+    fn format_quant_method_formats_known_methods() {
+        assert_eq!(format_quant_method("auto-round"), "AutoRound");
+        assert_eq!(format_quant_method("gptq"), "GPTQ");
+        assert_eq!(format_quant_method("awq"), "AWQ");
+        assert_eq!(format_quant_method("bitsandbytes"), "BitsAndBytes");
+        assert_eq!(format_quant_method("fp8"), "FP8");
+    }
+
+    #[test]
+    fn format_quant_method_passes_through_unknown() {
+        assert_eq!(format_quant_method("some-new-method"), "some-new-method");
+    }
+
+    #[test]
+    fn format_precision_produces_label() {
+        assert_eq!(format_precision(4), "4-bit precision");
+        assert_eq!(format_precision(8), "8-bit precision");
+    }
+
+    #[test]
+    fn format_tensor_type_prefers_float_dtypes() {
+        let mut params = std::collections::HashMap::new();
+        params.insert("BF16".into(), 1000);
+        params.insert("I32".into(), 5000);
+        assert_eq!(format_tensor_type(&params), Some("BF16".into()));
+    }
+
+    #[test]
+    fn format_tensor_type_falls_back_to_first_key() {
+        let mut params = std::collections::HashMap::new();
+        params.insert("I32".into(), 5000);
+        assert_eq!(format_tensor_type(&params), Some("I32".into()));
+    }
+
+    #[test]
+    fn format_tensor_type_returns_none_for_empty() {
+        let params = std::collections::HashMap::new();
+        assert_eq!(format_tensor_type(&params), None);
     }
 }

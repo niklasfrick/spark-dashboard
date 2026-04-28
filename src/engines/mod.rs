@@ -47,6 +47,10 @@ pub struct ModelInfo {
     pub name: String,
     pub parameter_size: Option<String>,
     pub quantization: Option<String>,
+    pub precision: Option<String>,
+    pub tensor_type: Option<String>,
+    pub model_type: Option<String>,
+    pub pipeline_tag: Option<String>,
 }
 
 /// Tail-latency percentiles in milliseconds, derived from a Prometheus

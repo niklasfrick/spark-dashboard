@@ -26,52 +26,43 @@ const discreteGpuMetrics: MemoryMetrics = {
 }
 
 describe('MemoryCard', () => {
-  it('renders unified memory segments with NVIDIA-branded colors', () => {
-    const { container } = render(<MemoryCard metrics={mockMemoryMetrics} />)
+  it('renders unified memory legend entries with correct labels', () => {
+    render(<MemoryCard metrics={mockMemoryMetrics} />)
 
-    // Verify 4 segment labels are present
+    // Verify segment legend labels are present
     expect(screen.getByText(/GPU \(est\.\):/)).toBeTruthy()
     expect(screen.getByText(/^CPU:/)).toBeTruthy()
     expect(screen.getByText(/^Cached:/)).toBeTruthy()
     expect(screen.getByText(/^Free:/)).toBeTruthy()
-
-    // Verify NVIDIA green color class for GPU segment
-    const greenSegments = container.querySelectorAll('.bg-\\[\\#76B900\\]')
-    expect(greenSegments.length).toBeGreaterThanOrEqual(1)
-
-    // Verify blue color class for CPU segment
-    const blueSegments = container.querySelectorAll('.bg-blue-500')
-    expect(blueSegments.length).toBeGreaterThanOrEqual(1)
-
-    // Verify zinc-500 color class for Cached segment
-    const cachedSegments = container.querySelectorAll('.bg-zinc-500')
-    expect(cachedSegments.length).toBeGreaterThanOrEqual(1)
-
-    // Verify zinc-700 color class for Free segment
-    const freeSegments = container.querySelectorAll('.bg-zinc-700')
-    expect(freeSegments.length).toBeGreaterThanOrEqual(1)
   })
 
-  it('renders all 4 colored bar segments', () => {
+  it('renders 4 colored legend dots for the 4 memory segments', () => {
     const { container } = render(<MemoryCard metrics={mockMemoryMetrics} />)
 
-    // StackedBar renders a flex row with one div per non-zero segment.
-    // Match on the structural classes that aren't expected to change with
-    // responsive tweaks (height utilities like h-2 / sm:h-2.5 may evolve).
-    const barContainer = container.querySelector('.rounded-full.overflow-hidden')
-    expect(barContainer).toBeTruthy()
+    // Legend dots are span elements with inline background-color
+    const legendDots = container.querySelectorAll('span[style*="background-color"]')
+    expect(legendDots.length).toBe(4)
 
-    // All 4 mock segments are > 0, so all 4 render (GPU, CPU, Cached, Free)
-    const segments = barContainer!.querySelectorAll(':scope > div')
-    expect(segments.length).toBe(4)
+    // GPU dot is NVIDIA green
+    expect((legendDots[0] as HTMLElement).style.backgroundColor).toBe('rgb(118, 185, 0)')
+    // CPU dot is blue-500
+    expect((legendDots[1] as HTMLElement).style.backgroundColor).toBe('rgb(59, 130, 246)')
+    // Cached dot is zinc-500
+    expect((legendDots[2] as HTMLElement).style.backgroundColor).toBe('rgb(113, 113, 122)')
+    // Free dot is zinc-800
+    expect((legendDots[3] as HTMLElement).style.backgroundColor).toBe('rgb(39, 39, 42)')
   })
 
-  it('renders the ArcGauge for memory usage', () => {
+  it('renders the ArcGauge SVG with multiple segment arcs', () => {
     const { container } = render(<MemoryCard metrics={mockMemoryMetrics} />)
 
     // ArcGauge renders an SVG
     const svg = container.querySelector('svg')
     expect(svg).toBeTruthy()
+
+    // With segments, there should be multiple value circles (one per segment + background track)
+    const circles = svg!.querySelectorAll('circle')
+    expect(circles.length).toBe(5) // 1 background track + 4 segments
 
     // Memory label
     expect(screen.getByText('Memory')).toBeTruthy()
@@ -100,7 +91,7 @@ describe('MemoryCard', () => {
       expect(screen.getByText('GPU VRAM')).toBeTruthy()
       expect(screen.getByText(/24 GB total/)).toBeTruthy()
 
-      // VRAM section renders its own used/free segments
+      // VRAM section renders its own used/free legend entries
       const used = screen.getAllByText(/^Used:/)
       expect(used.length).toBeGreaterThanOrEqual(1)
 

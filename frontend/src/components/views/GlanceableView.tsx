@@ -1,6 +1,5 @@
 import { MetricCard } from '@/components/MetricCard'
-import { ArcGauge } from '@/components/gauges/ArcGauge'
-import { StackedBar } from '@/components/StackedBar'
+import { ArcGauge, type GaugeSegment } from '@/components/gauges/ArcGauge'
 import { BigNumberSparkline } from '@/components/charts/BigNumberSparkline'
 import { formatBytes, formatTps } from '@/lib/format'
 import { THRESHOLDS } from '@/lib/theme'
@@ -23,11 +22,11 @@ export function GlanceableView({ metrics, tpsSparkline }: GlanceableViewProps) {
   const cached = Math.min(metrics.memory.cached_bytes, metrics.memory.available_bytes)
   const free = Math.max(0, metrics.memory.available_bytes - cached)
 
-  const memorySegments = [
-    { value: gpuUsed, total: metrics.memory.total_bytes, color: 'bg-[#76B900]', label: `GPU (est.): ${formatBytes(gpuUsed)}` },
-    { value: cpuUsed, total: metrics.memory.total_bytes, color: 'bg-blue-500', label: `CPU: ${formatBytes(cpuUsed)}` },
-    { value: cached, total: metrics.memory.total_bytes, color: 'bg-zinc-500', label: `Cached: ${formatBytes(cached)}` },
-    { value: free, total: metrics.memory.total_bytes, color: 'bg-zinc-700', label: `Free: ${formatBytes(free)}` },
+  const memorySegments: GaugeSegment[] = [
+    { value: gpuUsed, total: metrics.memory.total_bytes, color: '#76B900', label: `GPU (est.): ${formatBytes(gpuUsed)}` },
+    { value: cpuUsed, total: metrics.memory.total_bytes, color: '#3B82F6', label: `CPU: ${formatBytes(cpuUsed)}` },
+    { value: cached, total: metrics.memory.total_bytes, color: '#71717A', label: `Cached: ${formatBytes(cached)}` },
+    { value: free, total: metrics.memory.total_bytes, color: '#27272A', label: `Free: ${formatBytes(free)}` },
   ]
 
   // Active engine: first engine with Running status
@@ -75,10 +74,10 @@ export function GlanceableView({ metrics, tpsSparkline }: GlanceableViewProps) {
             label="Memory"
             unit="%"
             thresholds={THRESHOLDS.memoryUsage}
+            segments={memorySegments}
             size={160}
           />
         </div>
-        <StackedBar segments={memorySegments} />
       </MetricCard>
 
       {/* Active Engine - spans full width when present */}
