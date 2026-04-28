@@ -1,14 +1,32 @@
 # spark-dashboard — Claude project rules
 
-These rules are project-specific. Global coding/test/security rules in `~/.claude/rules/` still apply.
+Project-specific. Global rules in `~/.claude/rules/` still apply.
 
-## Pre-commit verification (NON-NEGOTIABLE)
+## Branches & PRs
 
-CI fails fast on formatting. Always run the same checks CI runs *before* committing — do not skip, do not batch for "later".
+- `main` is protected. No direct pushes. Every change goes through a PR.
+- Branch name: `<type>/<slug>` (`feat/...`, `fix/...`, `docs/...`).
+- Squash-merge PR title = the commit on `main` → it must be a valid Conventional Commit.
+- All `ci.yml` jobs (rust, frontend, installer) must pass before merge.
 
-### Rust changes (anything under `src/`, `Cargo.toml`, `Cargo.lock`)
+## Commits drive releases
 
-Run from the repo root, in this exact order (mirrors `.github/workflows/ci.yml` → job `rust`):
+`release-please` reads commits on `main` to bump versions and publish to crates.io. Format: `<type>(<scope>)<!>: <description>`.
+
+| Type                                                       | Bump (pre-1.0)                  |
+| ---------------------------------------------------------- | ------------------------------- |
+| `feat:`                                                    | minor                           |
+| `fix:`                                                     | patch                           |
+| `feat!:` / `BREAKING CHANGE:`                              | minor (becomes major after 1.0) |
+| `chore`, `docs`, `refactor`, `test`, `ci`, `perf`, `style` | none                            |
+
+Tags: `vX.Y.Z`. After merge, release-please opens a rolling release PR; merging it tags + triggers `publish.yml` (`cargo publish`).
+
+**Never hand-edit**: `Cargo.toml` version, `Cargo.lock`, `.release-please-manifest.json`, `frontend/package.json`, `frontend/package-lock.json`, `CHANGELOG.md`. Release-please owns them.
+
+## Pre-commit checks (run before pushing)
+
+Rust changes (`src/`, `Cargo.*`):
 
 ```bash
 cargo fmt --all -- --check
@@ -16,47 +34,26 @@ cargo clippy --all-targets --locked -- -D warnings
 cargo test --locked
 ```
 
-All three must exit 0. If `fmt --check` fails, run `cargo fmt --all` to fix, then re-run the check.
-
-Note: the CI rust job builds the frontend first because `rust-embed` needs `frontend/dist/` at compile time. If you touched embedded assets, also run `(cd frontend && npm ci && npm run build)` before `cargo clippy`/`cargo test`.
-
-### Frontend changes (anything under `frontend/`)
+Frontend changes (`frontend/`):
 
 ```bash
-cd frontend
-npm run build
-npm test -- --run
+cd frontend && npm run build && npm test -- --run
 ```
 
-Both must pass.
+If both stacks changed, run both blocks. If embedded assets changed, build the frontend first (`rust-embed` needs `frontend/dist/`).
 
-### When in doubt
+## Metrics contract (Rust ↔ frontend)
 
-If a change touches *both* Rust and frontend (e.g. metrics shape changes), run the full Rust block AND the full frontend block. CI runs both; you should too.
+When you change `MemoryMetrics`/`GpuMetrics`/`CpuMetrics` shape, serde names, display logic, or fields — update all of these in the same PR:
 
-## Cross-stack contract: metrics
+1. Rust unit tests in `src/metrics/`
+2. TS types in `frontend/src/types/metrics.ts`
+3. Formatters in `frontend/src/lib/format.ts`
+4. Vitest specs in `frontend/src/__tests__/`
+5. Components in `frontend/src/components/`
 
-The metrics payload is consumed by the frontend. When you change *any* of the following, you must update *all* of the listed touchpoints in the same commit (or the same PR at minimum):
+If one is genuinely N/A, say so in the commit.
 
-**Trigger** — changes to:
-- `MemoryMetrics` / `GpuMetrics` / `CpuMetrics` struct shapes in `src/metrics/`
-- JSON field names / `serde` rename attributes
-- Display logic (e.g. `display_total_bytes`, formatters, marketed-capacity rounding)
-- New metric fields (added or removed)
+## Tests ship with the change
 
-**Required updates**:
-1. **Rust unit tests** in `src/metrics/` — cover the new field/branch (`#[cfg(test)]` modules)
-2. **TypeScript types** in `frontend/src/types/metrics.ts` — keep in sync with serde output
-3. **Frontend formatters** in `frontend/src/lib/format.ts` — if the value needs human formatting
-4. **Vitest specs** in `frontend/src/__tests__/` — cover new rendering / formatting behavior
-5. **Affected components** in `frontend/src/components/` — wire new fields through
-
-If any of (1)–(5) is genuinely not applicable, say so explicitly in the commit message. Default assumption is that all five are needed.
-
-## When adding or changing any feature
-
-Add or update tests in the same commit. No behavior change ships without test coverage updates — backend OR frontend. This has been forgotten before; do not repeat.
-
-- New Rust function with branching logic → unit test in same file's `#[cfg(test)] mod tests`
-- New frontend component or formatter → Vitest spec in `frontend/src/__tests__/`
-- New API field → both the Rust serializer test AND the frontend type/test
+No behavior change merges without test coverage in the same PR. Rust branches → `#[cfg(test)]`. Frontend components/formatters → Vitest. New API field → both sides.
