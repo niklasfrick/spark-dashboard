@@ -1,7 +1,6 @@
-import { ArcGauge } from '@/components/gauges/ArcGauge'
+import { ArcGauge, type GaugeSegment } from '@/components/gauges/ArcGauge'
 import { CoreHeatmap } from '@/components/charts/CoreHeatmap'
 import { TimeSeriesChart } from '@/components/charts/TimeSeriesChart'
-import { StackedBar } from '@/components/StackedBar'
 import { EngineSection } from '@/components/engines/EngineSection'
 import { THRESHOLDS } from '@/lib/theme'
 import { formatBytes, formatMhz, formatRate } from '@/lib/format'
@@ -61,11 +60,11 @@ export function Dashboard({
   const free = Math.max(0, metrics.memory.available_bytes - cached)
   const totalGB = (metrics.memory.total_bytes / 1_000_000_000).toFixed(0)
 
-  const memorySegments = [
-    { value: gpuUsed, total: metrics.memory.total_bytes, color: 'bg-[#76B900]', label: `GPU: ${formatBytes(gpuUsed)}` },
-    { value: cpuUsed, total: metrics.memory.total_bytes, color: 'bg-blue-500', label: `CPU: ${formatBytes(cpuUsed)}` },
-    { value: cached, total: metrics.memory.total_bytes, color: 'bg-zinc-600', label: `Cache: ${formatBytes(cached)}` },
-    { value: free, total: metrics.memory.total_bytes, color: 'bg-zinc-800', label: `Free: ${formatBytes(free)}` },
+  const memorySegments: GaugeSegment[] = [
+    { value: gpuUsed, total: metrics.memory.total_bytes, color: '#76B900', label: `GPU: ${formatBytes(gpuUsed)}` },
+    { value: cpuUsed, total: metrics.memory.total_bytes, color: '#3B82F6', label: `CPU: ${formatBytes(cpuUsed)}` },
+    { value: cached, total: metrics.memory.total_bytes, color: '#71717A', label: `Cache: ${formatBytes(cached)}` },
+    { value: free, total: metrics.memory.total_bytes, color: '#27272A', label: `Free: ${formatBytes(free)}` },
   ]
 
   const allEvents = events.map(e => ({
@@ -153,12 +152,8 @@ export function Dashboard({
 
           {/* Memory */}
           <HwCard title="Memory" subtitle={`${totalGB} GB Unified`}>
-            <div className="flex items-start gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
-              <ArcGauge value={memUsedPercent} label="Memory" unit="%" thresholds={THRESHOLDS.memoryUsage} size={HW_GAUGE_PX} />
-              <div className="flex-1 min-w-0 flex flex-col gap-1">
-                <TimeSeriesChart data={history.getChartData('memoryUsedPercent')} yDomain={[0, 100]} unit="%" height={HW_CHART_HEIGHT} />
-                <StackedBar segments={memorySegments} />
-              </div>
+            <div className="flex justify-center py-1">
+              <ArcGauge value={memUsedPercent} label="" unit="%" segments={memorySegments} size={HW_GAUGE_PX} />
             </div>
           </HwCard>
 

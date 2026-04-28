@@ -71,8 +71,6 @@ export function DetailedView({
         />
         <MemoryCard
           metrics={metrics.memory}
-          showCharts={true}
-          chartData={history.getChartData('memoryUsedPercent')}
           gaugeSize={100}
         />
         <div className="grid grid-rows-2 gap-4">
