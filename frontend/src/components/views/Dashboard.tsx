@@ -3,7 +3,7 @@ import { CoreHeatmap } from '@/components/charts/CoreHeatmap'
 import { TimeSeriesChart } from '@/components/charts/TimeSeriesChart'
 import { EngineSection } from '@/components/engines/EngineSection'
 import { THRESHOLDS } from '@/lib/theme'
-import { formatBytes, formatMhz, formatRate } from '@/lib/format'
+import { formatBytes, formatGiB, formatMhz, formatRate } from '@/lib/format'
 import type { MetricsSnapshot } from '@/types/metrics'
 import type { GpuEvent, InferenceRequest } from '@/types/events'
 
@@ -58,7 +58,7 @@ export function Dashboard({
   const cpuUsed = Math.max(0, metrics.memory.used_bytes - gpuUsed)
   const cached = Math.min(metrics.memory.cached_bytes, metrics.memory.available_bytes)
   const free = Math.max(0, metrics.memory.available_bytes - cached)
-  const totalGB = (metrics.memory.total_bytes / 1_000_000_000).toFixed(0)
+  const totalGB = formatGiB(metrics.memory.display_total_bytes ?? metrics.memory.total_bytes)
 
   const memorySegments: GaugeSegment[] = [
     { value: gpuUsed, total: metrics.memory.total_bytes, color: '#76B900', label: `GPU: ${formatBytes(gpuUsed)}` },
@@ -177,7 +177,7 @@ export function Dashboard({
           </HwCard>
 
           {/* Memory */}
-          <HwCard title="Memory" subtitle={`${totalGB} GB Unified`}>
+          <HwCard title="Memory" subtitle={`${totalGB} Unified`}>
             <div className="flex items-center justify-center min-h-0 flex-1 overflow-hidden">
               <ArcGauge value={memUsedPercent} label="" unit="%" segments={memorySegments} size={HW_GAUGE_PX} />
             </div>
