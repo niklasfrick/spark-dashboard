@@ -92,7 +92,7 @@ export function Dashboard({
 
           {/* GPU Utilization */}
           <HwCard title="GPU Utilization" subtitle={metrics.gpu.name ?? undefined}>
-            <div className="flex items-start gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
+            <div className="flex items-center gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
               <ArcGauge value={metrics.gpu.utilization_percent ?? 0} label="GPU Util" unit="%" size={HW_GAUGE_PX} />
               <div className="flex-1 min-w-0">
                 <TimeSeriesChart data={history.getChartData('gpuUtil')} yDomain={[0, 100]} unit="%" events={allEvents} requests={requestSpans} height={HW_CHART_HEIGHT} />
@@ -102,7 +102,7 @@ export function Dashboard({
 
           {/* GPU Temperature */}
           <HwCard title="GPU Temp" subtitle={metrics.gpu.name ?? undefined}>
-            <div className="flex items-start gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
+            <div className="flex items-center gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
               <ArcGauge value={metrics.gpu.temperature_celsius ?? 0} label="GPU Temp" unit="°C" thresholds={THRESHOLDS.gpuTemp} size={HW_GAUGE_PX} />
               <div className="flex-1 min-w-0">
                 <TimeSeriesChart data={history.getChartData('gpuTemp')} yDomain={[0, 100]} unit="°C" height={HW_CHART_HEIGHT} />
@@ -112,7 +112,7 @@ export function Dashboard({
 
           {/* GPU Power */}
           <HwCard title="GPU Power" subtitle={metrics.gpu.name ?? undefined}>
-            <div className="flex items-start gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
+            <div className="flex items-center gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
               <ArcGauge
                 value={powerPercent}
                 label="GPU Power"
@@ -129,7 +129,7 @@ export function Dashboard({
 
           {/* GPU Clock */}
           <HwCard title="GPU Clock" subtitle={metrics.gpu.name ?? undefined}>
-            <div className="flex items-start gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
+            <div className="flex items-center gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
               <div className="flex flex-col items-center justify-center shrink-0" style={{ width: HW_GAUGE_PX, height: HW_GAUGE_PX }}>
                 <span className="text-sm 2xl:text-base min-[1920px]:text-lg font-bold text-zinc-100 font-mono">{formatMhz(metrics.gpu.clock_graphics_mhz)}</span>
               </div>
@@ -141,7 +141,7 @@ export function Dashboard({
 
           {/* CPU */}
           <HwCard title="CPU" subtitle={metrics.cpu.name ?? undefined}>
-            <div className="flex items-start gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
+            <div className="flex items-center gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
               <ArcGauge value={metrics.cpu.aggregate_percent} label="CPU" unit="%" thresholds={THRESHOLDS.cpuUsage} size={HW_GAUGE_PX} />
               <div className="flex-1 min-w-0">
                 <TimeSeriesChart data={history.getChartData('cpuAggregate')} yDomain={[0, 100]} unit="%" height={HW_CHART_HEIGHT} />
@@ -159,7 +159,7 @@ export function Dashboard({
 
           {/* Disk I/O */}
           <HwCard title="Disk I/O" subtitle={metrics.disk.name ?? undefined}>
-            <div className="flex items-start gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
+            <div className="flex items-center gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
               <div className="flex flex-col items-center justify-center gap-0.5 shrink-0" style={{ width: HW_GAUGE_PX, height: HW_GAUGE_PX }}>
                 <div className="flex items-baseline gap-1">
                   <span className="text-[9px] 2xl:text-[10px] min-[1920px]:text-xs text-zinc-500">R</span>
@@ -178,7 +178,7 @@ export function Dashboard({
 
           {/* Network I/O */}
           <HwCard title="Network" subtitle={metrics.network.name ?? undefined}>
-            <div className="flex items-start gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
+            <div className="flex items-center gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
               <div className="flex flex-col items-center justify-center gap-0.5 shrink-0" style={{ width: HW_GAUGE_PX, height: HW_GAUGE_PX }}>
                 <div className="flex items-baseline gap-1">
                   <span className="text-[9px] 2xl:text-[10px] min-[1920px]:text-xs text-zinc-500">RX</span>
