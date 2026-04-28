@@ -34,12 +34,12 @@ pub fn detect_unified_memory(
 fn matches_unified_gpu_name(name: Option<&str>) -> bool {
     const UNIFIED_FAMILIES: &[&str] = &[
         // --- Grace / Grace Blackwell / Grace Hopper superchips ---
-        "GB10",   // DGX Spark (Grace Blackwell desktop)
-        "GB200",  // Grace Blackwell datacenter superchip
-        "GB300",  // Grace Blackwell Ultra (next-gen)
-        "GH200",  // Grace Hopper superchip
-        "Grace",  // Catch-all for any Grace-CPU SKU
-        "Spark",  // DGX Spark system identifier (some NVML builds expose this)
+        "GB10",  // DGX Spark (Grace Blackwell desktop)
+        "GB200", // Grace Blackwell datacenter superchip
+        "GB300", // Grace Blackwell Ultra (next-gen)
+        "GH200", // Grace Hopper superchip
+        "Grace", // Catch-all for any Grace-CPU SKU
+        "Spark", // DGX Spark system identifier (some NVML builds expose this)
         // --- Jetson edge SoCs (all unified Tegra-based) ---
         "Jetson", // Generic Jetson prefix
         "Tegra",  // Underlying SoC family — covers TX1/Nano (Tegra X1) etc.
@@ -51,7 +51,7 @@ fn matches_unified_gpu_name(name: Option<&str>) -> bool {
         "Nano",   // Jetson Nano variants
         "AGX",    // AGX form factor — Jetson AGX *, DRIVE AGX *
         // --- NVIDIA DRIVE (automotive) ---
-        "DRIVE",  // DRIVE AGX Pegasus / Xavier / Orin / Thor
+        "DRIVE", // DRIVE AGX Pegasus / Xavier / Orin / Thor
     ];
     let Some(name) = name else { return false };
     let lower = name.to_ascii_lowercase();
@@ -158,8 +158,7 @@ pub fn collect_memory_metrics(device: &Option<nvml_wrapper::Device>) -> MemoryMe
 
     let is_unified =
         detect_unified_memory(gpu_name.as_deref(), gpu_memory_total_bytes, total_bytes);
-    let display_total_bytes =
-        select_display_total(is_unified, gpu_memory_total_bytes, total_bytes);
+    let display_total_bytes = select_display_total(is_unified, gpu_memory_total_bytes, total_bytes);
 
     MemoryMetrics {
         total_bytes,
