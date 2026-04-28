@@ -212,10 +212,7 @@ impl VllmAdapter {
             .and_then(|s| s.parameters.as_ref())
             .and_then(format_tensor_type);
 
-        let model_type = hf
-            .config
-            .as_ref()
-            .and_then(|c| c.model_type.clone());
+        let model_type = hf.config.as_ref().and_then(|c| c.model_type.clone());
 
         let result = ModelInfo {
             name: model_id.to_string(),
