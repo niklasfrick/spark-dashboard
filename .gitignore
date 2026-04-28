@@ -21,3 +21,4 @@ Thumbs.db
 
 # Claude Code workspace
 .claude/
+.gstack/
