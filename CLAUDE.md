@@ -60,7 +60,3 @@ Add or update tests in the same commit. No behavior change ships without test co
 - New Rust function with branching logic → unit test in same file's `#[cfg(test)] mod tests`
 - New frontend component or formatter → Vitest spec in `frontend/src/__tests__/`
 - New API field → both the Rust serializer test AND the frontend type/test
-
-## Deployment notes
-
-Production target: DGX Spark via SSH (`niklas@192.168.1.77`), Rust 1.75 toolchain constraint, `deploy.sh` workflow. Do not bump MSRV without checking the deploy environment.
