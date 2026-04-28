@@ -75,6 +75,8 @@ pub async fn metrics_collector(
     // Initial CPU refresh (first reading will be 0%, second will be accurate)
     sys.refresh_cpu_usage();
 
+    let mut memory_logged = false;
+
     loop {
         interval.tick().await;
 
@@ -94,11 +96,23 @@ pub async fn metrics_collector(
 
         let gpu_events = gpu::detect_gpu_events(&device, timestamp_ms);
 
+        let memory_metrics = memory::collect_memory_metrics(&device);
+        if !memory_logged {
+            tracing::info!(
+                kernel_total_bytes = memory_metrics.total_bytes,
+                nvml_total_bytes = ?memory_metrics.gpu_memory_total_bytes,
+                display_total_bytes = memory_metrics.display_total_bytes,
+                is_unified = memory_metrics.is_unified,
+                "memory topology detected"
+            );
+            memory_logged = true;
+        }
+
         let snapshot = MetricsSnapshot {
             timestamp_ms,
             gpu: gpu::collect_gpu_metrics(&device),
             cpu: cpu::collect_cpu_metrics(&sys),
-            memory: memory::collect_memory_metrics(&device),
+            memory: memory_metrics,
             disk: disk::collect_disk_metrics(&disks),
             network: network::collect_network_metrics(&networks),
             engines,
