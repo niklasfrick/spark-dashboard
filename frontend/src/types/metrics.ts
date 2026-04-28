@@ -49,6 +49,10 @@ export interface CoreMetrics {
 
 export interface MemoryMetrics {
   total_bytes: number
+  /** Headline pool size for the UI. On unified-memory systems this is sourced
+   *  from NVML so the marketed capacity (e.g. 128 GB on DGX Spark) is shown
+   *  instead of the kernel-visible total which excludes firmware carve-outs. */
+  display_total_bytes?: number
   used_bytes: number
   available_bytes: number
   cached_bytes: number
