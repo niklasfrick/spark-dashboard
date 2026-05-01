@@ -55,6 +55,18 @@ describe('getProviderLogo', () => {
     expect(logo?.url).toBe('/icons/providers/minimax.svg')
   })
 
+  it('maps LiquidAI to the liquid-ai asset', () => {
+    const logo = getProviderLogo('LiquidAI/LFM2-1.2B')
+    expect(logo?.slug).toBe('liquid-ai')
+    expect(logo?.alt).toBe('LiquidAI')
+    expect(logo?.url).toBe('/icons/providers/liquid-ai.svg')
+  })
+
+  it('keyword-matches a bare LFM model id to liquid-ai', () => {
+    expect(getProviderLogo('lfm2-1.2b')?.slug).toBe('liquid-ai')
+    expect(getProviderLogo('LFM-40B')?.slug).toBe('liquid-ai')
+  })
+
   it('maps Intel to the intel asset', () => {
     const logo = getProviderLogo('Intel/neural-chat-7b-v3-3')
     expect(logo?.slug).toBe('intel')
