@@ -2,8 +2,8 @@ use super::histogram::{fraction_le, percentile};
 use super::prometheus::parse_prometheus_text;
 use super::warmup::WarmupTracker;
 use super::{
-    EngineAdapter, EngineMetrics, EngineStatus, EngineType, LatencyPercentiles, ModelInfo,
-    E2E_SLO_MS, ITL_SLO_MS, TTFT_SLO_MS,
+    EngineAdapter, EngineMetrics, EngineStatus, EngineType, HistogramBucket, LatencyPercentiles,
+    ModelInfo, E2E_SLO_MS, ITL_SLO_MS, TTFT_SLO_MS,
 };
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -656,6 +656,29 @@ impl EngineAdapter for VllmAdapter {
         let itl_goodput_pct = goodput_pct("vllm_inter_token_latency_seconds", ITL_SLO_MS);
         let e2e_goodput_pct = goodput_pct("vllm_e2e_request_latency_seconds", E2E_SLO_MS);
 
+        // Raw histogram buckets shipped to the frontend so it can recompute
+        // goodput at user-customized SLO thresholds without a roundtrip.
+        // `+Inf` is replaced with `f64::MAX` because serde_json cannot encode
+        // non-finite floats — the frontend port of `fraction_le` treats that
+        // sentinel as the overflow bucket.
+        let buckets_for = |metric: &str| -> Option<Vec<HistogramBucket>> {
+            let raw = parsed.histograms.get(metric)?;
+            if raw.is_empty() {
+                return None;
+            }
+            Some(
+                raw.iter()
+                    .map(|&(le, cum)| HistogramBucket {
+                        le_seconds: if le.is_finite() { le } else { f64::MAX },
+                        cumulative_count: cum,
+                    })
+                    .collect(),
+            )
+        };
+        let ttft_buckets = buckets_for("vllm_time_to_first_token_seconds");
+        let itl_buckets = buckets_for("vllm_inter_token_latency_seconds");
+        let e2e_buckets = buckets_for("vllm_e2e_request_latency_seconds");
+
         // While warming, histogram-derived metrics still compute from raw
         // pass-through counters/buckets (the tracker doesn't yet have a
         // baseline), so they would carry the slow first observation. Force
@@ -693,6 +716,9 @@ impl EngineAdapter for VllmAdapter {
             ttft_goodput_pct: if blank { None } else { ttft_goodput_pct },
             itl_goodput_pct: if blank { None } else { itl_goodput_pct },
             e2e_goodput_pct: if blank { None } else { e2e_goodput_pct },
+            ttft_buckets: if blank { None } else { ttft_buckets },
+            itl_buckets: if blank { None } else { itl_buckets },
+            e2e_buckets: if blank { None } else { e2e_buckets },
             warming_up,
         })
     }
@@ -831,6 +857,61 @@ vllm:time_to_first_token_seconds_count 0.0
             .expect("count delta");
         assert!((sum - 1.0).abs() < 1e-9, "sum delta {sum}");
         assert!((count - 100.0).abs() < 1e-9, "count delta {count}");
+    }
+
+    /// The frontend recomputes goodput from histogram buckets the backend
+    /// ships in `EngineMetrics`. This test mirrors the `buckets_for` closure
+    /// in `get_metrics()` against a representative `/metrics` body and
+    /// asserts the wire-shape contract: cumulative counts preserved, +Inf
+    /// replaced with `f64::MAX`, and the buckets serialize to plain JSON.
+    #[test]
+    fn ttft_buckets_replace_infinity_with_f64_max() {
+        let body = "\
+# HELP vllm:time_to_first_token_seconds TTFT histogram.
+# TYPE vllm:time_to_first_token_seconds histogram
+vllm:time_to_first_token_seconds_bucket{le=\"0.05\"} 50
+vllm:time_to_first_token_seconds_bucket{le=\"0.1\"} 80
+vllm:time_to_first_token_seconds_bucket{le=\"+Inf\"} 100
+vllm:time_to_first_token_seconds_sum 12.0
+vllm:time_to_first_token_seconds_count 100.0
+";
+        let parsed = parse_prometheus_text(body).expect("parse");
+        let raw = parsed
+            .histograms
+            .get("vllm_time_to_first_token_seconds")
+            .expect("histogram");
+        let buckets: Vec<HistogramBucket> = raw
+            .iter()
+            .map(|&(le, cum)| HistogramBucket {
+                le_seconds: if le.is_finite() { le } else { f64::MAX },
+                cumulative_count: cum,
+            })
+            .collect();
+        assert_eq!(buckets.len(), 3);
+        assert!((buckets[0].le_seconds - 0.05).abs() < 1e-9);
+        assert!((buckets[0].cumulative_count - 50.0).abs() < 1e-9);
+        assert!((buckets[1].le_seconds - 0.1).abs() < 1e-9);
+        assert_eq!(buckets[2].le_seconds, f64::MAX);
+        assert!((buckets[2].cumulative_count - 100.0).abs() < 1e-9);
+
+        // The wire format must be valid JSON — non-finite floats would break
+        // `JSON.parse` on the frontend.
+        let json = serde_json::to_string(&buckets).expect("serialize");
+        assert!(
+            !json.contains("inf") && !json.contains("Inf") && !json.contains("NaN"),
+            "wire format must not contain non-finite tokens: {json}"
+        );
+    }
+
+    /// Empty histograms produce `None`, matching the warmup/no-traffic case
+    /// where the frontend should fall back to the backend `*_goodput_pct`.
+    #[test]
+    fn ttft_buckets_none_when_metric_absent() {
+        let body = "# Empty body, no histograms.\n";
+        let parsed = parse_prometheus_text(body).expect("parse");
+        assert!(!parsed
+            .histograms
+            .contains_key("vllm_time_to_first_token_seconds"));
     }
 
     #[test]

@@ -12,15 +12,40 @@ For **production installs**, use `cargo install spark-dashboard` or
 
 Runs the full dev environment:
 
-1. rsyncs the project to `${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_DIR}`
-2. builds and starts the Rust backend on the remote host (`cargo build --release`)
-3. starts the Vite dev server locally on port 5173 with a proxy to the backend
-4. streams remote backend logs from `/tmp/spark-dashboard.log`
-5. watches `src/` and `Cargo.toml` — on change, re-syncs and rebuilds the backend
+1. builds the frontend bundle locally (`npm run build` in `frontend/`) so the
+   embedded assets shipped to the remote backend are current
+2. rsyncs the project (including `frontend/dist/`) to `${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_DIR}`
+3. builds and starts the Rust backend on the remote host (`cargo build --release`,
+   which embeds the freshly-built `frontend/dist/`)
+4. starts the Vite dev server locally on port 5173 with a proxy to the backend
+5. streams remote backend logs from `/tmp/spark-dashboard.log`
+6. watches `src/` and `Cargo.toml` — on change, re-syncs and rebuilds the backend
 
-Frontend edits hot-reload in the browser via Vite. Backend edits trigger a
-remote rebuild (takes about as long as `cargo build --release` does on your
-remote host).
+Two URLs, two behaviors:
+
+- `http://localhost:5173` — Vite dev server. Frontend edits hot-reload in the
+  browser, API/WS calls proxy to the remote backend.
+- `http://${DEPLOY_HOST}:3000` — the remote backend serving the **embedded**
+  bundle that was built when `dev.sh` started. To refresh it during a session,
+  re-run `npm run build` locally and trigger any backend file change (or just
+  restart `dev.sh`) so the next sync + `cargo build --release` re-embeds the
+  fresh `frontend/dist/`.
+
+Backend edits trigger a remote rebuild (takes about as long as
+`cargo build --release` does on your remote host).
+
+#### `--watch-frontend` (optional)
+
+Pass `./dev/dev.sh --watch-frontend` to also watch `frontend/src/`,
+`frontend/public/`, `frontend/index.html`, `vite.config.ts`, and
+`package.json`. On change the script rebuilds `frontend/dist/`, re-syncs to the
+remote, and rebuilds the backend — so direct hits on
+`http://${DEPLOY_HOST}:3000` refresh too.
+
+Off by default because each save triggers a full `npm run build` plus
+`cargo build --release` (~10–30s on a typical remote). For normal frontend dev,
+use `:5173` (Vite, instant HMR) and only enable this flag when you specifically
+need the embedded bundle to stay current.
 
 ## Required environment variables
 

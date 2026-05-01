@@ -3,6 +3,33 @@ set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
+# --- CLI flags ---------------------------------------------------------------
+WATCH_FRONTEND=false
+for arg in "$@"; do
+    case "$arg" in
+        --watch-frontend)
+            WATCH_FRONTEND=true
+            ;;
+        -h|--help)
+            cat <<EOF
+Usage: dev.sh [--watch-frontend]
+
+  --watch-frontend  Also watch frontend/ — on change, rebuild frontend/dist,
+                    re-sync, and rebuild the backend so the embedded bundle on
+                    :3000 stays current. Off by default (Vite at :5173 is the
+                    fast path for frontend dev; this flag is for live-updating
+                    the embedded build too, at the cost of a cargo rebuild per
+                    frontend change).
+EOF
+            exit 0
+            ;;
+        *)
+            echo "unknown flag: $arg (try --help)" >&2
+            exit 2
+            ;;
+    esac
+done
+
 # --- Load .env if present ----------------------------------------------------
 if [ -f "$PROJECT_ROOT/.env" ]; then
     set -a
@@ -49,6 +76,18 @@ trap cleanup EXIT INT TERM
 # --- Remote shell prefix: ensure cargo is in PATH for non-interactive SSH ---
 REMOTE_ENV="source ~/.cargo/env 2>/dev/null;"
 
+# --- Build the frontend bundle locally so rust-embed picks up a fresh dist ---
+# Direct hits to the backend on :3000 serve the embedded bundle, so this needs
+# to run before we sync + rebuild the backend.
+build_frontend() {
+    if [ ! -d "${PROJECT_ROOT}/frontend/node_modules" ]; then
+        echo "==> Installing frontend dependencies..."
+        (cd "${PROJECT_ROOT}/frontend" && npm install --silent)
+    fi
+    echo "==> Building frontend bundle (frontend/dist)..."
+    (cd "${PROJECT_ROOT}/frontend" && npm run build)
+}
+
 # --- Sync backend source to remote host ---
 sync_backend() {
     rsync -az --delete \
@@ -58,7 +97,6 @@ sync_backend() {
         --exclude .env \
         --exclude .planning \
         --exclude .claude \
-        --exclude 'frontend/dist' \
         "${PROJECT_ROOT}/" "${REMOTE}:${DEPLOY_DIR}/"
 }
 
@@ -72,6 +110,54 @@ rebuild_backend() {
         echo "==> Backend running"
     else
         echo "!!! Backend build failed"
+    fi
+}
+
+# --- Frontend watcher: rebuild dist + sync + rebuild backend on change ---
+# Only launched when --watch-frontend is passed. Heavy: each frontend save
+# triggers `npm run build` plus a remote `cargo build --release`.
+watch_frontend() {
+    local trigger="$1"  # message printed when a change fires
+    local watch_paths=(
+        "${PROJECT_ROOT}/frontend/src"
+        "${PROJECT_ROOT}/frontend/public"
+        "${PROJECT_ROOT}/frontend/index.html"
+        "${PROJECT_ROOT}/frontend/vite.config.ts"
+        "${PROJECT_ROOT}/frontend/package.json"
+    )
+
+    rebuild_embedded() {
+        echo ""
+        echo "==> ${trigger}"
+        build_frontend
+        sync_backend
+        rebuild_backend
+    }
+
+    if command -v fswatch &>/dev/null; then
+        fswatch -0 -r -l 2 \
+            --exclude '.*node_modules.*' \
+            --exclude '.*frontend/dist.*' \
+            "${watch_paths[@]}" \
+        | while IFS= read -r -d '' _; do
+            while read -r -d '' -t 0.5 _ 2>/dev/null; do :; done
+            rebuild_embedded
+        done
+    else
+        local last_hash=""
+        while true; do
+            local current_hash
+            current_hash=$(find "${watch_paths[@]}" \
+                -type f \
+                ! -path '*/node_modules/*' \
+                ! -path '*/dist/*' \
+                -exec stat -f '%m %N' {} + 2>/dev/null | sort | md5)
+            if [ -n "$last_hash" ] && [ "$current_hash" != "$last_hash" ]; then
+                rebuild_embedded
+            fi
+            last_hash="$current_hash"
+            sleep 2
+        done
     fi
 }
 
@@ -110,7 +196,8 @@ watch_backend() {
     fi
 }
 
-# 1. Sync and build backend
+# 1. Build embedded frontend bundle, then sync and build backend
+build_frontend
 echo "==> Syncing to ${REMOTE}:${DEPLOY_DIR}..."
 sync_backend
 rebuild_backend
@@ -119,13 +206,7 @@ rebuild_backend
 ssh "${REMOTE}" "tail -n0 -f /tmp/spark-dashboard.log" 2>/dev/null &
 PIDS+=($!)
 
-# 3. Install frontend deps if needed
-if [ ! -d "${PROJECT_ROOT}/frontend/node_modules" ]; then
-    echo "==> Installing frontend dependencies..."
-    (cd "${PROJECT_ROOT}/frontend" && npm install --silent)
-fi
-
-# 4. Start Vite dev server
+# 3. Start Vite dev server
 BACKEND_URL="${VITE_BACKEND_URL:-http://localhost:3000}"
 echo "==> Starting Vite dev server (proxy -> ${BACKEND_URL})..."
 cd "${PROJECT_ROOT}/frontend"
@@ -133,7 +214,7 @@ VITE_BACKEND_URL="${BACKEND_URL}" npx vite --host &
 PIDS+=($!)
 cd "${PROJECT_ROOT}"
 
-# 5. Watch for backend changes
+# 4. Watch for backend changes
 if command -v fswatch &>/dev/null; then
     echo "==> Watching backend changes (fswatch)..."
 else
@@ -141,6 +222,14 @@ else
 fi
 watch_backend &
 PIDS+=($!)
+
+# 5. Optionally watch frontend changes (off by default — Vite at :5173 is the
+#    fast path; this only matters if you want :3000 to stay current too).
+if [ "$WATCH_FRONTEND" = true ]; then
+    echo "==> Watching frontend changes (--watch-frontend) — embedded :3000 will refresh on save"
+    watch_frontend "Frontend change detected" &
+    PIDS+=($!)
+fi
 
 echo ""
 echo "================================================"

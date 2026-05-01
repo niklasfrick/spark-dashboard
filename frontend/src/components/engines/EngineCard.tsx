@@ -14,7 +14,22 @@ import {
   fmtInt,
 } from './EngineCardPrimitives'
 import { type LatencyMode, latencyModeLabel, pickLatencyValue } from './LatencyModeControl'
-import { SLO, combinedGoodput } from '@/lib/slo'
+import { combinedGoodput, recomputeGoodputPct } from '@/lib/slo'
+import { useSloSettings } from '@/hooks/useSloSettings'
+import { SloSettingsControl } from './SloSettingsControl'
+
+/** Render an E2E threshold in seconds when it's a clean multiple of 1000ms,
+ *  otherwise fall through to milliseconds. Keeps the default "5s" label
+ *  intact while supporting user-tuned values like 2500ms ("2.5s") or 800ms.
+ */
+function formatE2eLabel(e2eMs: number): string {
+  if (e2eMs >= 1000) {
+    const seconds = e2eMs / 1000
+    const formatted = Number.isInteger(seconds) ? seconds.toString() : seconds.toFixed(1)
+    return `${formatted}s`
+  }
+  return `${e2eMs}ms`
+}
 
 function decodeTokenSeries(chartData: {
   tps: ChartDataPoint[]
@@ -109,9 +124,21 @@ export function EngineCard({
   const kvPercent = v('kv_cache_percent')
   const prefixCacheHit = v('prefix_cache_hit_rate')
   const preemptions = v('preemptions_total')
-  const ttftGoodput = v('ttft_goodput_pct')
-  const itlGoodput = v('itl_goodput_pct')
-  const e2eGoodput = v('e2e_goodput_pct')
+  const engineKey = `${engine.engine_type}-${engine.endpoint}`
+  const modelName = engine.model?.name ?? null
+  const { thresholds: slo, setThresholds: setSlo, reset: resetSlo, isCustomized: sloCustomized } =
+    useSloSettings(engineKey, modelName)
+
+  // Recompute goodput from histogram buckets so user-customized SLO
+  // thresholds actually move the displayed percentages. Falls back to the
+  // backend-default `*_goodput_pct` when buckets are absent (warmup, no
+  // traffic) so the tile still renders something useful.
+  const ttftBuckets = noModel ? null : (m?.ttft_buckets ?? null)
+  const itlBuckets = noModel ? null : (m?.itl_buckets ?? null)
+  const e2eBuckets = noModel ? null : (m?.e2e_buckets ?? null)
+  const ttftGoodput = recomputeGoodputPct(ttftBuckets, slo.ttftMs) ?? v('ttft_goodput_pct')
+  const itlGoodput = recomputeGoodputPct(itlBuckets, slo.itlMs) ?? v('itl_goodput_pct')
+  const e2eGoodput = recomputeGoodputPct(e2eBuckets, slo.e2eMs) ?? v('e2e_goodput_pct')
   const overallGoodput = combinedGoodput(ttftGoodput, itlGoodput, e2eGoodput)
 
   // Resolve latency tile values according to the global mode setting
@@ -204,12 +231,21 @@ export function EngineCard({
 
             {/* SLO Goodput */}
             <div className="bg-white/[0.02] rounded-md px-3 py-2.5 2xl:px-4 2xl:py-3 min-w-0">
-              <div className="text-[11px] 2xl:text-xs min-[1920px]:text-sm font-semibold text-zinc-300 tracking-tight mb-1.5 truncate">SLO Goodput</div>
+              <div className="flex items-center justify-between gap-2 mb-1.5">
+                <div className="text-[11px] 2xl:text-xs min-[1920px]:text-sm font-semibold text-zinc-300 tracking-tight truncate">SLO Goodput</div>
+                <SloSettingsControl
+                  thresholds={slo}
+                  isCustomized={sloCustomized}
+                  disabled={modelName === null}
+                  onChange={setSlo}
+                  onReset={resetSlo}
+                />
+              </div>
               <div className="grid grid-cols-2 gap-1.5">
                 <div className="col-span-2"><GoodputTile label="Combined" pct={overallGoodput} emphasize /></div>
-                <GoodputTile label={`TTFT ≤ ${SLO.ttftMs}ms`} pct={ttftGoodput} />
-                <GoodputTile label={`ITL ≤ ${SLO.itlMs}ms`} pct={itlGoodput} />
-                <div className="col-span-2"><GoodputTile label={`E2E ≤ ${(SLO.e2eMs / 1000).toFixed(0)}s`} pct={e2eGoodput} /></div>
+                <GoodputTile label={`TTFT ≤ ${slo.ttftMs}ms`} pct={ttftGoodput} />
+                <GoodputTile label={`ITL ≤ ${slo.itlMs}ms`} pct={itlGoodput} />
+                <div className="col-span-2"><GoodputTile label={`E2E ≤ ${formatE2eLabel(slo.e2eMs)}`} pct={e2eGoodput} /></div>
               </div>
             </div>
 

@@ -19,6 +19,7 @@ const ORG_ALIAS: Record<string, string> = {
   'zai-org': 'z-ai',
   minimaxai: 'minimax',
   'minimax-ai': 'minimax',
+  liquidai: 'liquid-ai',
 }
 
 /** Providers whose HF org prefix (lowercased) matches the local slug exactly. */
@@ -37,6 +38,7 @@ const ORG_IDENTITY: ReadonlySet<string> = new Set([
   'minimax',
   'huggingfacetb',
   'intel',
+  'liquid-ai',
 ])
 
 /**
@@ -68,6 +70,7 @@ const KEYWORD_FALLBACKS: { keyword: string; slug: string; alt: string }[] = [
   { keyword: 'glm-', slug: 'z-ai', alt: 'Z.ai' },
   { keyword: 'minimax', slug: 'minimax', alt: 'MiniMax' },
   { keyword: 'gpt-', slug: 'openai', alt: 'OpenAI' },
+  { keyword: 'lfm', slug: 'liquid-ai', alt: 'LiquidAI' },
 ]
 
 const ASSET_BASE = '/icons/providers'
