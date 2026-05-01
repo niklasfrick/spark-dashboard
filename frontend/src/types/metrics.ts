@@ -105,6 +105,15 @@ export interface LatencyPercentiles {
   p99_ms: number | null
 }
 
+/** One Prometheus histogram bucket as shipped by the backend. The
+ *  frontend uses these to recompute goodput at user-customized SLO
+ *  thresholds. The backend replaces `+Inf` with `Number.MAX_VALUE`
+ *  (Rust `f64::MAX`) so the wire format stays valid JSON. */
+export interface HistogramBucket {
+  le_seconds: number
+  cumulative_count: number
+}
+
 export interface EngineMetrics {
   tokens_per_sec: number | null
   avg_tokens_per_sec: number | null
@@ -135,6 +144,14 @@ export interface EngineMetrics {
   itl_goodput_pct: number | null
   /** % of E2E observations meeting the E2E SLO threshold. */
   e2e_goodput_pct: number | null
+  /** Raw TTFT histogram buckets. Used by the frontend to recompute
+   *  goodput at user-customized SLO thresholds. Null while warming up
+   *  or when the engine hasn't emitted the histogram yet. */
+  ttft_buckets: HistogramBucket[] | null
+  /** Raw ITL histogram buckets (cumulative). */
+  itl_buckets: HistogramBucket[] | null
+  /** Raw E2E histogram buckets (cumulative). */
+  e2e_buckets: HistogramBucket[] | null
 }
 
 export interface EngineSnapshot {

@@ -71,6 +71,24 @@ pub const ITL_SLO_MS: f64 = 50.0;
 /// SLO threshold for end-to-end request latency (ms).
 pub const E2E_SLO_MS: f64 = 5000.0;
 
+/// One Prometheus histogram bucket for transport to the frontend.
+///
+/// `le_seconds` is the upper bound (`le` label) for the bucket and
+/// `cumulative_count` is the cumulative observation count Prometheus
+/// emits. The frontend uses these to recompute goodput at custom
+/// SLO thresholds without a backend roundtrip.
+///
+/// `+Inf` is replaced by `f64::MAX` before serialization — `serde_json`
+/// emits non-finite floats as `null`/errors which would break the
+/// frontend's `JSON.parse`. The interpolation logic treats values
+/// at or beyond `f64::MAX` as the "overflow" bucket, matching the
+/// Rust `fraction_le` semantics.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct HistogramBucket {
+    pub le_seconds: f64,
+    pub cumulative_count: f64,
+}
+
 #[derive(Clone, Debug, serde::Serialize, Default)]
 pub struct EngineMetrics {
     pub tokens_per_sec: Option<f64>,
@@ -116,6 +134,13 @@ pub struct EngineMetrics {
     pub itl_goodput_pct: Option<f64>,
     /// Goodput: percentage (0-100) of E2E observations meeting `E2E_SLO_MS`.
     pub e2e_goodput_pct: Option<f64>,
+    /// Raw TTFT histogram buckets (cumulative). Frontend uses these to
+    /// recompute goodput at user-customized SLO thresholds.
+    pub ttft_buckets: Option<Vec<HistogramBucket>>,
+    /// Raw ITL histogram buckets (cumulative).
+    pub itl_buckets: Option<Vec<HistogramBucket>>,
+    /// Raw E2E histogram buckets (cumulative).
+    pub e2e_buckets: Option<Vec<HistogramBucket>>,
     /// True while the engine is still in warmup — histogram-derived fields
     /// (averages, percentiles, goodput, rates) are intentionally `None` so the
     /// first slow inference does not pollute steady-state metrics. See
