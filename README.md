@@ -14,7 +14,7 @@ vLLM engine statistics and streams them over WebSocket to a React frontend.
 
 ### Install on your Linux host
 
-Run as your normal user on any Linux host with NVIDIA drivers (requires Rust 1.75+):
+Run as your normal user on any Linux host with NVIDIA drivers (requires Rust 1.95+):
 
 ```bash
 cargo install spark-dashboard
@@ -125,7 +125,7 @@ build from source on the host.
 ### Option A — via cargo (recommended)
 
 ```bash
-# On the host. Requires Rust 1.75+, NVIDIA drivers, and internet access.
+# On the host. Requires Rust 1.95+, NVIDIA drivers, and internet access.
 cargo install spark-dashboard
 sudo ~/.cargo/bin/spark-dashboard service install
 systemctl status spark-dashboard
@@ -230,7 +230,7 @@ engine is no longer hit on every poll tick.
 ### Prerequisites
 
 - **Local machine** (macOS or Linux): Node.js 20+, npm, rsync, ssh
-- **Remote host**: Linux + NVIDIA drivers, Rust 1.75+, SSH access with key-based auth (no password prompts)
+- **Remote host**: Linux + NVIDIA drivers, Rust 1.95+, SSH access with key-based auth (no password prompts)
 - Optional: `brew install fswatch` for instant file-change detection (the
   watcher falls back to 2s polling without it)
 

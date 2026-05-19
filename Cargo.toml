@@ -2,6 +2,7 @@
 name = "spark-dashboard"
 version = "0.8.0"
 edition = "2021"
+rust-version = "1.95"
 description = "Real-time hardware and LLM inference monitoring for Linux hosts with NVIDIA GPUs"
 license = "MIT"
 repository = "https://github.com/niklasfrick/spark-dashboard"
@@ -27,7 +28,7 @@ include = [
 [dependencies]
 axum = { version = "0.8", features = ["ws"] }
 tokio = { version = "1", features = ["full"] }
-sysinfo = "0.38"
+sysinfo = "0.39"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tower-http = { version = "0.6", features = ["cors", "fs"] }
@@ -43,4 +44,4 @@ prometheus-parse = "0.2"
 [target.'cfg(target_os = "linux")'.dependencies]
 nvml-wrapper = "0.12"
 procfs = "0.18"
-bollard = "0.20"
+bollard = "0.21"
