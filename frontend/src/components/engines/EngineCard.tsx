@@ -327,7 +327,7 @@ export function EngineCard({
             <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 pt-1">
               <TimeSeriesChart
                 title="Prefill Throughput (tok/s)"
-                tooltipLabel="Tokens / sec"
+                hideTooltipLabel
                 series={prefillTokenSeries(chartData)}
                 unit="tok/s"
                 height="clamp(72px, 13vh, 200px)"
@@ -335,7 +335,7 @@ export function EngineCard({
               />
               <TimeSeriesChart
                 title="Decode Throughput (tok/s)"
-                tooltipLabel="Tokens / sec"
+                hideTooltipLabel
                 series={decodeTokenSeries(chartData)}
                 unit="tok/s"
                 height="clamp(72px, 13vh, 200px)"
