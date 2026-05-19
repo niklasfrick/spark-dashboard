@@ -129,6 +129,9 @@ pub struct EngineMetrics {
     /// Cumulative generation (decode) tokens produced since engine start.
     /// Raw lifetime counter, not warmup-adjusted.
     pub total_generation_tokens: Option<u64>,
+    /// Cumulative count of prefix-cache token queries since engine start.
+    /// Raw lifetime counter, not warmup-adjusted.
+    pub prefix_cache_queries_total: Option<u64>,
     /// Average tokens processed per engine iteration step (batch size proxy).
     pub avg_batch_size: Option<f64>,
     /// Tail latency percentiles for time-to-first-token (ms).

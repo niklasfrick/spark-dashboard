@@ -1,6 +1,7 @@
-import { formatTps, formatTtft, formatDurationMs } from '@/lib/format'
+import { formatTps, formatTtft, formatDurationMs, formatCompactTokens } from '@/lib/format'
 import type { AggregateSnapshot } from '@/lib/engineAggregate'
 import { MetricTile, LiveWithTotal, KvBar, GoodputTile, fmtVal, fmtInt } from './EngineCardPrimitives'
+import { AnimatedCounter } from './AnimatedCounter'
 import { type LatencyMode, latencyModeLabel, pickLatencyValue } from './LatencyModeControl'
 import { SLO, combinedGoodput } from '@/lib/slo'
 
@@ -47,6 +48,7 @@ export function GlobalEngineCard({ snapshot, latencyMode = 'avg' }: GlobalEngine
     total_generation_tokens,
     kv_cache_percent,
     prefix_cache_hit_rate,
+    prefix_cache_queries_total,
     ttft_percentiles,
     itl_percentiles,
     e2e_percentiles,
@@ -176,6 +178,16 @@ export function GlobalEngineCard({ snapshot, latencyMode = 'avg' }: GlobalEngine
               label="Prefix Hit"
               value={prefix_cache_hit_rate !== null ? `${Math.round(prefix_cache_hit_rate)}` : '--'}
               unit="%"
+            />
+          </div>
+          <div className="flex flex-col gap-0.5 mt-2 pt-2 border-t border-white/[0.04] min-w-0">
+            <span className="text-[10px] 2xl:text-xs min-[1920px]:text-sm font-medium text-zinc-400 uppercase tracking-wider truncate">
+              Prefix Queries
+            </span>
+            <AnimatedCounter
+              value={prefix_cache_queries_total}
+              format={formatCompactTokens}
+              className="text-lg xl:text-xl 2xl:text-2xl min-[1920px]:text-3xl min-[2560px]:text-4xl font-bold text-zinc-100 font-mono tabular-nums leading-none"
             />
           </div>
         </div>

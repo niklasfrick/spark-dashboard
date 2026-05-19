@@ -1,5 +1,5 @@
 import { TimeSeriesChart, type ChartSeries } from '@/components/charts/TimeSeriesChart'
-import { formatTps, formatTtft, formatDurationMs } from '@/lib/format'
+import { formatTps, formatTtft, formatDurationMs, formatCompactTokens } from '@/lib/format'
 import type { EngineSnapshot } from '@/types/metrics'
 import type { InferenceRequest } from '@/types/events'
 import {
@@ -14,6 +14,7 @@ import {
   fmtVal,
   fmtInt,
 } from './EngineCardPrimitives'
+import { AnimatedCounter } from './AnimatedCounter'
 import { type LatencyMode, latencyModeLabel, pickLatencyValue } from './LatencyModeControl'
 import { combinedGoodput, recomputeGoodputPct } from '@/lib/slo'
 import { useSloSettings } from '@/hooks/useSloSettings'
@@ -131,6 +132,7 @@ export function EngineCard({
   const swappedReqs = v('swapped_requests')
   const kvPercent = v('kv_cache_percent')
   const prefixCacheHit = v('prefix_cache_hit_rate')
+  const prefixCacheQueries = v('prefix_cache_queries_total')
   const preemptions = v('preemptions_total')
   const engineKey = `${engine.engine_type}-${engine.endpoint}`
   const modelName = engine.model?.name ?? null
@@ -303,6 +305,16 @@ export function EngineCard({
                   {kvPercent !== null && <KvBar percent={kvPercent} />}
                 </div>
                 <MetricTile label="Prefix Hit" value={prefixCacheHit !== null ? `${Math.round(prefixCacheHit)}` : '--'} unit="%" />
+              </div>
+              <div className="flex flex-col gap-0.5 mt-2 pt-2 border-t border-white/[0.04] min-w-0">
+                <span className="text-[10px] 2xl:text-xs min-[1920px]:text-sm font-medium text-zinc-400 uppercase tracking-wider truncate">
+                  Prefix Queries
+                </span>
+                <AnimatedCounter
+                  value={prefixCacheQueries}
+                  format={formatCompactTokens}
+                  className="text-lg xl:text-xl 2xl:text-2xl min-[1920px]:text-3xl min-[2560px]:text-4xl font-bold text-zinc-100 font-mono tabular-nums leading-none"
+                />
               </div>
             </div>
           </div>

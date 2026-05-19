@@ -26,6 +26,7 @@ export interface AggregateSnapshot {
   preemptions_total: number | null
   total_prompt_tokens: number | null
   total_generation_tokens: number | null
+  prefix_cache_queries_total: number | null
 
   // Weighted mean by total_requests (simple mean fallback)
   ttft_ms: number | null
@@ -116,6 +117,7 @@ function emptySnapshot(totalCount: number): AggregateSnapshot {
     preemptions_total: null,
     total_prompt_tokens: null,
     total_generation_tokens: null,
+    prefix_cache_queries_total: null,
     ttft_ms: null,
     e2e_latency_ms: null,
     queue_time_ms: null,
@@ -256,6 +258,7 @@ export function aggregateEngines(engines: readonly EngineSnapshot[]): AggregateS
     preemptions_total: sumOrNull(get('preemptions_total')),
     total_prompt_tokens: sumOrNull(get('total_prompt_tokens')),
     total_generation_tokens: sumOrNull(get('total_generation_tokens')),
+    prefix_cache_queries_total: sumOrNull(get('prefix_cache_queries_total')),
 
     // Weighted mean
     ttft_ms: weightedBy('ttft_ms'),

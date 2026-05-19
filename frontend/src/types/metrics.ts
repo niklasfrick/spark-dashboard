@@ -138,6 +138,8 @@ export interface EngineMetrics {
   total_prompt_tokens: number | null
   /** Cumulative generation (decode) tokens produced since engine start. */
   total_generation_tokens: number | null
+  /** Cumulative count of prefix-cache token queries since engine start. */
+  prefix_cache_queries_total: number | null
   avg_batch_size: number | null
   ttft_percentiles: LatencyPercentiles | null
   itl_percentiles: LatencyPercentiles | null

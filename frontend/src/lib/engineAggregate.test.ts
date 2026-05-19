@@ -24,6 +24,7 @@ function fullMetrics(overrides: Partial<EngineMetrics> = {}): EngineMetrics {
     preemptions_total: 0,
     total_prompt_tokens: 1000,
     total_generation_tokens: 2000,
+    prefix_cache_queries_total: 5000,
     avg_batch_size: 4,
     ttft_percentiles: null,
     itl_percentiles: null,
@@ -100,6 +101,25 @@ describe('aggregateEngines', () => {
     const snap = aggregateEngines(engines)
     expect(snap.total_prompt_tokens).toBe(3_500)
     expect(snap.total_generation_tokens).toBe(12_500)
+  })
+
+  it('sums cumulative prefix-cache queries across running engines only', () => {
+    const engines = [
+      engine('Running', fullMetrics({ prefix_cache_queries_total: 1_000 })),
+      engine('Running', fullMetrics({ prefix_cache_queries_total: 2_500 })),
+      engine('Stopped', fullMetrics({ prefix_cache_queries_total: 999 })),
+    ]
+    const snap = aggregateEngines(engines)
+    expect(snap.prefix_cache_queries_total).toBe(3_500)
+  })
+
+  it('returns null prefix-cache queries when every running engine reports null', () => {
+    const engines = [
+      engine('Running', fullMetrics({ prefix_cache_queries_total: null })),
+      engine('Running', fullMetrics({ prefix_cache_queries_total: null })),
+    ]
+    const snap = aggregateEngines(engines)
+    expect(snap.prefix_cache_queries_total).toBeNull()
   })
 
   it('weighted mean for latencies uses total_requests as the weight', () => {

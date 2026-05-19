@@ -605,6 +605,14 @@ impl EngineAdapter for VllmAdapter {
             }
         };
 
+        // Cumulative prefix-cache queries — pass-through lifetime counter, the
+        // volume the hit rate is derived from. Mirrors total_*_tokens: shown
+        // raw and ungated by warmup so it stays continuous.
+        let prefix_cache_queries_total = parsed
+            .counters
+            .get("vllm_prefix_cache_queries_total")
+            .map(|&q| q as u64);
+
         // Average queue wait time (from histogram)
         let queue_time_ms = {
             let sum = parsed.counters.get("vllm_request_queue_time_seconds_sum");
@@ -782,6 +790,7 @@ impl EngineAdapter for VllmAdapter {
             preemptions_total,
             total_prompt_tokens: current_prompt.map(|v| v as u64),
             total_generation_tokens: current_gen.map(|v| v as u64),
+            prefix_cache_queries_total,
             avg_batch_size: if blank { None } else { avg_batch_size },
             ttft_percentiles: if blank { None } else { ttft_percentiles },
             itl_percentiles: if blank { None } else { itl_percentiles },
@@ -1152,5 +1161,27 @@ vllm:generation_tokens_total 7890123.0
             .map(|v| v as u64);
         assert_eq!(prompt, Some(123_456));
         assert_eq!(gen, Some(7_890_123));
+    }
+
+    /// `prefix_cache_queries_total` is a pass-through lifetime counter read
+    /// off `parsed.counters` and cast f64 -> u64 (same boundary as the token
+    /// totals, ungated by warmup). Assert it propagates from the metrics body.
+    #[test]
+    fn prefix_cache_queries_roundtrip_from_metrics_body() {
+        let body = "\
+# HELP vllm:prefix_cache_queries Prefix cache queries counter.
+# TYPE vllm:prefix_cache_queries counter
+vllm:prefix_cache_queries_total 654321.0
+# HELP vllm:prefix_cache_hits Prefix cache hits counter.
+# TYPE vllm:prefix_cache_hits counter
+vllm:prefix_cache_hits_total 123456.0
+";
+        let parsed = parse_prometheus_text(body).expect("parse");
+        let queries = parsed
+            .counters
+            .get("vllm_prefix_cache_queries_total")
+            .copied()
+            .map(|v| v as u64);
+        assert_eq!(queries, Some(654_321));
     }
 }
