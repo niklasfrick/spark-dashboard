@@ -69,6 +69,11 @@ fn format_tensor_type(params: &std::collections::HashMap<String, u64>) -> Option
 pub struct VllmAdapter {
     client: reqwest::Client,
     endpoint: String,
+    /// Optional bearer token for auth-gated deployments (vLLM `--api-key`).
+    /// Applied to engine requests; open endpoints (`/health`, `/metrics`)
+    /// ignore it harmlessly. The HuggingFace request is never authenticated
+    /// with it.
+    api_key: Option<String>,
     /// Model identity recovered from the launch command line (e.g.
     /// `unsloth/Llama-3.2-1B-Instruct`). Used as a fallback when
     /// `/v1/models` returns a bare slug without the HF-style `Provider/`
@@ -97,10 +102,16 @@ pub struct VllmAdapter {
 }
 
 impl VllmAdapter {
-    pub fn new(client: reqwest::Client, endpoint: String, served_model: Option<String>) -> Self {
+    pub fn new(
+        client: reqwest::Client,
+        endpoint: String,
+        served_model: Option<String>,
+        api_key: Option<String>,
+    ) -> Self {
         Self {
             client,
             endpoint,
+            api_key,
             served_model,
             prev_gen_tokens: Mutex::new(None),
             prev_prompt_tokens: Mutex::new(None),
@@ -109,6 +120,15 @@ impl VllmAdapter {
             warmup: Mutex::new(WarmupTracker::new(warmup_skip_from_env())),
             hf_model_cache: Mutex::new(None),
             last_hf_error: Mutex::new(None),
+        }
+    }
+
+    /// Attach the bearer token when one is configured. No-op otherwise, so
+    /// open `/health` and `/metrics` endpoints are unaffected.
+    fn auth(&self, rb: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match &self.api_key {
+            Some(key) => rb.bearer_auth(key),
+            None => rb,
         }
     }
 
@@ -294,9 +314,11 @@ impl EngineAdapter for VllmAdapter {
 
     async fn health_check(&self) -> EngineStatus {
         match self
-            .client
-            .get(format!("{}/health", self.endpoint))
-            .timeout(Duration::from_secs(2))
+            .auth(
+                self.client
+                    .get(format!("{}/health", self.endpoint))
+                    .timeout(Duration::from_secs(2)),
+            )
             .send()
             .await
         {
@@ -313,9 +335,11 @@ impl EngineAdapter for VllmAdapter {
         // exactly the case we want to recover from via the command-line hint.
         let api_id: Option<String> = async {
             let resp = self
-                .client
-                .get(format!("{}/v1/models", self.endpoint))
-                .timeout(Duration::from_secs(2))
+                .auth(
+                    self.client
+                        .get(format!("{}/v1/models", self.endpoint))
+                        .timeout(Duration::from_secs(2)),
+                )
                 .send()
                 .await
                 .ok()?;
@@ -355,9 +379,11 @@ impl EngineAdapter for VllmAdapter {
 
     async fn get_metrics(&self) -> Option<EngineMetrics> {
         let body = self
-            .client
-            .get(format!("{}/metrics", self.endpoint))
-            .timeout(Duration::from_secs(2))
+            .auth(
+                self.client
+                    .get(format!("{}/metrics", self.endpoint))
+                    .timeout(Duration::from_secs(2)),
+            )
             .send()
             .await
             .ok()?

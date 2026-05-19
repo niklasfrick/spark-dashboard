@@ -6,7 +6,7 @@ mod ws;
 
 use clap::{Args, Parser, Subcommand};
 use cli::service::ServiceCommand;
-use engines::{EngineOverride, EngineType};
+use engines::{ApiKeyResolver, EngineOverride, EngineType};
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 
@@ -65,6 +65,17 @@ struct RunArgs {
     /// Manually specify engine endpoint URL (use with --engine)
     #[arg(long, value_name = "URL")]
     engine_url: Vec<String>,
+
+    /// API key for an engine endpoint, paired by index with --engine-url.
+    /// For auth-gated deployments (e.g. vLLM started with --api-key) this
+    /// lets the initial /v1/models lookup succeed instead of 401-spamming.
+    #[arg(long, value_name = "KEY")]
+    engine_api_key: Vec<String>,
+
+    /// Fallback API key applied to any engine endpoint without an explicit
+    /// --engine-api-key (also covers auto-detected engines).
+    #[arg(long, env = "SPARK_DASHBOARD_PROVIDER_API_KEY")]
+    provider_api_key: Option<String>,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -93,6 +104,12 @@ async fn run_server_inner(args: RunArgs) -> Result<(), Box<dyn std::error::Error
 
     // Parse manual engine overrides: --engine ollama --engine-url http://localhost:11434
     // Both vectors must have the same length. Each pair creates an EngineOverride.
+    let api_keys = ApiKeyResolver::from_pairs(
+        &args.engine_url,
+        &args.engine_api_key,
+        args.provider_api_key.clone(),
+    );
+
     let overrides: Vec<EngineOverride> = args
         .engine
         .iter()
@@ -108,6 +125,7 @@ async fn run_server_inner(args: RunArgs) -> Result<(), Box<dyn std::error::Error
             Some(EngineOverride {
                 engine_type,
                 endpoint: url.clone(),
+                api_key: api_keys.resolve(url),
             })
         })
         .collect();
@@ -126,6 +144,7 @@ async fn run_server_inner(args: RunArgs) -> Result<(), Box<dyn std::error::Error
     tokio::spawn(engines::engine_collector_loop(
         engine_state.clone(),
         overrides,
+        api_keys,
     ));
 
     // Pass engine_state to metrics collector so it includes engines in snapshots
