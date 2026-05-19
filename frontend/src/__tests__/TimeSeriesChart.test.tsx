@@ -86,7 +86,7 @@ describe('TimeSeriesChart', () => {
   it('renders short throughput legend labels without the tok/s unit', () => {
     render(
       <TimeSeriesChart
-        title="Prefill Throughput · tok/s"
+        title="Prefill Throughput (tok/s)"
         tooltipLabel="Tokens / sec"
         series={[
           { data: sampleData, label: 'Live', color: '#76B900' },
@@ -96,7 +96,7 @@ describe('TimeSeriesChart', () => {
         unit="tok/s"
       />,
     )
-    expect(screen.queryByText('Prefill Throughput · tok/s')).not.toBeNull()
+    expect(screen.queryByText('Prefill Throughput (tok/s)')).not.toBeNull()
     expect(screen.queryByText('Live')).not.toBeNull()
     expect(screen.queryByText('Avg')).not.toBeNull()
     expect(screen.queryByText('Per-req')).not.toBeNull()
@@ -135,6 +135,36 @@ describe('TimeSeriesChart', () => {
     )
     expect(screen.queryByText('Tokens / sec')).toBeNull()
     expect(screen.queryAllByText('Live').length).toBeGreaterThan(0)
+  })
+
+  it('hides the tooltip header when hideLabel is set', () => {
+    const config = { s0: { label: 'TTFT', color: '#f59e0b' } }
+    const payload = [
+      { dataKey: 's0', name: 's0', value: 42, color: '#f59e0b' },
+    ] as unknown as ComponentProps<typeof ChartTooltipContent>['payload']
+    render(
+      <ChartContainer config={config}>
+        <ChartTooltipContent active payload={payload} hideLabel />
+      </ChartContainer>,
+    )
+    // Header row gone; the series label still renders in the value row.
+    expect(screen.queryAllByText('TTFT').length).toBe(1)
+  })
+
+  it('shows the seriesLabel (not the unit) as the single-line tooltip row name', () => {
+    // Mirrors the config TimeSeriesChart builds in single-line mode when
+    // seriesLabel is provided: { value: { label: seriesLabel } }.
+    const config = { value: { label: 'E2E Latency', color: '#76B900' } }
+    const payload = [
+      { dataKey: 'value', name: 'value', value: 1.2, color: '#76B900' },
+    ] as unknown as ComponentProps<typeof ChartTooltipContent>['payload']
+    render(
+      <ChartContainer config={config}>
+        <ChartTooltipContent active payload={payload} hideLabel />
+      </ChartContainer>,
+    )
+    expect(screen.queryByText('E2E Latency')).not.toBeNull()
+    expect(screen.queryByText('s')).toBeNull()
   })
 
   it('renders without crashing with requests', () => {
