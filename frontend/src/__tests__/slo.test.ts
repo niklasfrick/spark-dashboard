@@ -17,8 +17,8 @@ function buckets(...pairs: [number, number][]): HistogramBucket[] {
 const APPROX = 1e-9
 
 describe('DEFAULT_SLO mirrors backend constants', () => {
-  it('matches the Rust thresholds (TTFT 500ms, ITL 50ms, E2E 5000ms)', () => {
-    expect(DEFAULT_SLO).toEqual({ ttftMs: 500, itlMs: 50, e2eMs: 5000 })
+  it('matches the Rust thresholds (TTFT 500ms, ITL 50ms, E2E 5000ms, TPOT 50ms)', () => {
+    expect(DEFAULT_SLO).toEqual({ ttftMs: 500, itlMs: 50, e2eMs: 5000, tpotMs: 50 })
   })
 
   it('keeps SLO as a backwards-compatible alias of DEFAULT_SLO', () => {
@@ -112,6 +112,13 @@ describe('recomputeGoodputPct', () => {
     expect(Math.abs(got - 95)).toBeLessThan(APPROX)
   })
 
+  it('computes TPOT goodput at the default 50ms threshold', () => {
+    // TPOT histogram in seconds: 70 obs <= 10ms, 90 <= 50ms, 100 <= 500ms.
+    // At the DEFAULT_SLO.tpotMs (50ms) threshold → 90/100 = 90%.
+    const b = buckets([0.01, 70], [0.05, 90], [0.5, 100], [OVERFLOW, 100])
+    expect(recomputeGoodputPct(b, 50)!).toBeCloseTo(90, 9)
+  })
+
   it('drops sharply when the user tightens the threshold', () => {
     const b = buckets(
       [0.05, 50],
@@ -137,5 +144,13 @@ describe('combinedGoodput', () => {
 
   it('returns null when all inputs are null', () => {
     expect(combinedGoodput(null, null, null)).toBeNull()
+  })
+
+  it('stays a TTFT/ITL/E2E-only headline — TPOT is reported separately', () => {
+    // TPOT goodput is intentionally NOT folded into the combined headline
+    // (it correlates with ITL and would double-weight decode latency).
+    // combinedGoodput must still take exactly three dimensions.
+    expect(combinedGoodput.length).toBe(3)
+    expect(combinedGoodput(99, 95, 88)).toBe(88)
   })
 })

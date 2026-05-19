@@ -10,6 +10,7 @@ export const DEFAULT_SLO: SloThresholds = {
   ttftMs: 500,
   itlMs: 50,
   e2eMs: 5000,
+  tpotMs: 50,
 } as const
 
 /** Backwards-compatible alias for the default SLO seed. */
@@ -20,6 +21,7 @@ export interface SloThresholds {
   ttftMs: number
   itlMs: number
   e2eMs: number
+  tpotMs: number
 }
 
 /**

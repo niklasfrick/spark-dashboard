@@ -152,6 +152,15 @@ export interface EngineMetrics {
   itl_buckets: HistogramBucket[] | null
   /** Raw E2E histogram buckets (cumulative). */
   e2e_buckets: HistogramBucket[] | null
+  /** Average time per output token during decode (ms) — the gap between
+   *  generating each subsequent token, excluding TTFT. */
+  tpot_ms: number | null
+  /** Tail latency percentiles for time per output token (ms). */
+  tpot_percentiles: LatencyPercentiles | null
+  /** % of TPOT observations meeting the TPOT SLO threshold. */
+  tpot_goodput_pct: number | null
+  /** Raw TPOT histogram buckets (cumulative). */
+  tpot_buckets: HistogramBucket[] | null
 }
 
 export interface EngineSnapshot {

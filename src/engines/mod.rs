@@ -70,6 +70,9 @@ pub const TTFT_SLO_MS: f64 = 500.0;
 pub const ITL_SLO_MS: f64 = 50.0;
 /// SLO threshold for end-to-end request latency (ms).
 pub const E2E_SLO_MS: f64 = 5000.0;
+/// SLO threshold for time per output token during decode (ms). A token
+/// every 50ms is roughly 20 tok/s; mirrors the related `ITL_SLO_MS`.
+pub const TPOT_SLO_MS: f64 = 50.0;
 
 /// One Prometheus histogram bucket for transport to the frontend.
 ///
@@ -141,6 +144,15 @@ pub struct EngineMetrics {
     pub itl_buckets: Option<Vec<HistogramBucket>>,
     /// Raw E2E histogram buckets (cumulative).
     pub e2e_buckets: Option<Vec<HistogramBucket>>,
+    /// Average time per output token during decode in milliseconds — the
+    /// gap between generating each subsequent token, excluding TTFT.
+    pub tpot_ms: Option<f64>,
+    /// Tail latency percentiles for time per output token (ms).
+    pub tpot_percentiles: Option<LatencyPercentiles>,
+    /// Goodput: percentage (0-100) of TPOT observations meeting `TPOT_SLO_MS`.
+    pub tpot_goodput_pct: Option<f64>,
+    /// Raw TPOT histogram buckets (cumulative).
+    pub tpot_buckets: Option<Vec<HistogramBucket>>,
     /// True while the engine is still in warmup — histogram-derived fields
     /// (averages, percentiles, goodput, rates) are intentionally `None` so the
     /// first slow inference does not pollute steady-state metrics. See

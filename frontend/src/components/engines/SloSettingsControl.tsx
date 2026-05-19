@@ -13,6 +13,7 @@ interface FieldDraft {
   ttftMs: string
   itlMs: string
   e2eMs: string
+  tpotMs: string
 }
 
 function toDraft(t: SloThresholds): FieldDraft {
@@ -20,6 +21,7 @@ function toDraft(t: SloThresholds): FieldDraft {
     ttftMs: String(t.ttftMs),
     itlMs: String(t.itlMs),
     e2eMs: String(t.e2eMs),
+    tpotMs: String(t.tpotMs),
   }
 }
 
@@ -27,14 +29,16 @@ function parseDraft(d: FieldDraft): SloThresholds | null {
   const ttftMs = Number(d.ttftMs)
   const itlMs = Number(d.itlMs)
   const e2eMs = Number(d.e2eMs)
+  const tpotMs = Number(d.tpotMs)
   if (
     !Number.isFinite(ttftMs) || ttftMs <= 0 ||
     !Number.isFinite(itlMs) || itlMs <= 0 ||
-    !Number.isFinite(e2eMs) || e2eMs <= 0
+    !Number.isFinite(e2eMs) || e2eMs <= 0 ||
+    !Number.isFinite(tpotMs) || tpotMs <= 0
   ) {
     return null
   }
-  return { ttftMs, itlMs, e2eMs }
+  return { ttftMs, itlMs, e2eMs, tpotMs }
 }
 
 export function SloSettingsControl({
@@ -81,7 +85,8 @@ export function SloSettingsControl({
     parsed !== null &&
     (parsed.ttftMs !== thresholds.ttftMs ||
       parsed.itlMs !== thresholds.itlMs ||
-      parsed.e2eMs !== thresholds.e2eMs)
+      parsed.e2eMs !== thresholds.e2eMs ||
+      parsed.tpotMs !== thresholds.tpotMs)
 
   const apply = () => {
     if (parsed === null) return
@@ -137,6 +142,13 @@ export function SloSettingsControl({
               unit="ms"
               value={draft.itlMs}
               onChange={(itlMs) => setDraft((d) => ({ ...d, itlMs }))}
+              onCommit={apply}
+            />
+            <SloField
+              label="TPOT"
+              unit="ms"
+              value={draft.tpotMs}
+              onChange={(tpotMs) => setDraft((d) => ({ ...d, tpotMs }))}
               onCommit={apply}
             />
             <SloField

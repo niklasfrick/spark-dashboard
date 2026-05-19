@@ -53,6 +53,31 @@ describe('TimeSeriesChart', () => {
     expect(screen.queryByText('Prefix Hit')).not.toBeNull()
   })
 
+  it('renders all four labels for the Latency (TTFT + Queue + ITL + TPOT) chart', () => {
+    const other = [
+      { timestamp: 1700000000000, value: 12 },
+      { timestamp: 1700000001000, value: 14 },
+    ]
+    const { container } = render(
+      <TimeSeriesChart
+        title="Latency · Avg"
+        series={[
+          { data: sampleData, label: 'TTFT', color: '#f59e0b', axis: 'left' },
+          { data: other, label: 'Queue', color: '#8b5cf6', axis: 'right' },
+          { data: other, label: 'ITL', color: '#14b8a6', axis: 'right' },
+          { data: other, label: 'TPOT', color: '#ec4899', axis: 'right' },
+        ]}
+        unit="ms"
+      />,
+    )
+    const chart = container.querySelector('[data-slot="chart"]')
+    expect(chart).not.toBeNull()
+    expect(screen.queryByText('TTFT')).not.toBeNull()
+    expect(screen.queryByText('Queue')).not.toBeNull()
+    expect(screen.queryByText('ITL')).not.toBeNull()
+    expect(screen.queryByText('TPOT')).not.toBeNull()
+  })
+
   it('renders without crashing with requests', () => {
     const requests = [
       {

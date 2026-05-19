@@ -3,7 +3,7 @@ use super::prometheus::parse_prometheus_text;
 use super::warmup::WarmupTracker;
 use super::{
     EngineAdapter, EngineMetrics, EngineStatus, EngineType, HistogramBucket, LatencyPercentiles,
-    ModelInfo, E2E_SLO_MS, ITL_SLO_MS, TTFT_SLO_MS,
+    ModelInfo, E2E_SLO_MS, ITL_SLO_MS, TPOT_SLO_MS, TTFT_SLO_MS,
 };
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -646,6 +646,32 @@ impl EngineAdapter for VllmAdapter {
             }
         };
 
+        // Average time per output token during decode (from histogram
+        // sum/count). vLLM v1 names it `request_time_per_output_token`;
+        // v0.6 used `time_per_output_token`. Same shape as ttft_ms.
+        let tpot_ms = {
+            let sum = parsed
+                .counters
+                .get("vllm_request_time_per_output_token_seconds_sum")
+                .or_else(|| {
+                    parsed
+                        .counters
+                        .get("vllm_time_per_output_token_seconds_sum")
+                });
+            let count = parsed
+                .counters
+                .get("vllm_request_time_per_output_token_seconds_count")
+                .or_else(|| {
+                    parsed
+                        .counters
+                        .get("vllm_time_per_output_token_seconds_count")
+                });
+            match (sum, count) {
+                (Some(&s), Some(&c)) if c > 0.0 => Some((s / c) * 1000.0),
+                _ => None,
+            }
+        };
+
         // Tail latency percentiles. vLLM exposes `_bucket{le="..."}` lines for
         // each request-level histogram. We linearly interpolate p50/p95/p99 in
         // milliseconds (engine emits seconds). Returns `None` for the whole
@@ -705,6 +731,25 @@ impl EngineAdapter for VllmAdapter {
         let itl_buckets = buckets_for("vllm_inter_token_latency_seconds");
         let e2e_buckets = buckets_for("vllm_e2e_request_latency_seconds");
 
+        // TPOT has two possible histogram keys depending on vLLM version.
+        // Resolve whichever is present, then reuse the closures above.
+        let tpot_hist = if parsed
+            .histograms
+            .contains_key("vllm_request_time_per_output_token_seconds")
+        {
+            Some("vllm_request_time_per_output_token_seconds")
+        } else if parsed
+            .histograms
+            .contains_key("vllm_time_per_output_token_seconds")
+        {
+            Some("vllm_time_per_output_token_seconds")
+        } else {
+            None
+        };
+        let tpot_percentiles = tpot_hist.and_then(percentiles_ms);
+        let tpot_goodput_pct = tpot_hist.and_then(|m| goodput_pct(m, TPOT_SLO_MS));
+        let tpot_buckets = tpot_hist.and_then(buckets_for);
+
         // While warming, histogram-derived metrics still compute from raw
         // pass-through counters/buckets (the tracker doesn't yet have a
         // baseline), so they would carry the slow first observation. Force
@@ -745,6 +790,10 @@ impl EngineAdapter for VllmAdapter {
             ttft_buckets: if blank { None } else { ttft_buckets },
             itl_buckets: if blank { None } else { itl_buckets },
             e2e_buckets: if blank { None } else { e2e_buckets },
+            tpot_ms: if blank { None } else { tpot_ms },
+            tpot_percentiles: if blank { None } else { tpot_percentiles },
+            tpot_goodput_pct: if blank { None } else { tpot_goodput_pct },
+            tpot_buckets: if blank { None } else { tpot_buckets },
             warming_up,
         })
     }
@@ -785,6 +834,87 @@ vllm:time_to_first_token_seconds_count 100.0
         // p99 lands inside the (0.5, 1.0] bucket.
         assert!((40.0..=60.0).contains(&p50), "p50 {p50} near 50ms");
         assert!(p99 > 500.0 && p99 <= 1000.0, "p99 {p99} in (500, 1000]");
+    }
+
+    /// TPOT pipeline: vLLM v1 emits `request_time_per_output_token_seconds`.
+    /// The histogram must land under the normalized key (so `tpot_hist`
+    /// resolves it), percentiles must order p50<p95<p99, and the sum/count
+    /// counters must yield the same average TPOT the adapter computes.
+    #[test]
+    fn tpot_histogram_roundtrip_from_metrics_body() {
+        let body = "\
+# HELP vllm:request_time_per_output_token_seconds TPOT histogram.
+# TYPE vllm:request_time_per_output_token_seconds histogram
+vllm:request_time_per_output_token_seconds_bucket{le=\"0.01\"} 50
+vllm:request_time_per_output_token_seconds_bucket{le=\"0.05\"} 80
+vllm:request_time_per_output_token_seconds_bucket{le=\"0.1\"} 95
+vllm:request_time_per_output_token_seconds_bucket{le=\"0.5\"} 99
+vllm:request_time_per_output_token_seconds_bucket{le=\"+Inf\"} 100
+vllm:request_time_per_output_token_seconds_sum 2.0
+vllm:request_time_per_output_token_seconds_count 100.0
+";
+        let parsed = parse_prometheus_text(body).expect("parse");
+        let buckets = parsed
+            .histograms
+            .get("vllm_request_time_per_output_token_seconds")
+            .expect("tpot histogram captured under normalized key");
+        let p50 = percentile(buckets, 0.5).expect("p50") * 1000.0;
+        let p95 = percentile(buckets, 0.95).expect("p95") * 1000.0;
+        let p99 = percentile(buckets, 0.99).expect("p99") * 1000.0;
+        assert!(p50 < p95 && p95 < p99, "p50 {p50} < p95 {p95} < p99 {p99}");
+
+        let sum = parsed
+            .counters
+            .get("vllm_request_time_per_output_token_seconds_sum")
+            .copied()
+            .expect("sum");
+        let count = parsed
+            .counters
+            .get("vllm_request_time_per_output_token_seconds_count")
+            .copied()
+            .expect("count");
+        let tpot_ms = (sum / count) * 1000.0;
+        assert!((tpot_ms - 20.0).abs() < 1e-6, "tpot {tpot_ms} ≈ 20ms");
+    }
+
+    /// vLLM v0.6 names the metric `time_per_output_token_seconds` (no
+    /// `request_` prefix). The resolver must fall back to it when the v1
+    /// name is absent.
+    #[test]
+    fn tpot_falls_back_to_v06_metric_name() {
+        let body = "\
+# HELP vllm:time_per_output_token_seconds TPOT histogram.
+# TYPE vllm:time_per_output_token_seconds histogram
+vllm:time_per_output_token_seconds_bucket{le=\"0.05\"} 10
+vllm:time_per_output_token_seconds_bucket{le=\"+Inf\"} 10
+vllm:time_per_output_token_seconds_sum 0.3
+vllm:time_per_output_token_seconds_count 10.0
+";
+        let parsed = parse_prometheus_text(body).expect("parse");
+        assert!(
+            !parsed
+                .histograms
+                .contains_key("vllm_request_time_per_output_token_seconds"),
+            "v1 name must be absent in this fixture"
+        );
+        assert!(
+            parsed
+                .histograms
+                .contains_key("vllm_time_per_output_token_seconds"),
+            "v0.6 name must be present so the resolver falls back to it"
+        );
+        let sum = parsed
+            .counters
+            .get("vllm_time_per_output_token_seconds_sum")
+            .copied()
+            .expect("v0.6 sum");
+        let count = parsed
+            .counters
+            .get("vllm_time_per_output_token_seconds_count")
+            .copied()
+            .expect("v0.6 count");
+        let tpot_ms = (sum / count) * 1000.0;
+        assert!((tpot_ms - 30.0).abs() < 1e-6, "tpot {tpot_ms} ≈ 30ms");
     }
 
     /// Integration check: the warmup tracker baselines after the first

@@ -15,8 +15,13 @@ function storageKey(engineKey: string, modelName: string | null): string | null 
 
 /**
  * Validate a parsed JSON blob from localStorage. Discards anything that
- * isn't three positive finite numbers — protects against partial writes,
- * shape drift across releases, and user tampering.
+ * isn't positive finite numbers for the core three thresholds — protects
+ * against partial writes, shape drift across releases, and user tampering.
+ *
+ * `tpotMs` was added after the original three; blobs persisted before it
+ * existed have no `tpotMs`. Treat a missing value as "use the default" so
+ * pre-existing customized TTFT/ITL/E2E settings survive the upgrade.
+ * Only an *explicitly present but invalid* `tpotMs` rejects the blob.
  */
 function parseStored(raw: string | null): SloThresholds | null {
   if (raw === null) return null
@@ -38,7 +43,15 @@ function parseStored(raw: string | null): SloThresholds | null {
   ) {
     return null
   }
-  return { ttftMs, itlMs, e2eMs }
+  const rawTpot = candidate.tpotMs
+  let tpotMs = DEFAULT_SLO.tpotMs
+  if (rawTpot !== undefined) {
+    if (typeof rawTpot !== 'number' || !Number.isFinite(rawTpot) || rawTpot <= 0) {
+      return null
+    }
+    tpotMs = rawTpot
+  }
+  return { ttftMs, itlMs, e2eMs, tpotMs }
 }
 
 function readFromStorage(key: string | null): SloThresholds | null {
@@ -101,7 +114,8 @@ export function useSloSettings(engineKey: string, modelName: string | null): {
   const isCustomized =
     thresholds.ttftMs !== DEFAULT_SLO.ttftMs ||
     thresholds.itlMs !== DEFAULT_SLO.itlMs ||
-    thresholds.e2eMs !== DEFAULT_SLO.e2eMs
+    thresholds.e2eMs !== DEFAULT_SLO.e2eMs ||
+    thresholds.tpotMs !== DEFAULT_SLO.tpotMs
 
   return { thresholds, setThresholds, reset, isCustomized }
 }

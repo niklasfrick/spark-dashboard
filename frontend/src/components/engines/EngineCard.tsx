@@ -84,6 +84,10 @@ interface EngineCardProps {
     e2eP50: ChartDataPoint[]
     e2eP95: ChartDataPoint[]
     e2eP99: ChartDataPoint[]
+    tpot: ChartDataPoint[]
+    tpotP50: ChartDataPoint[]
+    tpotP95: ChartDataPoint[]
+    tpotP99: ChartDataPoint[]
     activeRequests: ChartDataPoint[]
     queuedRequests: ChartDataPoint[]
     totalRequests: ChartDataPoint[]
@@ -137,9 +141,11 @@ export function EngineCard({
   const ttftBuckets = noModel ? null : (m?.ttft_buckets ?? null)
   const itlBuckets = noModel ? null : (m?.itl_buckets ?? null)
   const e2eBuckets = noModel ? null : (m?.e2e_buckets ?? null)
+  const tpotBuckets = noModel ? null : (m?.tpot_buckets ?? null)
   const ttftGoodput = recomputeGoodputPct(ttftBuckets, slo.ttftMs) ?? v('ttft_goodput_pct')
   const itlGoodput = recomputeGoodputPct(itlBuckets, slo.itlMs) ?? v('itl_goodput_pct')
   const e2eGoodput = recomputeGoodputPct(e2eBuckets, slo.e2eMs) ?? v('e2e_goodput_pct')
+  const tpotGoodput = recomputeGoodputPct(tpotBuckets, slo.tpotMs) ?? v('tpot_goodput_pct')
   const overallGoodput = combinedGoodput(ttftGoodput, itlGoodput, e2eGoodput)
 
   // Resolve latency tile values according to the global mode setting
@@ -148,9 +154,12 @@ export function EngineCard({
   const ttftPctl = noModel ? null : (m?.ttft_percentiles ?? null)
   const itlPctl = noModel ? null : (m?.itl_percentiles ?? null)
   const e2ePctl = noModel ? null : (m?.e2e_percentiles ?? null)
+  const tpotPctl = noModel ? null : (m?.tpot_percentiles ?? null)
+  const tpot = v('tpot_ms')
   const ttftDisplay = pickLatencyValue(latencyMode, ttft, ttftPctl)
   const itlDisplay = pickLatencyValue(latencyMode, interTokenLatency, itlPctl)
   const e2eDisplay = pickLatencyValue(latencyMode, e2eLatency, e2ePctl)
+  const tpotDisplay = pickLatencyValue(latencyMode, tpot, tpotPctl)
   const e2eFmt = formatDurationMs(e2eDisplay)
   const latencyHeading = `Latency · ${latencyModeLabel(latencyMode)}`
 
@@ -179,10 +188,17 @@ export function EngineCard({
        : latencyMode === 'p99' ? chartData.e2eP99
        : chartData.e2eLatency)
     : []
+  const tpotSeries = chartData
+    ? (latencyMode === 'p50' ? chartData.tpotP50
+       : latencyMode === 'p95' ? chartData.tpotP95
+       : latencyMode === 'p99' ? chartData.tpotP99
+       : chartData.tpot)
+    : []
   const ttftTrend: Trend = chartData ? computeTrend(ttftSeries) : 'stable'
   const e2eTrend: Trend = chartData ? computeTrend(e2eSeries) : 'stable'
   const queueTrend: Trend = chartData ? computeTrend(chartData.queueTime) : 'stable'
   const itlTrend: Trend = chartData ? computeTrend(itlSeries) : 'stable'
+  const tpotTrend: Trend = chartData ? computeTrend(tpotSeries) : 'stable'
   const batchTrend: Trend = chartData ? computeTrend(chartData.batchSize) : 'stable'
   const kvTrend: Trend = chartData ? computeTrend(chartData.kv) : 'stable'
 
@@ -226,6 +242,7 @@ export function EngineCard({
                 <MetricTile label="E2E" value={e2eFmt.value} unit={e2eFmt.unit} trend={e2eTrend} invertTrend />
                 <MetricTile label="Queue" value={fmtVal(queueTime, formatTtft)} unit="ms" trend={queueTrend} invertTrend />
                 <MetricTile label="ITL" value={fmtVal(itlDisplay, formatTtft)} unit="ms" trend={itlTrend} invertTrend />
+                <MetricTile label="TPOT" value={fmtVal(tpotDisplay, formatTtft)} unit="ms" trend={tpotTrend} invertTrend />
                 <MetricTile label="Batch" value={batchSize !== null ? batchSize.toFixed(1) : '--'} unit="/step" trend={batchTrend} />
               </div>
             </div>
@@ -246,7 +263,8 @@ export function EngineCard({
                 <div className="col-span-2"><GoodputTile label="Combined" pct={overallGoodput} emphasize /></div>
                 <GoodputTile label={`TTFT ≤ ${slo.ttftMs}ms`} pct={ttftGoodput} />
                 <GoodputTile label={`ITL ≤ ${slo.itlMs}ms`} pct={itlGoodput} />
-                <div className="col-span-2"><GoodputTile label={`E2E ≤ ${formatE2eLabel(slo.e2eMs)}`} pct={e2eGoodput} /></div>
+                <GoodputTile label={`TPOT ≤ ${slo.tpotMs}ms`} pct={tpotGoodput} />
+                <GoodputTile label={`E2E ≤ ${formatE2eLabel(slo.e2eMs)}`} pct={e2eGoodput} />
               </div>
             </div>
 
@@ -315,6 +333,7 @@ export function EngineCard({
                   { data: ttftSeries, label: 'TTFT', color: '#f59e0b', axis: 'left' },
                   { data: chartData.queueTime, label: 'Queue', color: '#8b5cf6', axis: 'right' },
                   { data: itlSeries, label: 'ITL', color: '#14b8a6', axis: 'right' },
+                  { data: tpotSeries, label: 'TPOT', color: '#ec4899', axis: 'right' },
                 ]}
                 unit="ms"
                 height="clamp(72px, 13vh, 200px)"

@@ -130,6 +130,10 @@ export function useMetricsHistory(
           e2eP50: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
           e2eP95: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
           e2eP99: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
+          tpot: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
+          tpotP50: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
+          tpotP95: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
+          tpotP99: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
           activeRequests: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
           queuedRequests: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
           totalRequests: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
@@ -182,6 +186,9 @@ export function useMetricsHistory(
         if (engine.metrics.avg_batch_size !== null) {
           eb.batchSize.push({ timestamp: ts, value: engine.metrics.avg_batch_size })
         }
+        if (engine.metrics.tpot_ms !== null) {
+          eb.tpot.push({ timestamp: ts, value: engine.metrics.tpot_ms })
+        }
         const tp = engine.metrics.ttft_percentiles
         if (tp) {
           if (tp.p50_ms !== null) eb.ttftP50.push({ timestamp: ts, value: tp.p50_ms })
@@ -199,6 +206,12 @@ export function useMetricsHistory(
           if (ep.p50_ms !== null) eb.e2eP50.push({ timestamp: ts, value: ep.p50_ms })
           if (ep.p95_ms !== null) eb.e2eP95.push({ timestamp: ts, value: ep.p95_ms })
           if (ep.p99_ms !== null) eb.e2eP99.push({ timestamp: ts, value: ep.p99_ms })
+        }
+        const pp = engine.metrics.tpot_percentiles
+        if (pp) {
+          if (pp.p50_ms !== null) eb.tpotP50.push({ timestamp: ts, value: pp.p50_ms })
+          if (pp.p95_ms !== null) eb.tpotP95.push({ timestamp: ts, value: pp.p95_ms })
+          if (pp.p99_ms !== null) eb.tpotP99.push({ timestamp: ts, value: pp.p99_ms })
         }
         if (engine.metrics.active_requests !== null) {
           eb.activeRequests.push({ timestamp: ts, value: engine.metrics.active_requests })

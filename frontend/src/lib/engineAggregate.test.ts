@@ -32,6 +32,10 @@ function fullMetrics(overrides: Partial<EngineMetrics> = {}): EngineMetrics {
     ttft_buckets: null,
     itl_buckets: null,
     e2e_buckets: null,
+    tpot_ms: 28,
+    tpot_percentiles: null,
+    tpot_goodput_pct: null,
+    tpot_buckets: null,
     ...overrides,
   }
 }
