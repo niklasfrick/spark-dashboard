@@ -87,7 +87,7 @@ describe('TimeSeriesChart', () => {
     render(
       <TimeSeriesChart
         title="Prefill Throughput (tok/s)"
-        tooltipLabel="Tokens / sec"
+        hideTooltipLabel
         series={[
           { data: sampleData, label: 'Live', color: '#76B900' },
           { data: sampleData, label: 'Avg', color: '#3b82f6' },
