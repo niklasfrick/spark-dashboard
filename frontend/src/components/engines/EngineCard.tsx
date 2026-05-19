@@ -326,7 +326,7 @@ export function EngineCard({
           {showCharts && chartData && (
             <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 pt-1">
               <TimeSeriesChart
-                title="Prefill Throughput · tok/s"
+                title="Prefill Throughput (tok/s)"
                 tooltipLabel="Tokens / sec"
                 series={prefillTokenSeries(chartData)}
                 unit="tok/s"
@@ -334,7 +334,7 @@ export function EngineCard({
                 requests={requestSpans}
               />
               <TimeSeriesChart
-                title="Decode Throughput · tok/s"
+                title="Decode Throughput (tok/s)"
                 tooltipLabel="Tokens / sec"
                 series={decodeTokenSeries(chartData)}
                 unit="tok/s"
@@ -342,7 +342,8 @@ export function EngineCard({
                 requests={requestSpans}
               />
               <TimeSeriesChart
-                title={`Latency · ${latencyModeLabel(latencyMode)}`}
+                title={`Latency (ms) · ${latencyModeLabel(latencyMode)}`}
+                hideTooltipLabel
                 series={[
                   // TTFT lives on the left axis (typically hundreds of ms).
                   // Queue + ITL share a right axis (often single/double digits)
@@ -357,7 +358,9 @@ export function EngineCard({
                 requests={requestSpans}
               />
               <TimeSeriesChart
-                title={`E2E Latency · ${latencyModeLabel(latencyMode)}`}
+                title={`E2E Latency (s) · ${latencyModeLabel(latencyMode)}`}
+                hideTooltipLabel
+                seriesLabel="E2E Latency"
                 data={e2eSeries.map(p => ({ ...p, value: p.value / 1000 }))}
                 unit="s"
                 height="clamp(72px, 13vh, 200px)"
@@ -365,6 +368,7 @@ export function EngineCard({
               />
               <TimeSeriesChart
                 title="Requests"
+                hideTooltipLabel
                 series={[
                   { data: chartData.activeRequests, label: 'Active', color: '#76B900', axis: 'left' },
                   { data: chartData.queuedRequests, label: 'Queued', color: '#f59e0b', axis: 'left' },
@@ -375,7 +379,8 @@ export function EngineCard({
                 requests={requestSpans}
               />
               <TimeSeriesChart
-                title="Cache"
+                title="Cache (%)"
+                hideTooltipLabel
                 series={[
                   { data: chartData.kv, label: 'KV Cache', color: '#76B900' },
                   { data: chartData.prefixCacheHit, label: 'Prefix Hit', color: '#3b82f6' },

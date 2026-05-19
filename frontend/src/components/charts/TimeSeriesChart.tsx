@@ -50,6 +50,16 @@ interface TimeSeriesChartProps {
    * Recharts' default behavior (the first series' label).
    */
   tooltipLabel?: string
+  /**
+   * Hide the tooltip header row entirely. Use when the series labels alone
+   * carry enough meaning and a header would just be noise.
+   */
+  hideTooltipLabel?: boolean
+  /**
+   * Series label for single-line mode (the tooltip row name). Defaults to
+   * `unit`. Multi-line mode uses each series' own `label` instead.
+   */
+  seriesLabel?: string
   /** Extra classes applied to the outer wrapper (e.g. grid column placement). */
   className?: string
 }
@@ -126,6 +136,8 @@ export const TimeSeriesChart = React.memo(function TimeSeriesChart({
   height = 160,
   title,
   tooltipLabel,
+  hideTooltipLabel = false,
+  seriesLabel,
   className,
 }: TimeSeriesChartProps) {
   const isMulti = series && series.length > 0
@@ -148,7 +160,7 @@ export const TimeSeriesChart = React.memo(function TimeSeriesChart({
     const lineColor = color ?? NVIDIA_THEME.chartLine
     const paddedData = padData(data ?? [])
     chartData = paddedData.map((d) => ({ timestamp: d.timestamp, value: d.value }))
-    chartConfig = { value: { label: unit ?? '', color: lineColor } }
+    chartConfig = { value: { label: seriesLabel ?? unit ?? '', color: lineColor } }
     lineKeys = [{ key: 'value', color: lineColor, axis: 'left' }]
   }
   const hasRightAxis = lineKeys.some((l) => l.axis === 'right')
@@ -223,6 +235,7 @@ export const TimeSeriesChart = React.memo(function TimeSeriesChart({
           <ChartTooltip
             content={
               <ChartTooltipContent
+                hideLabel={hideTooltipLabel}
                 labelFormatter={tooltipLabel ? () => tooltipLabel : undefined}
               />
             }
