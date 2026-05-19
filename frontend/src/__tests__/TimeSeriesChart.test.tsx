@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { render } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { TimeSeriesChart } from '../components/charts/TimeSeriesChart'
 
 const sampleData = [
@@ -29,6 +29,28 @@ describe('TimeSeriesChart', () => {
     )
     const chart = container.querySelector('[data-slot="chart"]')
     expect(chart).not.toBeNull()
+  })
+
+  it('renders both line labels for the Cache (KV + Prefix Hit) multi-series chart', () => {
+    const prefixData = [
+      { timestamp: 1700000000000, value: 10 },
+      { timestamp: 1700000001000, value: 20 },
+    ]
+    const { container } = render(
+      <TimeSeriesChart
+        title="Cache"
+        series={[
+          { data: sampleData, label: 'KV Cache', color: '#76B900' },
+          { data: prefixData, label: 'Prefix Hit', color: '#3b82f6' },
+        ]}
+        yDomain={[0, 100]}
+        unit="%"
+      />,
+    )
+    const chart = container.querySelector('[data-slot="chart"]')
+    expect(chart).not.toBeNull()
+    expect(screen.queryByText('KV Cache')).not.toBeNull()
+    expect(screen.queryByText('Prefix Hit')).not.toBeNull()
   })
 
   it('renders without crashing with requests', () => {

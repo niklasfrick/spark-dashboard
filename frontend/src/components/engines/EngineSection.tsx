@@ -90,6 +90,7 @@ interface EngineChartData {
   perReqTps: ChartDataPoint[]
   ttft: ChartDataPoint[]
   kv: ChartDataPoint[]
+  prefixCacheHit: ChartDataPoint[]
   e2eLatency: ChartDataPoint[]
   promptTps: ChartDataPoint[]
   avgPromptTps: ChartDataPoint[]
@@ -436,6 +437,7 @@ export function EngineSection({
                   perReqTps: getChartData(`${engineKey}:perReqTps`),
                   ttft: getChartData(`${engineKey}:ttft`),
                   kv: getChartData(`${engineKey}:kvCache`),
+                  prefixCacheHit: getChartData(`${engineKey}:prefixCacheHit`),
                   e2eLatency: getChartData(`${engineKey}:e2eLatency`),
                   promptTps: getChartData(`${engineKey}:promptTps`),
                   avgPromptTps: getChartData(`${engineKey}:avgPromptTps`),

@@ -67,6 +67,7 @@ interface EngineCardProps {
     perReqTps: ChartDataPoint[]
     ttft: ChartDataPoint[]
     kv: ChartDataPoint[]
+    prefixCacheHit: ChartDataPoint[]
     e2eLatency: ChartDataPoint[]
     promptTps: ChartDataPoint[]
     avgPromptTps: ChartDataPoint[]
@@ -338,8 +339,11 @@ export function EngineCard({
                 requests={requestSpans}
               />
               <TimeSeriesChart
-                title="KV Cache"
-                data={chartData.kv}
+                title="Cache"
+                series={[
+                  { data: chartData.kv, label: 'KV Cache', color: '#76B900' },
+                  { data: chartData.prefixCacheHit, label: 'Prefix Hit', color: '#3b82f6' },
+                ]}
                 yDomain={[0, 100]}
                 unit="%"
                 height="clamp(72px, 13vh, 200px)"
