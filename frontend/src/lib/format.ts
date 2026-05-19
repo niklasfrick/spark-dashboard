@@ -109,6 +109,25 @@ export function formatKvCache(percent: number | null): string {
   return `${Math.round(percent)}%`
 }
 
+/** Abbreviate a large cumulative count: 950 -> "950", 1234 -> "1.2K",
+ *  3.4e9 -> "3.4B". One decimal above 1000, trailing ".0" trimmed.
+ *  Null/negative -> '--'. Used for lifetime token totals. */
+export function formatCompactTokens(n: number | null): string {
+  if (n === null || !Number.isFinite(n) || n < 0) return '--'
+  if (n < 1000) return String(Math.round(n))
+  const units = [
+    { value: 1e12, suffix: 'T' },
+    { value: 1e9, suffix: 'B' },
+    { value: 1e6, suffix: 'M' },
+    { value: 1e3, suffix: 'K' },
+  ]
+  const unit = units.find(u => n >= u.value)
+  if (!unit) return String(Math.round(n))
+  const scaled = n / unit.value
+  const text = scaled.toFixed(1).replace(/\.0$/, '')
+  return `${text}${unit.suffix}`
+}
+
 /** Map EngineType enum to human-readable display name. */
 export function engineDisplayName(engineType: EngineType): string {
   const names: Record<EngineType, string> = {

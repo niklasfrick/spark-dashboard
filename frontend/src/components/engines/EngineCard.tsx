@@ -6,6 +6,7 @@ import {
   type ChartDataPoint,
   type Trend,
   MetricTile,
+  LiveWithTotal,
   KvBar,
   TrendArrow,
   GoodputTile,
@@ -117,6 +118,8 @@ export function EngineCard({
   const promptTps = v('prompt_tokens_per_sec')
   const avgPromptTps = v('avg_prompt_tokens_per_sec')
   const perReqPromptTps = v('per_request_prompt_tps')
+  const totalPromptTokens = v('total_prompt_tokens')
+  const totalGenerationTokens = v('total_generation_tokens')
   const ttft = v('ttft_ms')
   const e2eLatency = v('e2e_latency_ms')
   const queueTime = v('queue_time_ms')
@@ -218,7 +221,7 @@ export function EngineCard({
             <div className="bg-white/[0.02] rounded-md px-3 py-2.5 2xl:px-4 2xl:py-3 min-w-0">
               <div className="text-[11px] 2xl:text-xs min-[1920px]:text-sm font-semibold text-zinc-300 tracking-tight mb-1.5 truncate">Prompt Processing / Prefill Throughput</div>
               <div className="grid grid-cols-1 gap-1.5">
-                <MetricTile label="Live" value={fmtVal(promptTps, formatTps)} unit="tok/s" trend={promptTpsTrend} />
+                <LiveWithTotal liveValue={fmtVal(promptTps, formatTps)} liveUnit="tok/s" trend={promptTpsTrend} totalLabel="Processed" total={totalPromptTokens} />
                 <MetricTile label="Avg" value={fmtVal(avgPromptTps, formatTps)} unit="tok/s" trend={avgPromptTpsTrend} />
                 <MetricTile label="Per-Req Avg" value={fmtVal(perReqPromptTps, formatTps)} unit="tok/s" trend={perReqPromptTpsTrend} />
               </div>
@@ -228,7 +231,7 @@ export function EngineCard({
             <div className="bg-white/[0.02] rounded-md px-3 py-2.5 2xl:px-4 2xl:py-3 min-w-0">
               <div className="text-[11px] 2xl:text-xs min-[1920px]:text-sm font-semibold text-zinc-300 tracking-tight mb-1.5 truncate">Token Generation / Decode Throughput</div>
               <div className="grid grid-cols-1 gap-1.5">
-                <MetricTile label="Live" value={fmtVal(tps, formatTps)} unit="tok/s" trend={tpsTrend} />
+                <LiveWithTotal liveValue={fmtVal(tps, formatTps)} liveUnit="tok/s" trend={tpsTrend} totalLabel="Generated" total={totalGenerationTokens} />
                 <MetricTile label="Avg" value={fmtVal(avgTps, formatTps)} unit="tok/s" trend={avgTpsTrend} />
                 <MetricTile label="Per-Req Avg" value={fmtVal(perReqTps, formatTps)} unit="tok/s" trend={perReqTpsTrend} />
               </div>

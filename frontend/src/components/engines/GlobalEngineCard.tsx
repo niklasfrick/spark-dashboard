@@ -1,6 +1,6 @@
 import { formatTps, formatTtft, formatDurationMs } from '@/lib/format'
 import type { AggregateSnapshot } from '@/lib/engineAggregate'
-import { MetricTile, KvBar, GoodputTile, fmtVal, fmtInt } from './EngineCardPrimitives'
+import { MetricTile, LiveWithTotal, KvBar, GoodputTile, fmtVal, fmtInt } from './EngineCardPrimitives'
 import { type LatencyMode, latencyModeLabel, pickLatencyValue } from './LatencyModeControl'
 import { SLO, combinedGoodput } from '@/lib/slo'
 
@@ -43,6 +43,8 @@ export function GlobalEngineCard({ snapshot, latencyMode = 'avg' }: GlobalEngine
     total_requests,
     swapped_requests,
     preemptions_total,
+    total_prompt_tokens,
+    total_generation_tokens,
     kv_cache_percent,
     prefix_cache_hit_rate,
     ttft_percentiles,
@@ -86,7 +88,7 @@ export function GlobalEngineCard({ snapshot, latencyMode = 'avg' }: GlobalEngine
             <span className="ml-1 text-[9px] font-normal text-zinc-500">(sum)</span>
           </div>
           <div className="grid grid-cols-1 gap-1.5">
-            <MetricTile label="Live" value={fmtVal(prompt_tokens_per_sec, formatTps)} unit="tok/s" />
+            <LiveWithTotal liveValue={fmtVal(prompt_tokens_per_sec, formatTps)} liveUnit="tok/s" totalLabel="Processed" total={total_prompt_tokens} />
             <MetricTile label="Avg" value={fmtVal(avg_prompt_tokens_per_sec, formatTps)} unit="tok/s" />
             <MetricTile label="Per-Req Avg" value={fmtVal(per_request_prompt_tps, formatTps)} unit="tok/s" />
           </div>
@@ -99,7 +101,7 @@ export function GlobalEngineCard({ snapshot, latencyMode = 'avg' }: GlobalEngine
             <span className="ml-1 text-[9px] font-normal text-zinc-500">(sum)</span>
           </div>
           <div className="grid grid-cols-1 gap-1.5">
-            <MetricTile label="Live" value={fmtVal(tokens_per_sec, formatTps)} unit="tok/s" />
+            <LiveWithTotal liveValue={fmtVal(tokens_per_sec, formatTps)} liveUnit="tok/s" totalLabel="Generated" total={total_generation_tokens} />
             <MetricTile label="Avg" value={fmtVal(avg_tokens_per_sec, formatTps)} unit="tok/s" />
             <MetricTile label="Per-Req Avg" value={fmtVal(per_request_tps, formatTps)} unit="tok/s" />
           </div>

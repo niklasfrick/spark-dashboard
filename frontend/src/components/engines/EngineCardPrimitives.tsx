@@ -5,6 +5,8 @@
  */
 
 import type { LatencyPercentiles } from '@/types/metrics'
+import { formatCompactTokens } from '@/lib/format'
+import { AnimatedCounter } from './AnimatedCounter'
 
 export interface ChartDataPoint {
   timestamp: number
@@ -88,6 +90,60 @@ export function MetricTile({ label, value, unit, trend, invertTrend, warn, subli
           {subline}
         </span>
       )}
+    </div>
+  )
+}
+
+interface LiveWithTotalProps {
+  /** Left half: the live throughput tile. */
+  liveValue: string
+  liveUnit?: string
+  trend?: Trend
+  /** Right half: cumulative lifetime token total (animated, abbreviated). */
+  totalLabel: string
+  total: number | null
+}
+
+/**
+ * First line of the prefill / decode cards: the live throughput tile on the
+ * left, and a compact animated cumulative-token total on the right next to
+ * it. Both stay on one line — fonts are deliberately smaller than the rows
+ * below so the pair never wraps on narrow cards.
+ */
+export function LiveWithTotal({
+  liveValue,
+  liveUnit,
+  trend,
+  totalLabel,
+  total,
+}: LiveWithTotalProps) {
+  return (
+    <div className="flex items-start justify-between gap-2 min-w-0">
+      <div className="flex flex-col gap-0.5 min-w-0">
+        <span className="text-[10px] 2xl:text-xs min-[1920px]:text-sm font-medium uppercase tracking-wider truncate text-zinc-400">
+          Live
+        </span>
+        <div className="flex items-baseline min-w-0">
+          <span className="text-base xl:text-lg 2xl:text-xl min-[1920px]:text-2xl min-[2560px]:text-3xl font-bold font-mono tabular-nums leading-none text-zinc-100">
+            {liveValue}
+          </span>
+          {liveUnit && <span className="text-[10px] 2xl:text-xs ml-1 text-zinc-500">{liveUnit}</span>}
+          {trend && <TrendArrow trend={trend} />}
+        </div>
+      </div>
+      <div className="flex flex-col gap-0.5 min-w-0 items-end text-right">
+        <span className="text-[10px] 2xl:text-xs min-[1920px]:text-sm font-medium uppercase tracking-wider truncate text-zinc-400">
+          {totalLabel}
+        </span>
+        <div className="flex items-baseline min-w-0">
+          <AnimatedCounter
+            value={total}
+            format={formatCompactTokens}
+            className="text-base xl:text-lg 2xl:text-xl min-[1920px]:text-2xl min-[2560px]:text-3xl font-bold font-mono tabular-nums leading-none text-zinc-100 truncate"
+          />
+          <span className="text-[10px] 2xl:text-xs ml-1 text-zinc-500">tok</span>
+        </div>
+      </div>
     </div>
   )
 }

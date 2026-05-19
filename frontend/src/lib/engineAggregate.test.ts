@@ -22,6 +22,8 @@ function fullMetrics(overrides: Partial<EngineMetrics> = {}): EngineMetrics {
     queue_time_ms: 50,
     inter_token_latency_ms: 25,
     preemptions_total: 0,
+    total_prompt_tokens: 1000,
+    total_generation_tokens: 2000,
     avg_batch_size: 4,
     ttft_percentiles: null,
     itl_percentiles: null,
@@ -87,6 +89,17 @@ describe('aggregateEngines', () => {
     expect(snap.tokens_per_sec).toBe(250)
     expect(snap.active_requests).toBe(5)
     expect(snap.total_requests).toBe(30)
+  })
+
+  it('sums cumulative token totals across running engines only', () => {
+    const engines = [
+      engine('Running', fullMetrics({ total_prompt_tokens: 1_000, total_generation_tokens: 5_000 })),
+      engine('Running', fullMetrics({ total_prompt_tokens: 2_500, total_generation_tokens: 7_500 })),
+      engine('Stopped', fullMetrics({ total_prompt_tokens: 999, total_generation_tokens: 999 })),
+    ]
+    const snap = aggregateEngines(engines)
+    expect(snap.total_prompt_tokens).toBe(3_500)
+    expect(snap.total_generation_tokens).toBe(12_500)
   })
 
   it('weighted mean for latencies uses total_requests as the weight', () => {

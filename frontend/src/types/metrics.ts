@@ -134,6 +134,10 @@ export interface EngineMetrics {
   queue_time_ms: number | null
   inter_token_latency_ms: number | null
   preemptions_total: number | null
+  /** Cumulative prompt (prefill) tokens processed since engine start. */
+  total_prompt_tokens: number | null
+  /** Cumulative generation (decode) tokens produced since engine start. */
+  total_generation_tokens: number | null
   avg_batch_size: number | null
   ttft_percentiles: LatencyPercentiles | null
   itl_percentiles: LatencyPercentiles | null

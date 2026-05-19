@@ -780,6 +780,8 @@ impl EngineAdapter for VllmAdapter {
             queue_time_ms: if blank { None } else { queue_time_ms },
             inter_token_latency_ms: if blank { None } else { inter_token_latency_ms },
             preemptions_total,
+            total_prompt_tokens: current_prompt.map(|v| v as u64),
+            total_generation_tokens: current_gen.map(|v| v as u64),
             avg_batch_size: if blank { None } else { avg_batch_size },
             ttft_percentiles: if blank { None } else { ttft_percentiles },
             itl_percentiles: if blank { None } else { itl_percentiles },
@@ -1121,5 +1123,34 @@ vllm:time_to_first_token_seconds_count 100.0
     fn format_tensor_type_returns_none_for_empty() {
         let params = std::collections::HashMap::new();
         assert_eq!(format_tensor_type(&params), None);
+    }
+
+    /// Cumulative token counters flow from the parser to the new
+    /// `total_prompt_tokens` / `total_generation_tokens` fields. The adapter
+    /// reads them off `parsed.counters` and casts f64 -> u64, so assert the
+    /// same boundary the struct fields are populated from.
+    #[test]
+    fn token_totals_roundtrip_from_metrics_body() {
+        let body = "\
+# HELP vllm:prompt_tokens_total Prompt tokens counter.
+# TYPE vllm:prompt_tokens_total counter
+vllm:prompt_tokens_total 123456.0
+# HELP vllm:generation_tokens_total Generation tokens counter.
+# TYPE vllm:generation_tokens_total counter
+vllm:generation_tokens_total 7890123.0
+";
+        let parsed = parse_prometheus_text(body).expect("parse");
+        let prompt = parsed
+            .counters
+            .get("vllm_prompt_tokens_total")
+            .copied()
+            .map(|v| v as u64);
+        let gen = parsed
+            .counters
+            .get("vllm_generation_tokens_total")
+            .copied()
+            .map(|v| v as u64);
+        assert_eq!(prompt, Some(123_456));
+        assert_eq!(gen, Some(7_890_123));
     }
 }

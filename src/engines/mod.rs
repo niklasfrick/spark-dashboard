@@ -123,6 +123,12 @@ pub struct EngineMetrics {
     pub inter_token_latency_ms: Option<f64>,
     /// Cumulative count of scheduling preemptions.
     pub preemptions_total: Option<u64>,
+    /// Cumulative prompt (prefill) tokens processed since engine start.
+    /// Raw lifetime counter, not warmup-adjusted.
+    pub total_prompt_tokens: Option<u64>,
+    /// Cumulative generation (decode) tokens produced since engine start.
+    /// Raw lifetime counter, not warmup-adjusted.
+    pub total_generation_tokens: Option<u64>,
     /// Average tokens processed per engine iteration step (batch size proxy).
     pub avg_batch_size: Option<f64>,
     /// Tail latency percentiles for time-to-first-token (ms).
