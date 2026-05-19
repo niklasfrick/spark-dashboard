@@ -1,6 +1,11 @@
+import type { ComponentProps } from 'react'
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { TimeSeriesChart } from '../components/charts/TimeSeriesChart'
+import {
+  ChartContainer,
+  ChartTooltipContent,
+} from '../components/ui/chart'
 
 const sampleData = [
   { timestamp: 1700000000000, value: 50 },
@@ -76,6 +81,60 @@ describe('TimeSeriesChart', () => {
     expect(screen.queryByText('Queue')).not.toBeNull()
     expect(screen.queryByText('ITL')).not.toBeNull()
     expect(screen.queryByText('TPOT')).not.toBeNull()
+  })
+
+  it('renders short throughput legend labels without the tok/s unit', () => {
+    render(
+      <TimeSeriesChart
+        title="Prefill Throughput · tok/s"
+        tooltipLabel="Tokens / sec"
+        series={[
+          { data: sampleData, label: 'Live', color: '#76B900' },
+          { data: sampleData, label: 'Avg', color: '#3b82f6' },
+          { data: sampleData, label: 'Per-req', color: '#a855f7' },
+        ]}
+        unit="tok/s"
+      />,
+    )
+    expect(screen.queryByText('Prefill Throughput · tok/s')).not.toBeNull()
+    expect(screen.queryByText('Live')).not.toBeNull()
+    expect(screen.queryByText('Avg')).not.toBeNull()
+    expect(screen.queryByText('Per-req')).not.toBeNull()
+    // The unit lives in the title now, never in a legend label.
+    expect(screen.queryByText('Live tok/s')).toBeNull()
+    expect(screen.queryByText('Avg tok/s')).toBeNull()
+    expect(screen.queryByText('Per-req tok/s')).toBeNull()
+  })
+
+  it('uses tooltipLabel as the tooltip header when provided', () => {
+    const config = { s0: { label: 'Live', color: '#76B900' } }
+    const payload = [
+      { dataKey: 's0', name: 's0', value: 60, color: '#76B900' },
+    ] as unknown as ComponentProps<typeof ChartTooltipContent>['payload']
+    render(
+      <ChartContainer config={config}>
+        <ChartTooltipContent
+          active
+          payload={payload}
+          labelFormatter={() => 'Tokens / sec'}
+        />
+      </ChartContainer>,
+    )
+    expect(screen.queryByText('Tokens / sec')).not.toBeNull()
+  })
+
+  it('falls back to the first series label as tooltip header without tooltipLabel', () => {
+    const config = { s0: { label: 'Live', color: '#76B900' } }
+    const payload = [
+      { dataKey: 's0', name: 's0', value: 60, color: '#76B900' },
+    ] as unknown as ComponentProps<typeof ChartTooltipContent>['payload']
+    render(
+      <ChartContainer config={config}>
+        <ChartTooltipContent active payload={payload} />
+      </ChartContainer>,
+    )
+    expect(screen.queryByText('Tokens / sec')).toBeNull()
+    expect(screen.queryAllByText('Live').length).toBeGreaterThan(0)
   })
 
   it('renders without crashing with requests', () => {

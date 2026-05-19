@@ -39,9 +39,9 @@ function decodeTokenSeries(chartData: {
   perReqTps: ChartDataPoint[]
 }): ChartSeries[] {
   return [
-    { data: chartData.tps, label: 'Live tok/s', color: '#76B900' },
-    { data: chartData.avgTps, label: 'Avg tok/s', color: '#3b82f6' },
-    { data: chartData.perReqTps, label: 'Per-req tok/s', color: '#a855f7' },
+    { data: chartData.tps, label: 'Live', color: '#76B900' },
+    { data: chartData.avgTps, label: 'Avg', color: '#3b82f6' },
+    { data: chartData.perReqTps, label: 'Per-req', color: '#a855f7' },
   ]
 }
 
@@ -51,9 +51,9 @@ function prefillTokenSeries(chartData: {
   perReqPromptTps: ChartDataPoint[]
 }): ChartSeries[] {
   return [
-    { data: chartData.promptTps, label: 'Live tok/s', color: '#76B900' },
-    { data: chartData.avgPromptTps, label: 'Avg tok/s', color: '#3b82f6' },
-    { data: chartData.perReqPromptTps, label: 'Per-req tok/s', color: '#a855f7' },
+    { data: chartData.promptTps, label: 'Live', color: '#76B900' },
+    { data: chartData.avgPromptTps, label: 'Avg', color: '#3b82f6' },
+    { data: chartData.perReqPromptTps, label: 'Per-req', color: '#a855f7' },
   ]
 }
 
@@ -326,14 +326,16 @@ export function EngineCard({
           {showCharts && chartData && (
             <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 pt-1">
               <TimeSeriesChart
-                title="Prefill Throughput"
+                title="Prefill Throughput · tok/s"
+                tooltipLabel="Tokens / sec"
                 series={prefillTokenSeries(chartData)}
                 unit="tok/s"
                 height="clamp(72px, 13vh, 200px)"
                 requests={requestSpans}
               />
               <TimeSeriesChart
-                title="Decode Throughput"
+                title="Decode Throughput · tok/s"
+                tooltipLabel="Tokens / sec"
                 series={decodeTokenSeries(chartData)}
                 unit="tok/s"
                 height="clamp(72px, 13vh, 200px)"
