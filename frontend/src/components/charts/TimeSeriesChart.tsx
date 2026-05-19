@@ -45,6 +45,11 @@ interface TimeSeriesChartProps {
   /** Pixel number, or any CSS length (`"clamp(80px, 13vh, 120px)"`, etc.). */
   height?: number | string
   title?: string
+  /**
+   * Explicit tooltip header text. When omitted, the tooltip falls back to
+   * Recharts' default behavior (the first series' label).
+   */
+  tooltipLabel?: string
   /** Extra classes applied to the outer wrapper (e.g. grid column placement). */
   className?: string
 }
@@ -120,6 +125,7 @@ export const TimeSeriesChart = React.memo(function TimeSeriesChart({
   unit,
   height = 160,
   title,
+  tooltipLabel,
   className,
 }: TimeSeriesChartProps) {
   const isMulti = series && series.length > 0
@@ -214,7 +220,13 @@ export const TimeSeriesChart = React.memo(function TimeSeriesChart({
               axisLine={false}
             />
           )}
-          <ChartTooltip content={<ChartTooltipContent />} />
+          <ChartTooltip
+            content={
+              <ChartTooltipContent
+                labelFormatter={tooltipLabel ? () => tooltipLabel : undefined}
+              />
+            }
+          />
           {requests?.map((req, i) => (
             <ReferenceArea
               key={`req-${i}`}
