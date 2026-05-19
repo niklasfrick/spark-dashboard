@@ -186,6 +186,16 @@ pub trait EngineAdapter: Send + Sync {
 // Grace period state machine (D-09, D-10)
 // ---------------------------------------------------------------------------
 
+/// Safety-net refresh interval for cached model info. Model identity is static
+/// for a running engine, so re-resolving `/v1/models` this rarely is enough to
+/// pick up an out-of-band model swap while dropping ~99.8% of the traffic.
+const MODEL_REFRESH_INTERVAL: Duration = Duration::from_secs(600);
+
+/// Retry cooldown when nothing resolved yet (e.g. auth-gated `/v1/models` with
+/// no key and no command-line hint). Prevents a 1-second hot loop while still
+/// recovering a still-starting engine reasonably quickly.
+const MODEL_UNRESOLVED_RETRY: Duration = Duration::from_secs(30);
+
 pub struct EngineState {
     pub adapter: Box<dyn EngineAdapter>,
     pub consecutive_failures: u32,
@@ -193,6 +203,14 @@ pub struct EngineState {
     pub status: EngineStatus,
     pub stopped_at: Option<Instant>,
     pub deployment_mode: DeploymentMode,
+    /// Last successfully resolved model info. Reused every poll tick instead of
+    /// re-hitting `/v1/models`; invalidated on engine restart.
+    pub cached_model: Option<ModelInfo>,
+    /// When `cached_model` was last populated — drives the 10-minute refresh.
+    pub model_fetched_at: Option<Instant>,
+    /// When a fetch was last attempted (success or unresolved) — drives the
+    /// unresolved-retry cooldown.
+    pub model_attempted_at: Option<Instant>,
 }
 
 impl EngineState {
@@ -204,7 +222,42 @@ impl EngineState {
             status: EngineStatus::Running,
             stopped_at: None,
             deployment_mode,
+            cached_model: None,
+            model_fetched_at: None,
+            model_attempted_at: None,
         }
+    }
+
+    /// Whether `/v1/models` should be hit on this poll tick. Returns `true`
+    /// only when there is no cached model and the unresolved cooldown has
+    /// elapsed, or when the cached model is older than the refresh interval.
+    pub fn should_fetch_model(&self) -> bool {
+        match (&self.cached_model, self.model_fetched_at) {
+            (Some(_), Some(fetched)) => fetched.elapsed() >= MODEL_REFRESH_INTERVAL,
+            (Some(_), None) => true,
+            (None, _) => match self.model_attempted_at {
+                None => true,
+                Some(attempted) => attempted.elapsed() >= MODEL_UNRESOLVED_RETRY,
+            },
+        }
+    }
+
+    /// Record the outcome of a model-info fetch. Always stamps the attempt;
+    /// only updates the cache + refresh clock when something resolved.
+    pub fn cache_model(&mut self, model: Option<ModelInfo>) {
+        let now = Instant::now();
+        self.model_attempted_at = Some(now);
+        if model.is_some() {
+            self.cached_model = model;
+            self.model_fetched_at = Some(now);
+        }
+    }
+
+    /// Drop the cached model so the next successful probe re-resolves it.
+    fn invalidate_model_cache(&mut self) {
+        self.cached_model = None;
+        self.model_fetched_at = None;
+        self.model_attempted_at = None;
     }
 
     /// Update state based on the result of a health probe.
@@ -223,6 +276,9 @@ impl EngineState {
             if self.consecutive_failures >= 3 {
                 if self.stopped_at.is_none() {
                     self.stopped_at = Some(Instant::now());
+                    // Engine left Running — treat a later recovery as a
+                    // restart and re-resolve the model exactly once.
+                    self.invalidate_model_cache();
                 }
                 self.status = EngineStatus::Stopped;
             }
@@ -244,10 +300,66 @@ impl EngineState {
 // Manual override (D-11, D-12)
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct EngineOverride {
     pub engine_type: EngineType,
     pub endpoint: String,
+    /// Optional bearer token for an auth-gated endpoint. Never printed.
+    pub api_key: Option<String>,
+}
+
+// Manual Debug so the API key is never leaked into logs (the override list is
+// logged with `{:?}` at startup).
+impl std::fmt::Debug for EngineOverride {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EngineOverride")
+            .field("engine_type", &self.engine_type)
+            .field("endpoint", &self.endpoint)
+            .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// API key resolution
+// ---------------------------------------------------------------------------
+
+/// Resolves the bearer token for an engine endpoint: an explicit per-endpoint
+/// key wins, otherwise the global fallback (env / `--provider-api-key`).
+#[derive(Clone, Default)]
+pub struct ApiKeyResolver {
+    per_endpoint: HashMap<String, String>,
+    global: Option<String>,
+}
+
+impl ApiKeyResolver {
+    /// Build from index-paired `--engine-url` / `--engine-api-key` vectors plus
+    /// a global fallback. Extra keys (no matching URL) and empty keys are
+    /// ignored.
+    pub fn from_pairs(
+        engine_urls: &[String],
+        engine_api_keys: &[String],
+        global: Option<String>,
+    ) -> Self {
+        let per_endpoint = engine_urls
+            .iter()
+            .zip(engine_api_keys.iter())
+            .filter(|(_, k)| !k.is_empty())
+            .map(|(url, key)| (url.clone(), key.clone()))
+            .collect();
+        Self {
+            per_endpoint,
+            global: global.filter(|g| !g.is_empty()),
+        }
+    }
+
+    /// The key to use for `endpoint`, if any.
+    pub fn resolve(&self, endpoint: &str) -> Option<String> {
+        self.per_endpoint
+            .get(endpoint)
+            .cloned()
+            .or_else(|| self.global.clone())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -259,9 +371,12 @@ pub fn create_adapter(
     endpoint: String,
     client: reqwest::Client,
     model_hint: Option<String>,
+    api_key: Option<String>,
 ) -> Box<dyn EngineAdapter> {
     match engine_type {
-        EngineType::Vllm => Box::new(vllm::VllmAdapter::new(client, endpoint, model_hint)),
+        EngineType::Vllm => Box::new(vllm::VllmAdapter::new(
+            client, endpoint, model_hint, api_key,
+        )),
     }
 }
 
@@ -273,12 +388,16 @@ pub fn create_adapter(
 ///
 /// This function is spawned as a background tokio task. It:
 /// 1. Detects engines every 5 seconds via process scan + Docker + API probe
-/// 2. Polls each active engine every 2 seconds for health, model info, metrics
-/// 3. Maintains grace period state (3 failures -> Stopped, 30s -> removed)
-/// 4. Writes current snapshots into the shared `Arc<RwLock<Vec<EngineSnapshot>>>`
+/// 2. Polls each active engine every 1 second for health + metrics
+/// 3. Resolves model info from `/v1/models` only on first success, then reuses
+///    the cached value — re-resolving on engine restart or every 10 minutes
+///    as a safety net (model identity is static for a running engine)
+/// 4. Maintains grace period state (3 failures -> Stopped, 30s -> removed)
+/// 5. Writes current snapshots into the shared `Arc<RwLock<Vec<EngineSnapshot>>>`
 pub async fn engine_collector_loop(
     shared_snapshots: Arc<RwLock<Vec<EngineSnapshot>>>,
     overrides: Vec<EngineOverride>,
+    api_keys: ApiKeyResolver,
 ) {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(2))
@@ -295,6 +414,7 @@ pub async fn engine_collector_loop(
             ov.endpoint.clone(),
             client.clone(),
             None,
+            ov.api_key.clone(),
         );
         let key = (ov.engine_type.clone(), ov.endpoint.clone());
         engine_map.insert(key, EngineState::new(adapter, DeploymentMode::Native));
@@ -325,6 +445,7 @@ pub async fn engine_collector_loop(
                             d.endpoint.clone(),
                             client.clone(),
                             d.served_model.clone(),
+                            api_keys.resolve(&d.endpoint),
                         );
                         tracing::info!(
                             "Detected engine: {} at {} (model={:?})",
@@ -354,10 +475,18 @@ pub async fn engine_collector_loop(
                         // (may be more specific, e.g. Loading vs Running)
                         let status = if success { health } else { state.status.clone() };
 
+                        // Model identity is static for a running engine, so
+                        // only re-resolve /v1/models on first success, after a
+                        // restart, or on the 10-minute safety net. During a
+                        // transient blip keep the last-known model visible.
                         let model = if success {
-                            state.adapter.get_model_info().await
+                            if state.should_fetch_model() {
+                                let fetched = state.adapter.get_model_info().await;
+                                state.cache_model(fetched);
+                            }
+                            state.cached_model.clone()
                         } else {
-                            None
+                            state.cached_model.clone()
                         };
 
                         let metrics = if success {
@@ -386,5 +515,157 @@ pub async fn engine_collector_loop(
                 *lock = snapshots;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Minimal adapter so `EngineState` can be constructed in tests. None of
+    /// these are exercised — the cache logic under test is pure.
+    struct StubAdapter;
+
+    #[async_trait]
+    impl EngineAdapter for StubAdapter {
+        fn engine_type(&self) -> EngineType {
+            EngineType::Vllm
+        }
+        fn endpoint(&self) -> &str {
+            "http://stub:8000"
+        }
+        async fn health_check(&self) -> EngineStatus {
+            EngineStatus::Running
+        }
+        async fn get_model_info(&self) -> Option<ModelInfo> {
+            None
+        }
+        async fn get_metrics(&self) -> Option<EngineMetrics> {
+            None
+        }
+    }
+
+    fn state() -> EngineState {
+        EngineState::new(Box::new(StubAdapter), DeploymentMode::Native)
+    }
+
+    fn model(name: &str) -> ModelInfo {
+        ModelInfo {
+            name: name.to_string(),
+            parameter_size: None,
+            quantization: None,
+            precision: None,
+            tensor_type: None,
+            model_type: None,
+            pipeline_tag: None,
+        }
+    }
+
+    /// Back-date an instant by `d`; relies on CI monotonic-clock uptime.
+    fn ago(d: Duration) -> Instant {
+        Instant::now()
+            .checked_sub(d)
+            .expect("monotonic clock has enough uptime for test")
+    }
+
+    #[test]
+    fn fresh_state_fetches_model() {
+        assert!(state().should_fetch_model());
+    }
+
+    #[test]
+    fn cached_model_is_not_refetched_within_interval() {
+        let mut s = state();
+        s.cache_model(Some(model("a/b")));
+        assert!(!s.should_fetch_model());
+    }
+
+    #[test]
+    fn cached_model_refetched_after_refresh_interval() {
+        let mut s = state();
+        s.cache_model(Some(model("a/b")));
+        s.model_fetched_at = Some(ago(MODEL_REFRESH_INTERVAL + Duration::from_secs(1)));
+        assert!(s.should_fetch_model());
+    }
+
+    #[test]
+    fn unresolved_model_respects_retry_cooldown() {
+        let mut s = state();
+        s.cache_model(None);
+        assert!(!s.should_fetch_model(), "within cooldown");
+        s.model_attempted_at = Some(ago(MODEL_UNRESOLVED_RETRY + Duration::from_secs(1)));
+        assert!(s.should_fetch_model(), "cooldown elapsed");
+    }
+
+    #[test]
+    fn restart_invalidates_cached_model() {
+        let mut s = state();
+        s.cache_model(Some(model("a/b")));
+        assert!(!s.should_fetch_model());
+
+        // 3 consecutive failures => Stopped => cache cleared once.
+        s.record_probe_result(false);
+        s.record_probe_result(false);
+        s.record_probe_result(false);
+
+        assert_eq!(s.status, EngineStatus::Stopped);
+        assert!(s.cached_model.is_none());
+        assert!(s.should_fetch_model());
+    }
+
+    #[test]
+    fn successful_probe_keeps_model_cache() {
+        let mut s = state();
+        s.cache_model(Some(model("a/b")));
+        s.record_probe_result(true);
+        assert!(s.cached_model.is_some());
+        assert!(!s.should_fetch_model());
+    }
+
+    #[test]
+    fn per_endpoint_key_wins_over_global() {
+        let r = ApiKeyResolver::from_pairs(
+            &["http://a:8000".into(), "http://b:8001".into()],
+            &["key-a".into(), "key-b".into()],
+            Some("global".into()),
+        );
+        assert_eq!(r.resolve("http://a:8000"), Some("key-a".into()));
+        assert_eq!(r.resolve("http://b:8001"), Some("key-b".into()));
+    }
+
+    #[test]
+    fn global_key_used_when_endpoint_unpaired() {
+        let r = ApiKeyResolver::from_pairs(
+            &["http://a:8000".into()],
+            &["key-a".into()],
+            Some("global".into()),
+        );
+        assert_eq!(r.resolve("http://detected:9000"), Some("global".into()));
+    }
+
+    #[test]
+    fn no_key_resolves_to_none() {
+        let r = ApiKeyResolver::from_pairs(&[], &[], None);
+        assert_eq!(r.resolve("http://a:8000"), None);
+    }
+
+    #[test]
+    fn empty_keys_are_ignored() {
+        let r =
+            ApiKeyResolver::from_pairs(&["http://a:8000".into()], &["".into()], Some("".into()));
+        assert_eq!(r.resolve("http://a:8000"), None);
+    }
+
+    #[test]
+    fn create_adapter_accepts_optional_key() {
+        let client = reqwest::Client::new();
+        let _with = create_adapter(
+            EngineType::Vllm,
+            "http://a:8000".into(),
+            client.clone(),
+            None,
+            Some("k".into()),
+        );
+        let _without = create_adapter(EngineType::Vllm, "http://a:8000".into(), client, None, None);
     }
 }

@@ -63,6 +63,37 @@ Legacy `SPARK_USER` / `SPARK_HOST` / `SPARK_DIR` are still accepted as a
 fallback when `DEPLOY_*` are unset; you'll see a one-line deprecation note on
 startup.
 
+## Optional environment variables
+
+| Variable                           | Purpose                                                                  |
+|------------------------------------|--------------------------------------------------------------------------|
+| `SPARK_DASHBOARD_PROVIDER_API_KEY` | Fallback API key for auth-gated engines. Forwarded to the remote backend. |
+
+### Testing against an auth-gated vLLM
+
+If vLLM is started with `--api-key`, the dashboard's `/v1/models` lookup
+returns `401 Unauthorized` and the engine logs fill with auth errors. To test
+the fix in the dev loop:
+
+1. Add the key to your repo-root `.env`:
+
+   ```bash
+   SPARK_DASHBOARD_PROVIDER_API_KEY=your-vllm-api-key
+   ```
+
+2. Restart `./dev/dev.sh`. On backend start you'll see
+   `==> Forwarding SPARK_DASHBOARD_PROVIDER_API_KEY to backend`.
+3. In the streamed remote log (`/tmp/spark-dashboard.log`) and the vLLM
+   container log, confirm `/v1/models` now returns `200` once, then is **not**
+   hit again every second — it is cached and re-resolved only on engine
+   restart or every 10 minutes. Without a key the dashboard falls back to the
+   launch-command model name and stops the per-second 401 retry storm.
+
+This forwards the **global** key, which also covers auto-detected engines. For
+per-endpoint keys across multiple engines, run the binary with `--engine-url`
++ `--engine-api-key` (see the main
+[README CLI options](../README.md#cli-options)).
+
 ## Prerequisites
 
 - **Local machine**: Node.js 20+, npm, rsync, ssh

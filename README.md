@@ -80,7 +80,7 @@ for details on what each script does.
 │                      │                                  │                    │
 │  Tokio tasks:        │                                  │  useMetrics hook   │
 │  ├─ metrics_collector│  broadcast channel (capacity 16) │  ├─ WebSocket conn │
-│  │  (GPU/CPU/mem/…) ─┼──▶ tx ──▶ ws_handler ──▶ client │  ├─ batch flush 2s │
+│  │  (GPU/CPU/mem/…) ─┼──▶ tx ──▶ ws_handler ──▶ client  │  ├─ batch flush 2s │
 │  └─ engine_collector │                                  │  └─ circular bufs  │
 │     (vLLM/Docker)    │                                  │                    │
 │                      │  Static files (rust-embed)       │  Recharts, Tailwind│
@@ -173,7 +173,7 @@ sudo spark-dashboard service status       # same as `systemctl status`
 
 Optional overrides live in `/etc/spark-dashboard/config.env` — set
 `SPARK_DASHBOARD_PORT`, `SPARK_DASHBOARD_BIND`, `SPARK_DASHBOARD_POLL_INTERVAL`,
-`SPARK_DASHBOARD_GPU_INDEX`, or `RUST_LOG`, then
+`SPARK_DASHBOARD_GPU_INDEX`, `SPARK_DASHBOARD_PROVIDER_API_KEY`, or `RUST_LOG`, then
 `sudo systemctl restart spark-dashboard`.
 
 ### Upgrade
@@ -210,11 +210,20 @@ spark-dashboard service status
       --gpu-index <IDX>       NVML GPU index to monitor [default: 0] [env: SPARK_DASHBOARD_GPU_INDEX]
       --engine <TYPE>         Manual engine type (e.g. vllm)
       --engine-url <URL>      Manual engine endpoint (requires --engine)
+      --engine-api-key <KEY>  API key for an endpoint, paired by index with --engine-url
+      --provider-api-key <KEY> Fallback API key for any endpoint [env: SPARK_DASHBOARD_PROVIDER_API_KEY]
 ```
 
 On multi-GPU hosts use `--gpu-index` to select which device the dashboard
 monitors. Engines are auto-detected via process scan and Docker API. Use
 `--engine` and `--engine-url` to override when auto-detection doesn't work.
+
+For auth-gated deployments (e.g. vLLM started with `--api-key`), pass
+`--engine-api-key` (index-paired with `--engine-url`) or set
+`SPARK_DASHBOARD_PROVIDER_API_KEY` as a global fallback covering auto-detected
+engines too. Model info is resolved from `/v1/models` once and cached —
+re-resolved only on engine restart or every 10 minutes — so an auth-gated
+engine is no longer hit on every poll tick.
 
 ## Development
 

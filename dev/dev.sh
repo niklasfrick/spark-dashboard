@@ -106,7 +106,16 @@ rebuild_backend() {
     ssh "${REMOTE}" "${REMOTE_ENV} pkill -f '[t]arget/release/spark-dashboard' || true"
     if ssh "${REMOTE}" "${REMOTE_ENV} cd ${DEPLOY_DIR} && cargo build --release"; then
         echo "==> Starting backend..."
-        ssh "${REMOTE}" "cd ${DEPLOY_DIR} && > /tmp/spark-dashboard.log && (nohup ./target/release/spark-dashboard >> /tmp/spark-dashboard.log 2>&1 < /dev/null &) &"
+        # Forward operator env from the local .env into the remote launch.
+        # SPARK_DASHBOARD_PROVIDER_API_KEY unlocks auth-gated /v1/models on
+        # auto-detected engines (the binary reads it via clap `env=`).
+        # printf %q escapes the value for safe re-parsing by the remote shell.
+        backend_env=""
+        if [ -n "${SPARK_DASHBOARD_PROVIDER_API_KEY:-}" ]; then
+            backend_env="SPARK_DASHBOARD_PROVIDER_API_KEY=$(printf %q "${SPARK_DASHBOARD_PROVIDER_API_KEY}") "
+            echo "==> Forwarding SPARK_DASHBOARD_PROVIDER_API_KEY to backend"
+        fi
+        ssh "${REMOTE}" "cd ${DEPLOY_DIR} && > /tmp/spark-dashboard.log && (nohup env ${backend_env}./target/release/spark-dashboard >> /tmp/spark-dashboard.log 2>&1 < /dev/null &) &"
         echo "==> Backend running"
     else
         echo "!!! Backend build failed"
