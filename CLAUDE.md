@@ -6,7 +6,7 @@ Project-specific. Global rules in `~/.claude/rules/` still apply.
 
 - `main` is protected. No direct pushes. Every change goes through a PR.
 - Branch name: `<type>/<slug>` (`feat/...`, `fix/...`, `docs/...`).
-- Squash-merge PR title = the commit on `main` → it must be a valid Conventional Commit.
+- **Rebase-merge** PRs (never squash) so every commit lands individually on `main` and appears in the release notes. **Every commit** must be a valid Conventional Commit, not just the PR title.
 - All `ci.yml` jobs (rust, frontend, installer) must pass before merge.
 
 ## Commits drive releases
@@ -19,6 +19,8 @@ Project-specific. Global rules in `~/.claude/rules/` still apply.
 | `fix:`                                                     | patch                           |
 | `feat!:` / `BREAKING CHANGE:`                              | minor (becomes major after 1.0) |
 | `chore`, `docs`, `refactor`, `test`, `ci`, `perf`, `style` | none                            |
+
+"Bump" is version impact only — `chore`/`deps` still appear in the changelog under "Dependencies & Chores" (see `changelog-sections` in `release-please-config.json`); only `docs`/`style`/`refactor`/`test`/`build`/`ci` stay hidden.
 
 Tags: `vX.Y.Z`. After merge, release-please opens a rolling release PR; merging it tags + triggers `publish.yml` (`cargo publish`).
 
