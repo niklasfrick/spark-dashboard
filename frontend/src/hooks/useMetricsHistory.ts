@@ -113,6 +113,7 @@ export function useMetricsHistory(
           perReqTps: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
           ttft: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
           kvCache: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
+          prefixCacheHit: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
           e2eLatency: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
           promptTps: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
           avgPromptTps: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
@@ -152,6 +153,12 @@ export function useMetricsHistory(
           eb.kvCache.push({
             timestamp: ts,
             value: engine.metrics.kv_cache_percent,
+          })
+        }
+        if (engine.metrics.prefix_cache_hit_rate !== null) {
+          eb.prefixCacheHit.push({
+            timestamp: ts,
+            value: engine.metrics.prefix_cache_hit_rate,
           })
         }
         if (engine.metrics.e2e_latency_ms !== null) {
