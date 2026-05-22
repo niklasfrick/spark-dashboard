@@ -1,0 +1,27 @@
+services:
+  spark-dashboard:
+    build: .
+    container_name: spark-dashboard
+    # Use host network to access vLLM containers running with host networking
+    network_mode: host
+    # GPU passthrough — requires NVIDIA Container Toolkit on the host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    # Docker socket — needed to discover vLLM containers running alongside
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    # Share host PID namespace — needed for process-based engine discovery
+    pid: host
+    # Add docker group (GID 988) to access the Docker socket
+    group_add:
+      - "docker"
+
+    environment:
+      - SPARK_DASHBOARD_PORT=3000
+      - SPARK_DASHBOARD_POLL_INTERVAL=1000
+    restart: unless-stopped
