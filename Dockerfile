@@ -14,9 +14,9 @@ RUN npm run build
 # cargo-chef gives honest dependency-layer caching: deps are "cooked" from
 # Cargo.toml/Cargo.lock alone, so editing src/ doesn't bust the dependency
 # layer. Replaces the dummy-frontend/dist + `|| true` cache trick.
-# Pin the bookworm variant so the binary's glibc matches the bookworm runtime
-# stage below (the default rust:slim tracks trixie → GLIBC_2.38 not found).
-FROM rust:1.95-slim-bookworm AS chef
+# rust:<v>-slim and the runtime stage below both track Debian trixie, so their
+# glibc matches — keep these two in lockstep when bumping the Debian release.
+FROM rust:1.96-slim AS chef
 RUN cargo install cargo-chef --locked
 WORKDIR /app
 
@@ -40,7 +40,7 @@ COPY --from=frontend /app/frontend/dist ./frontend/dist/
 RUN cargo build --release --locked
 
 # ---------- stage: runtime ----------
-FROM debian:bookworm-slim AS runtime
+FROM debian:trixie-slim AS runtime
 
 # OCI image metadata. revision/version are injected at build time (see the
 # docker-publish workflow / docker-compose build args).

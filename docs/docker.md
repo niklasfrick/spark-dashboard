@@ -146,7 +146,7 @@ deliberately permissive:
   `:ro`, but socket access is still powerful; only run this on hosts you trust.
 
 The image itself is hardened: it runs as a non-root user (uid 10001) on
-`debian:bookworm-slim`, mirroring the systemd profile's `User=spark-dashboard`.
+`debian:trixie-slim`, mirroring the systemd profile's `User=spark-dashboard`.
 
 ## Updating
 
