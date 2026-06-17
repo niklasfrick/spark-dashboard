@@ -44,6 +44,12 @@ cd frontend && npm run build && npm test -- --run
 
 If both stacks changed, run both blocks. If embedded assets changed, build the frontend first (`rust-embed` needs `frontend/dist/`).
 
+Docker changes (`Dockerfile`, `docker-compose*.yml`):
+
+```bash
+./dev/docker-dev.sh --build-local   # buildx multi-stage build smoke test (no GPU)
+```
+
 ## Metrics contract (Rust ↔ frontend)
 
 When you change `MemoryMetrics`/`GpuMetrics`/`CpuMetrics` shape, serde names, display logic, or fields — update all of these in the same PR:
