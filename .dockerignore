@@ -1,0 +1,15 @@
+/target/
+/frontend/node_modules/
+/frontend/dist/
+.env
+.env.local
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+.claude/
+.gstack/
+.git/
+docs/
+dev/

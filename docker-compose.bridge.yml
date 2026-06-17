@@ -1,0 +1,14 @@
+# Opt-in bridge networking override. Use with:
+#   docker compose -f docker-compose.yml -f docker-compose.bridge.yml up -d
+#
+# Trades away host-network engine discovery (vLLM bound to the host network
+# won't be auto-detected) for network isolation. Reach host services via
+# host.docker.internal. pid:host is inherited from the base file, so
+# container-based engine discovery via the Docker socket still works.
+services:
+  spark-dashboard:
+    network_mode: bridge
+    ports:
+      - "${SPARK_DASHBOARD_PORT:-3000}:${SPARK_DASHBOARD_PORT:-3000}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
