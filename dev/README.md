@@ -47,6 +47,31 @@ Off by default because each save triggers a full `npm run build` plus
 use `:5173` (Vite, instant HMR) and only enable this flag when you specifically
 need the embedded bundle to stay current.
 
+### `./dev/docker-dev.sh` — containerized deployment loop
+
+Peer to `dev.sh`, but exercises the containerized path: builds the multi-stage
+Dockerfile, deploys via `docker compose` on the remote host, and tails logs.
+Uses the same `DEPLOY_USER` / `DEPLOY_HOST` / `DEPLOY_DIR` as `dev.sh`.
+
+```bash
+./dev/docker-dev.sh --build-local       # buildx --platform linux/arm64 --load (Mac)
+./dev/docker-dev.sh --deploy-remote     # rsync + compose build/up on DGX Spark
+./dev/docker-dev.sh --deploy-ghcr       # multi-arch buildx --push, remote pulls
+./dev/docker-dev.sh --logs              # docker compose logs -f on the remote
+./dev/docker-dev.sh --down              # docker compose down on the remote
+```
+
+`--build-local` validates the Dockerfile end-to-end on macOS without GPU access
+(no NVML, no `--gpus`). `--deploy-remote` is the full runtime test on the DGX
+Spark — confirms GPU passthrough, `/var/run/docker.sock` mount, `pid:host`, and
+engine discovery. `--deploy-ghcr` mirrors the eventual release path (multi-arch
+image published to GHCR, then `docker compose pull` on the remote).
+
+Set `DOCKER_GID` in your repo-root `.env` to the **remote** host's docker group
+GID (`getent group docker | cut -d: -f3`) — `.env` is rsynced to the remote, and
+compose adds that GID so the container can read the Docker socket for engine
+discovery. See [`.env.docker.example`](../.env.docker.example).
+
 ## Required environment variables
 
 | Variable           | Purpose                                                      |
