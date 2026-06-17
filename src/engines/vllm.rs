@@ -174,12 +174,24 @@ impl VllmAdapter {
         let resp = match hf_client.get(&url).send().await {
             Ok(r) if r.status().is_success() => r,
             Ok(r) => {
-                tracing::warn!(
-                    endpoint = %self.endpoint,
-                    model_id = %model_id,
-                    status = %r.status(),
-                    "HF model info API returned non-success",
-                );
+                let status = r.status();
+                if is_expected_hf_miss(status.as_u16()) {
+                    // Not a public HF repo (local/custom serve name or gated
+                    // model without a token) — expected, enrichment is optional.
+                    tracing::debug!(
+                        endpoint = %self.endpoint,
+                        model_id = %model_id,
+                        status = %status,
+                        "HF model info unavailable (model not public on HuggingFace); skipping enrichment",
+                    );
+                } else {
+                    tracing::warn!(
+                        endpoint = %self.endpoint,
+                        model_id = %model_id,
+                        status = %status,
+                        "HF model info API returned non-success",
+                    );
+                }
                 *self.last_hf_error.lock().await = Some(Instant::now());
                 return None;
             }
@@ -260,6 +272,14 @@ impl VllmAdapter {
 
         Some(result)
     }
+}
+
+/// HuggingFace returns these statuses when a model id isn't publicly
+/// resolvable — local/custom serve names (e.g. a vLLM `--served-model-name`),
+/// or gated/private repos accessed without a token. Metadata enrichment is
+/// best-effort, so these are expected and logged at debug rather than warn.
+fn is_expected_hf_miss(status: u16) -> bool {
+    matches!(status, 401 | 403 | 404)
 }
 
 #[derive(Deserialize)]
@@ -813,6 +833,19 @@ impl EngineAdapter for VllmAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// HF enrichment misses for non-public model ids (401/403/404) are
+    /// expected and must stay quiet; other non-success statuses (e.g. 5xx,
+    /// 429) still surface as warnings.
+    #[test]
+    fn expected_hf_misses_are_quiet() {
+        for status in [401, 403, 404] {
+            assert!(is_expected_hf_miss(status), "{status} should be quiet");
+        }
+        for status in [200, 429, 500, 502, 503] {
+            assert!(!is_expected_hf_miss(status), "{status} should warn");
+        }
+    }
 
     /// Sanity check: percentiles flow from the parser through the adapter.
     /// We don't spin up an HTTP mock here — `parse_prometheus_text` is the
