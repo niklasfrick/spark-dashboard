@@ -25,6 +25,29 @@ systemctl status spark-dashboard
 The dashboard is now served on port 3000. See [Install on your Linux host](#install-on-your-linux-host-1)
 for the full guide, config overrides, and uninstall.
 
+### Run with Docker
+
+Prefer containers? Run the published multi-arch image (needs the
+[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)):
+
+```bash
+docker run --rm --gpus all --pid=host -p 3000:3000 \
+  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  ghcr.io/niklasfrick/spark-dashboard:latest
+```
+
+Or with Compose (host networking + GPU + socket mount preconfigured):
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/niklasfrick/spark-dashboard/main/docker-compose.yml
+curl -fsSL https://raw.githubusercontent.com/niklasfrick/spark-dashboard/main/.env.docker.example -o .env
+# set DOCKER_GID to your host's docker group: getent group docker | cut -d: -f3
+docker compose up -d
+```
+
+See [`docs/docker.md`](./docs/docker.md) for networking modes, GPU passthrough,
+env vars, and troubleshooting.
+
 ### Develop locally
 
 ```bash

@@ -25,6 +25,13 @@ cd frontend && npm test
 cargo test
 ```
 
+If you change the `Dockerfile` or `docker-compose*.yml`, also smoke-test the
+image build before pushing (see [`docs/docker.md`](./docs/docker.md)):
+
+```bash
+./dev/docker-dev.sh --build-local      # buildx multi-stage build, no GPU needed
+```
+
 ## Style
 
 - **Rust**: `cargo fmt` + `cargo clippy -- -D warnings` before pushing.
