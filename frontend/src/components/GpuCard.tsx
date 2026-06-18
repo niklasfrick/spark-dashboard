@@ -3,6 +3,7 @@ import { MetricRow } from './MetricRow'
 import { ArcGauge } from './gauges/ArcGauge'
 import { TimeSeriesChart } from './charts/TimeSeriesChart'
 import { formatPercent, formatPower, formatMhz } from '../lib/format'
+import { computePowerScale, powerPeak } from '../lib/gpuPower'
 import { THRESHOLDS } from '../lib/theme'
 import type { GpuMetrics } from '../types/metrics'
 import type { GpuEvent, InferenceRequest } from '../types/events'
@@ -28,9 +29,13 @@ interface GpuCardProps {
 export function GpuCard({ metrics, chartData, events, requests, showCharts = false }: GpuCardProps) {
   if (!metrics) return <MetricCard title="GPU"><p className="text-zinc-500">Waiting for data...</p></MetricCard>
 
-  const powerPercent = (metrics.power_watts !== null && metrics.power_limit_watts !== null && metrics.power_limit_watts > 0)
-    ? (metrics.power_watts / metrics.power_limit_watts) * 100
-    : 0
+  // No hardware power cap is exposed on the GB10 (unified-memory SoC), so scale
+  // the gauge against the observed peak draw when the limit is absent.
+  const powerPercent = computePowerScale(
+    metrics.power_watts,
+    metrics.power_limit_watts,
+    powerPeak(chartData?.power ?? [], metrics.power_watts),
+  ).percent
 
   // Map events for chart overlays
   const thermalEvents = events?.filter(e => e.event_type === 'thermal').map(e => ({

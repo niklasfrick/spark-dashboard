@@ -6,6 +6,7 @@ import { EngineSection } from '@/components/engines/EngineSection'
 import { useElementSize } from '@/hooks/useElementSize'
 import { THRESHOLDS } from '@/lib/theme'
 import { formatBytes, formatGiB, formatMhz, formatRate } from '@/lib/format'
+import { computePowerScale, powerPeak } from '@/lib/gpuPower'
 import type { MetricsSnapshot } from '@/types/metrics'
 import type { GpuEvent, InferenceRequest } from '@/types/events'
 
@@ -62,9 +63,14 @@ export function Dashboard({
 }: DashboardProps) {
   if (!metrics) return null
 
-  const powerPercent = (metrics.gpu.power_watts !== null && metrics.gpu.power_limit_watts !== null && metrics.gpu.power_limit_watts > 0)
-    ? (metrics.gpu.power_watts / metrics.gpu.power_limit_watts) * 100
-    : 0
+  // No hardware power cap is exposed on the GB10 (unified-memory SoC), so scale
+  // the gauge against the observed peak draw when the limit is absent.
+  const powerHistory = history.getChartData('gpuPower')
+  const powerPercent = computePowerScale(
+    metrics.gpu.power_watts,
+    metrics.gpu.power_limit_watts,
+    powerPeak(powerHistory, metrics.gpu.power_watts),
+  ).percent
 
   const memUsedPercent = metrics.memory.total_bytes > 0
     ? (metrics.memory.used_bytes / metrics.memory.total_bytes) * 100
