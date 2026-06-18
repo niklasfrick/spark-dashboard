@@ -210,7 +210,12 @@ export function SpecDecodeSection({
       <div className="grid grid-cols-2 gap-1.5 mt-0.5">
         <div className="flex flex-col gap-0.5 min-w-0">
           <span className="text-[10px] font-medium text-zinc-400 uppercase tracking-wider truncate">
-            Acceptance · TAR
+            TAR
+            {acceptanceRateLive !== null && (
+              <span className="ml-1 normal-case tracking-normal text-zinc-600">
+                {Math.round(acceptanceRateLive)}% live
+              </span>
+            )}
           </span>
           <div className="flex items-baseline">
             <span
@@ -220,11 +225,6 @@ export function SpecDecodeSection({
             </span>
             <span className="text-xs text-zinc-500 ml-1">%</span>
           </div>
-          {acceptanceRateLive !== null && (
-            <span className="text-[9px] text-zinc-500 font-mono tabular-nums tracking-tight truncate">
-              live {Math.round(acceptanceRateLive)}%
-            </span>
-          )}
         </div>
         <MetricTile
           label="Accept Len"
@@ -232,31 +232,34 @@ export function SpecDecodeSection({
           unit="tok/draft"
         />
       </div>
-      <div className="flex items-start justify-between gap-2 mt-2 min-w-0">
+      {/* Cumulative accepted/draft tokens. Each value gets its own line (label
+          above) so the abbreviated counters never clip on narrow cards, while
+          smaller fonts than the headline numbers keep the section compact. */}
+      <div className="grid grid-cols-2 gap-1.5 mt-1.5 min-w-0">
         <div className="flex flex-col gap-0.5 min-w-0">
-          <span className="text-[10px] 2xl:text-xs min-[1920px]:text-sm font-medium uppercase tracking-wider truncate text-zinc-400">
+          <span className="text-[10px] font-medium text-zinc-400 uppercase tracking-wider truncate">
             Accepted
           </span>
           <div className="flex items-baseline min-w-0">
             <AnimatedCounter
               value={acceptedTokens}
               format={formatCompactTokens}
-              className="text-base xl:text-lg 2xl:text-xl min-[1920px]:text-2xl min-[2560px]:text-3xl font-bold font-mono tabular-nums leading-none text-zinc-100 truncate"
+              className="text-sm xl:text-base 2xl:text-lg min-[1920px]:text-xl font-bold font-mono tabular-nums leading-none text-zinc-100 truncate"
             />
-            <span className="text-[10px] 2xl:text-xs ml-1 text-zinc-500">tok</span>
+            <span className="text-[10px] ml-1 text-zinc-500">tok</span>
           </div>
         </div>
-        <div className="flex flex-col gap-0.5 min-w-0 items-end text-right">
-          <span className="text-[10px] 2xl:text-xs min-[1920px]:text-sm font-medium uppercase tracking-wider truncate text-zinc-400">
+        <div className="flex flex-col gap-0.5 min-w-0">
+          <span className="text-[10px] font-medium text-zinc-400 uppercase tracking-wider truncate">
             Draft
           </span>
           <div className="flex items-baseline min-w-0">
             <AnimatedCounter
               value={draftTokens}
               format={formatCompactTokens}
-              className="text-base xl:text-lg 2xl:text-xl min-[1920px]:text-2xl min-[2560px]:text-3xl font-bold font-mono tabular-nums leading-none text-zinc-100 truncate"
+              className="text-sm xl:text-base 2xl:text-lg min-[1920px]:text-xl font-bold font-mono tabular-nums leading-none text-zinc-100 truncate"
             />
-            <span className="text-[10px] 2xl:text-xs ml-1 text-zinc-500">tok</span>
+            <span className="text-[10px] ml-1 text-zinc-500">tok</span>
           </div>
         </div>
       </div>

@@ -99,9 +99,8 @@ describe('EngineCard speculative-decoding section', () => {
       />,
     )
     expect(screen.getByText('Speculative Decoding')).toBeTruthy()
-    expect(screen.getByText('Acceptance · TAR')).toBeTruthy()
     expect(screen.getByText('72')).toBeTruthy()
-    expect(screen.getByText('live 68%')).toBeTruthy()
+    expect(screen.getByText(/68% live/)).toBeTruthy()
     expect(screen.getByText('Accept Len')).toBeTruthy()
     expect(screen.getByText('Accepted')).toBeTruthy()
     expect(screen.getByText('Draft')).toBeTruthy()
