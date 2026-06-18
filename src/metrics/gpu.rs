@@ -27,6 +27,23 @@ pub fn nvml_optional<T>(result: Result<T, NvmlError>) -> Option<T> {
     }
 }
 
+/// Resolve the GPU power limit (in milliwatts) by trying NVML sources in order
+/// of preference, returning the first supported, non-zero value.
+///
+/// On unified-memory SoCs like the DGX Spark GB10, `power_management_limit()`
+/// returns `NotSupported` (nvidia-smi shows `Pwr:Usage/Cap` as `"4W / N/A"`), so
+/// we fall through to the enforced/default/constraint limits. Some discrete GPUs
+/// or future firmware expose a cap through one of these even when the primary
+/// query is unsupported. Returns `None` when no source reports a usable limit.
+#[cfg(target_os = "linux")]
+fn resolve_power_limit_mw(device: &nvml_wrapper::Device) -> Option<u32> {
+    nvml_optional(device.power_management_limit())
+        .or_else(|| nvml_optional(device.enforced_power_limit()))
+        .or_else(|| nvml_optional(device.power_management_limit_default()))
+        .or_else(|| nvml_optional(device.power_management_limit_constraints()).map(|c| c.max_limit))
+        .filter(|&mw| mw > 0)
+}
+
 /// Collect GPU metrics from an NVML device.
 /// Returns all-None GpuMetrics when no device is available.
 #[cfg(target_os = "linux")]
@@ -55,8 +72,7 @@ pub fn collect_gpu_metrics(device: &Option<nvml_wrapper::Device>) -> GpuMetrics 
 
     // NVML returns milliwatts, convert to watts as f64
     let power_watts = nvml_optional(device.power_usage()).map(|mw| mw as f64 / 1000.0);
-    let power_limit_watts =
-        nvml_optional(device.power_management_limit()).map(|mw| mw as f64 / 1000.0);
+    let power_limit_watts = resolve_power_limit_mw(device).map(|mw| mw as f64 / 1000.0);
 
     // Each clock query wrapped individually -- memory clock may be N/A on some GPUs
     let clock_graphics_mhz =
