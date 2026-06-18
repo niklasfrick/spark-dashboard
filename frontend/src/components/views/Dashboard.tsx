@@ -1,7 +1,9 @@
 import { ArcGauge, type GaugeSegment } from '@/components/gauges/ArcGauge'
+import { HBar } from '@/components/gauges/HBar'
 import { CoreHeatmap } from '@/components/charts/CoreHeatmap'
 import { TimeSeriesChart } from '@/components/charts/TimeSeriesChart'
 import { EngineSection } from '@/components/engines/EngineSection'
+import { useElementSize } from '@/hooks/useElementSize'
 import { THRESHOLDS } from '@/lib/theme'
 import { formatBytes, formatGiB, formatMhz, formatRate } from '@/lib/format'
 import type { MetricsSnapshot } from '@/types/metrics'
@@ -37,6 +39,20 @@ function HwCard({ title, subtitle, children }: { title?: string; subtitle?: stri
  *  cramped screens (13" laptops); upper bounds let big monitors breathe. */
 const HW_CHART_HEIGHT = 'clamp(28px, 7vh, 140px)'
 const HW_GAUGE_PX = 'clamp(36px, 5vw, 96px)'
+
+/** Number of hardware cards in the grid (used to estimate per-card height). */
+const HW_CARD_COUNT = 8
+/** Below this per-card height (px) the cards drop their line charts and swap
+ *  square gauges for compact horizontal bars, so the dashboard stays a
+ *  one-pager when vertical space is tight. */
+const HW_COMPACT_HEIGHT_PX = 124
+/** Below this dashboard-content height (px) the engine section drops its
+ *  per-metric trend charts. The engine block is content-sized (shrink-0), so on
+ *  short viewports its charts would otherwise crowd the hardware grid off-screen
+ *  — hiding them frees the room the hardware cards need to stay visible. Keyed
+ *  off the (viewport-driven, content-independent) root height so it cannot
+ *  feedback-loop with the hardware per-card measurement below. */
+const ENGINE_CHARTS_MIN_HEIGHT_PX = 640
 
 export function Dashboard({
   metrics,
@@ -100,13 +116,30 @@ export function Dashboard({
   const NET_RX_COLOR = '#3B82F6'
   const NET_TX_COLOR = '#A855F7'
 
+  // Measure the hardware grid to adapt to available *vertical* space. The grid
+  // uses auto-rows-fr, so per-card height depends only on the container height
+  // and the column count (2 below the `sm` breakpoint, 4 at/above it) — not on
+  // card content, which keeps this free of layout feedback loops. `compact`
+  // stays false until measured (height 0) so the full layout renders first.
+  const [hwGridRef, hwGridSize] = useElementSize<HTMLDivElement>()
+  const hwCols = hwGridSize.width >= 640 ? 4 : 2
+  const hwRows = Math.ceil(HW_CARD_COUNT / hwCols)
+  const perCardHeight =
+    hwGridSize.height > 0 ? (hwGridSize.height - (hwRows - 1) * 6) / hwRows : 0
+  const compact = perCardHeight > 0 && perCardHeight < HW_COMPACT_HEIGHT_PX
+
+  // Engine trend charts collapse on short viewports (see constant). Default to
+  // showing them until the root is measured (height 0).
+  const [rootRef, rootSize] = useElementSize<HTMLDivElement>()
+  const showEngineCharts = rootSize.height === 0 || rootSize.height >= ENGINE_CHARTS_MIN_HEIGHT_PX
+
   return (
-    <div className="flex flex-col flex-1 min-h-0 gap-2">
+    <div ref={rootRef} className="flex flex-col flex-1 min-h-0 gap-2">
       {/* ── LLM Engines — auto-height, fits content; hardware fills remainder ── */}
       <div className="shrink-0 min-h-0">
         <EngineSection
           engines={metrics.engines}
-          showCharts={true}
+          showCharts={showEngineCharts}
           getChartData={history.getChartData}
           requests={requests}
         />
@@ -114,127 +147,186 @@ export function Dashboard({
 
       {/* ── Hardware Overview — fills the rest of the viewport ── */}
       <div className="flex-1 min-h-0 bg-[#0a0a0d]/80 rounded-xl border border-white/[0.03] p-1 lg:p-1.5 2xl:p-2 flex flex-col">
-        <div className="flex-1 min-h-0 grid grid-cols-2 sm:grid-cols-4 gap-1 lg:gap-1.5 auto-rows-fr">
+        <div ref={hwGridRef} className="flex-1 min-h-0 grid grid-cols-2 sm:grid-cols-4 gap-1 lg:gap-1.5 auto-rows-fr">
 
           {/* GPU Utilization */}
           <HwCard title="GPU Utilization" subtitle={metrics.gpu.name ?? undefined}>
-            <div className="flex items-center gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
-              <ArcGauge value={metrics.gpu.utilization_percent ?? 0} label="GPU Util" unit="%" size={HW_GAUGE_PX} />
-              <div className="flex-1 min-w-0">
-                <TimeSeriesChart data={history.getChartData('gpuUtil')} yDomain={[0, 100]} unit="%" events={allEvents} requests={requestSpans} height={HW_CHART_HEIGHT} />
+            {compact ? (
+              <HBar value={metrics.gpu.utilization_percent ?? 0} label="GPU Util" unit="%" />
+            ) : (
+              <div className="flex items-center gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
+                <ArcGauge value={metrics.gpu.utilization_percent ?? 0} label="GPU Util" unit="%" size={HW_GAUGE_PX} />
+                <div className="flex-1 min-w-0">
+                  <TimeSeriesChart data={history.getChartData('gpuUtil')} yDomain={[0, 100]} unit="%" events={allEvents} requests={requestSpans} height={HW_CHART_HEIGHT} />
+                </div>
               </div>
-            </div>
+            )}
           </HwCard>
 
           {/* GPU Temperature */}
           <HwCard title="GPU Temp" subtitle={metrics.gpu.name ?? undefined}>
-            <div className="flex items-center gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
-              <ArcGauge value={metrics.gpu.temperature_celsius ?? 0} label="GPU Temp" unit="°C" thresholds={THRESHOLDS.gpuTemp} size={HW_GAUGE_PX} />
-              <div className="flex-1 min-w-0">
-                <TimeSeriesChart data={history.getChartData('gpuTemp')} yDomain={[0, 100]} unit="°C" height={HW_CHART_HEIGHT} />
+            {compact ? (
+              <HBar value={metrics.gpu.temperature_celsius ?? 0} label="GPU Temp" unit="°C" thresholds={THRESHOLDS.gpuTemp} />
+            ) : (
+              <div className="flex items-center gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
+                <ArcGauge value={metrics.gpu.temperature_celsius ?? 0} label="GPU Temp" unit="°C" thresholds={THRESHOLDS.gpuTemp} size={HW_GAUGE_PX} />
+                <div className="flex-1 min-w-0">
+                  <TimeSeriesChart data={history.getChartData('gpuTemp')} yDomain={[0, 100]} unit="°C" height={HW_CHART_HEIGHT} />
+                </div>
               </div>
-            </div>
+            )}
           </HwCard>
 
           {/* GPU Power */}
           <HwCard title="GPU Power" subtitle={metrics.gpu.name ?? undefined}>
-            <div className="flex items-center gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
-              <ArcGauge
+            {compact ? (
+              <HBar
                 value={powerPercent}
                 label="GPU Power"
                 unit="W"
                 thresholds={THRESHOLDS.gpuPower}
                 displayValue={metrics.gpu.power_watts !== null ? Math.round(metrics.gpu.power_watts) : 0}
-                size={HW_GAUGE_PX}
               />
-              <div className="flex-1 min-w-0">
-                <TimeSeriesChart data={history.getChartData('gpuPower')} unit="W" height={HW_CHART_HEIGHT} />
+            ) : (
+              <div className="flex items-center gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
+                <ArcGauge
+                  value={powerPercent}
+                  label="GPU Power"
+                  unit="W"
+                  thresholds={THRESHOLDS.gpuPower}
+                  displayValue={metrics.gpu.power_watts !== null ? Math.round(metrics.gpu.power_watts) : 0}
+                  size={HW_GAUGE_PX}
+                />
+                <div className="flex-1 min-w-0">
+                  <TimeSeriesChart data={history.getChartData('gpuPower')} unit="W" height={HW_CHART_HEIGHT} />
+                </div>
               </div>
-            </div>
+            )}
           </HwCard>
 
           {/* GPU Clock */}
           <HwCard title="GPU Clock" subtitle={metrics.gpu.name ?? undefined}>
-            <div className="flex items-center gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
-              <div className="flex flex-col items-center justify-center shrink-0" style={{ width: HW_GAUGE_PX, height: HW_GAUGE_PX }}>
-                <span className="text-sm 2xl:text-base min-[1920px]:text-lg font-bold text-zinc-100 font-mono">{formatMhz(metrics.gpu.clock_graphics_mhz)}</span>
+            {compact ? (
+              <div className="flex items-baseline justify-between gap-2 min-w-0">
+                <span className="text-[9px] lg:text-[10px] text-zinc-400 uppercase tracking-wider truncate">Graphics</span>
+                <span className="ml-auto shrink-0 text-xs lg:text-sm 2xl:text-base font-bold text-zinc-100 font-mono tabular-nums">{formatMhz(metrics.gpu.clock_graphics_mhz)}</span>
               </div>
-              <div className="flex-1 min-w-0">
-                <TimeSeriesChart data={history.getChartData('gpuClockGraphics')} unit="MHz" height={HW_CHART_HEIGHT} />
+            ) : (
+              <div className="flex items-center gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
+                <div className="flex flex-col items-center justify-center shrink-0" style={{ width: HW_GAUGE_PX, height: HW_GAUGE_PX }}>
+                  <span className="text-sm 2xl:text-base min-[1920px]:text-lg font-bold text-zinc-100 font-mono">{formatMhz(metrics.gpu.clock_graphics_mhz)}</span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <TimeSeriesChart data={history.getChartData('gpuClockGraphics')} unit="MHz" height={HW_CHART_HEIGHT} />
+                </div>
               </div>
-            </div>
+            )}
           </HwCard>
 
           {/* CPU */}
           <HwCard title="CPU" subtitle={metrics.cpu.name ?? undefined}>
-            <div className="flex items-center gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
-              <ArcGauge value={metrics.cpu.aggregate_percent} label="CPU" unit="%" thresholds={THRESHOLDS.cpuUsage} size={HW_GAUGE_PX} />
-              <div className="flex-1 min-w-0">
-                <TimeSeriesChart data={history.getChartData('cpuAggregate')} yDomain={[0, 100]} unit="%" height={HW_CHART_HEIGHT} />
+            {compact ? (
+              <HBar value={metrics.cpu.aggregate_percent} label="CPU" unit="%" thresholds={THRESHOLDS.cpuUsage} />
+            ) : (
+              <div className="flex items-center gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
+                <ArcGauge value={metrics.cpu.aggregate_percent} label="CPU" unit="%" thresholds={THRESHOLDS.cpuUsage} size={HW_GAUGE_PX} />
+                <div className="flex-1 min-w-0">
+                  <TimeSeriesChart data={history.getChartData('cpuAggregate')} yDomain={[0, 100]} unit="%" height={HW_CHART_HEIGHT} />
+                </div>
               </div>
-            </div>
-            {metrics.cpu.per_core.length > 0 && <CoreHeatmap cores={metrics.cpu.per_core} />}
+            )}
+            {!compact && metrics.cpu.per_core.length > 0 && <CoreHeatmap cores={metrics.cpu.per_core} />}
           </HwCard>
 
           {/* Memory */}
           <HwCard title="Memory" subtitle={`${totalGB} Unified`}>
-            <div className="flex items-center justify-center min-h-0 flex-1 overflow-hidden">
-              <ArcGauge value={memUsedPercent} label="" unit="%" segments={memorySegments} size={HW_GAUGE_PX} />
-            </div>
+            {compact ? (
+              <HBar value={memUsedPercent} label="" unit="%" segments={memorySegments} />
+            ) : (
+              <div className="flex items-center justify-center min-h-0 flex-1 overflow-hidden">
+                <ArcGauge value={memUsedPercent} label="" unit="%" segments={memorySegments} size={HW_GAUGE_PX} />
+              </div>
+            )}
           </HwCard>
 
           {/* Disk I/O */}
           <HwCard title="Disk I/O" subtitle={metrics.disk.name ?? undefined}>
-            <div className="flex items-center gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
-              <div className="flex flex-col items-center justify-center gap-0.5 shrink-0" style={{ width: HW_GAUGE_PX, height: HW_GAUGE_PX }}>
-                <div className="flex items-baseline gap-1">
-                  <span className="text-[9px] 2xl:text-[10px] min-[1920px]:text-xs text-zinc-500">R</span>
-                  <span className="text-xs 2xl:text-sm min-[1920px]:text-base font-bold text-zinc-100 font-mono">{formatRate(metrics.disk.read_bytes_per_sec)}</span>
+            {compact ? (
+              <div className="flex items-baseline justify-between gap-2 min-w-0 font-mono">
+                <span className="flex items-baseline gap-1 min-w-0">
+                  <span className="text-[9px] lg:text-[10px] text-zinc-500">R</span>
+                  <span className="text-xs lg:text-sm font-bold text-zinc-100 tabular-nums truncate">{formatRate(metrics.disk.read_bytes_per_sec)}</span>
+                </span>
+                <span className="flex items-baseline gap-1 min-w-0">
+                  <span className="text-[9px] lg:text-[10px] text-zinc-500">W</span>
+                  <span className="text-xs lg:text-sm font-bold text-zinc-100 tabular-nums truncate">{formatRate(metrics.disk.write_bytes_per_sec)}</span>
+                </span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
+                <div className="flex flex-col items-center justify-center gap-0.5 shrink-0" style={{ width: HW_GAUGE_PX, height: HW_GAUGE_PX }}>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-[9px] 2xl:text-[10px] min-[1920px]:text-xs text-zinc-500">R</span>
+                    <span className="text-xs 2xl:text-sm min-[1920px]:text-base font-bold text-zinc-100 font-mono">{formatRate(metrics.disk.read_bytes_per_sec)}</span>
+                  </div>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-[9px] 2xl:text-[10px] min-[1920px]:text-xs text-zinc-500">W</span>
+                    <span className="text-xs 2xl:text-sm min-[1920px]:text-base font-bold text-zinc-100 font-mono">{formatRate(metrics.disk.write_bytes_per_sec)}</span>
+                  </div>
                 </div>
-                <div className="flex items-baseline gap-1">
-                  <span className="text-[9px] 2xl:text-[10px] min-[1920px]:text-xs text-zinc-500">W</span>
-                  <span className="text-xs 2xl:text-sm min-[1920px]:text-base font-bold text-zinc-100 font-mono">{formatRate(metrics.disk.write_bytes_per_sec)}</span>
+                <div className="flex-1 min-w-0">
+                  <TimeSeriesChart
+                    series={[
+                      { data: diskTotal, label: 'Total', color: TOTAL_COLOR },
+                      { data: diskRead, label: 'Read', color: DISK_READ_COLOR },
+                      { data: diskWrite, label: 'Write', color: DISK_WRITE_COLOR },
+                    ]}
+                    unit="B/s"
+                    height={HW_CHART_HEIGHT}
+                  />
                 </div>
               </div>
-              <div className="flex-1 min-w-0">
-                <TimeSeriesChart
-                  series={[
-                    { data: diskTotal, label: 'Total', color: TOTAL_COLOR },
-                    { data: diskRead, label: 'Read', color: DISK_READ_COLOR },
-                    { data: diskWrite, label: 'Write', color: DISK_WRITE_COLOR },
-                  ]}
-                  unit="B/s"
-                  height={HW_CHART_HEIGHT}
-                />
-              </div>
-            </div>
+            )}
           </HwCard>
 
           {/* Network I/O */}
           <HwCard title="Network" subtitle={metrics.network.name ?? undefined}>
-            <div className="flex items-center gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
-              <div className="flex flex-col items-center justify-center gap-0.5 shrink-0" style={{ width: HW_GAUGE_PX, height: HW_GAUGE_PX }}>
-                <div className="flex items-baseline gap-1">
-                  <span className="text-[9px] 2xl:text-[10px] min-[1920px]:text-xs text-zinc-500">RX</span>
-                  <span className="text-xs 2xl:text-sm min-[1920px]:text-base font-bold text-zinc-100 font-mono">{formatRate(metrics.network.rx_bytes_per_sec)}</span>
+            {compact ? (
+              <div className="flex items-baseline justify-between gap-2 min-w-0 font-mono">
+                <span className="flex items-baseline gap-1 min-w-0">
+                  <span className="text-[9px] lg:text-[10px] text-zinc-500">RX</span>
+                  <span className="text-xs lg:text-sm font-bold text-zinc-100 tabular-nums truncate">{formatRate(metrics.network.rx_bytes_per_sec)}</span>
+                </span>
+                <span className="flex items-baseline gap-1 min-w-0">
+                  <span className="text-[9px] lg:text-[10px] text-zinc-500">TX</span>
+                  <span className="text-xs lg:text-sm font-bold text-zinc-100 tabular-nums truncate">{formatRate(metrics.network.tx_bytes_per_sec)}</span>
+                </span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
+                <div className="flex flex-col items-center justify-center gap-0.5 shrink-0" style={{ width: HW_GAUGE_PX, height: HW_GAUGE_PX }}>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-[9px] 2xl:text-[10px] min-[1920px]:text-xs text-zinc-500">RX</span>
+                    <span className="text-xs 2xl:text-sm min-[1920px]:text-base font-bold text-zinc-100 font-mono">{formatRate(metrics.network.rx_bytes_per_sec)}</span>
+                  </div>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-[9px] 2xl:text-[10px] min-[1920px]:text-xs text-zinc-500">TX</span>
+                    <span className="text-xs 2xl:text-sm min-[1920px]:text-base font-bold text-zinc-100 font-mono">{formatRate(metrics.network.tx_bytes_per_sec)}</span>
+                  </div>
                 </div>
-                <div className="flex items-baseline gap-1">
-                  <span className="text-[9px] 2xl:text-[10px] min-[1920px]:text-xs text-zinc-500">TX</span>
-                  <span className="text-xs 2xl:text-sm min-[1920px]:text-base font-bold text-zinc-100 font-mono">{formatRate(metrics.network.tx_bytes_per_sec)}</span>
+                <div className="flex-1 min-w-0">
+                  <TimeSeriesChart
+                    series={[
+                      { data: networkTotal, label: 'Total', color: TOTAL_COLOR },
+                      { data: networkRx, label: 'RX', color: NET_RX_COLOR },
+                      { data: networkTx, label: 'TX', color: NET_TX_COLOR },
+                    ]}
+                    unit="B/s"
+                    height={HW_CHART_HEIGHT}
+                  />
                 </div>
               </div>
-              <div className="flex-1 min-w-0">
-                <TimeSeriesChart
-                  series={[
-                    { data: networkTotal, label: 'Total', color: TOTAL_COLOR },
-                    { data: networkRx, label: 'RX', color: NET_RX_COLOR },
-                    { data: networkTx, label: 'TX', color: NET_TX_COLOR },
-                  ]}
-                  unit="B/s"
-                  height={HW_CHART_HEIGHT}
-                />
-              </div>
-            </div>
+            )}
           </HwCard>
 
         </div>
