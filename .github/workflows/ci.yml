@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - id: filter
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@v4
         with:
           filters: |
             rust:
@@ -130,12 +130,12 @@ jobs:
             runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v6
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
       # Native per-arch build (no QEMU): confirms the multi-stage Dockerfile
       # compiles for both targets. Publishes nothing — that's docker-publish.yml.
       # amd64 loads the image so Trivy can scan it; arm64 just confirms the build.
       - name: Build image (${{ matrix.platform }})
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: ${{ matrix.platform }}
@@ -151,7 +151,7 @@ jobs:
       # Scanned once on amd64 — OS-package findings are arch-independent.
       - name: Scan image for vulnerabilities
         if: matrix.arch == 'amd64'
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: spark-dashboard:ci-amd64
           scan-type: image
