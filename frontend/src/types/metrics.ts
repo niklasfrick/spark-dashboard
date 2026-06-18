@@ -167,6 +167,23 @@ export interface EngineMetrics {
   tpot_goodput_pct: number | null
   /** Raw TPOT histogram buckets (cumulative). */
   tpot_buckets: HistogramBucket[] | null
+
+  // --- Speculative decoding ---
+  // Populated only when the served model has speculative decoding configured
+  // (vLLM emits `vllm:spec_decode_*` only then). When all are null the UI hides
+  // the speculative-decoding section entirely.
+  /** Cumulative speculatively-generated (draft) tokens. Counts up over the engine's life. */
+  spec_decode_draft_tokens_total: number | null
+  /** Cumulative draft tokens that passed verification. Counts up. */
+  spec_decode_accepted_tokens_total: number | null
+  /** Cumulative number of speculative-decode draft attempts. */
+  spec_decode_drafts_total: number | null
+  /** Lifetime token acceptance rate (TAR), percentage: accepted/draft*100. */
+  spec_decode_acceptance_rate: number | null
+  /** Live (windowed) TAR from per-poll deltas, percentage. Fluctuates with recent traffic. */
+  spec_decode_acceptance_rate_live: number | null
+  /** Mean accepted tokens per draft attempt: accepted/drafts. */
+  spec_decode_mean_acceptance_length: number | null
 }
 
 export interface EngineSnapshot {

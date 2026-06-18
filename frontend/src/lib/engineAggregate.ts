@@ -28,6 +28,16 @@ export interface AggregateSnapshot {
   total_generation_tokens: number | null
   prefix_cache_queries_total: number | null
 
+  // Speculative decoding. Cumulative counters are summed; TAR and mean
+  // acceptance length are recomputed from the aggregated sums (not averaged
+  // per-engine) so they stay correctly volume-weighted across engines.
+  spec_decode_draft_tokens_total: number | null
+  spec_decode_accepted_tokens_total: number | null
+  spec_decode_drafts_total: number | null
+  spec_decode_acceptance_rate: number | null
+  spec_decode_acceptance_rate_live: number | null
+  spec_decode_mean_acceptance_length: number | null
+
   // Weighted mean by total_requests (simple mean fallback)
   ttft_ms: number | null
   e2e_latency_ms: number | null
@@ -118,6 +128,12 @@ function emptySnapshot(totalCount: number): AggregateSnapshot {
     total_prompt_tokens: null,
     total_generation_tokens: null,
     prefix_cache_queries_total: null,
+    spec_decode_draft_tokens_total: null,
+    spec_decode_accepted_tokens_total: null,
+    spec_decode_drafts_total: null,
+    spec_decode_acceptance_rate: null,
+    spec_decode_acceptance_rate_live: null,
+    spec_decode_mean_acceptance_length: null,
     ttft_ms: null,
     e2e_latency_ms: null,
     queue_time_ms: null,
@@ -242,6 +258,15 @@ export function aggregateEngines(engines: readonly EngineSnapshot[]): AggregateS
       get(key).map((value, i) => ({ value, weight: weights[i] })),
     )
 
+  // Speculative decoding: sum the cumulative counters, then recompute TAR and
+  // mean acceptance length from the aggregated sums so they are volume-weighted
+  // across engines rather than naively averaged. ratio() guards divide-by-zero.
+  const specDraftTokens = sumOrNull(get('spec_decode_draft_tokens_total'))
+  const specAcceptedTokens = sumOrNull(get('spec_decode_accepted_tokens_total'))
+  const specDrafts = sumOrNull(get('spec_decode_drafts_total'))
+  const ratio = (num: number | null, den: number | null, scale = 1): number | null =>
+    num !== null && den !== null && den > 0 ? (num / den) * scale : null
+
   return {
     running_count: running.length,
     total_count: engines.length,
@@ -259,6 +284,26 @@ export function aggregateEngines(engines: readonly EngineSnapshot[]): AggregateS
     total_prompt_tokens: sumOrNull(get('total_prompt_tokens')),
     total_generation_tokens: sumOrNull(get('total_generation_tokens')),
     prefix_cache_queries_total: sumOrNull(get('prefix_cache_queries_total')),
+
+    // Speculative decoding — additive counters + sum-derived ratios.
+    spec_decode_draft_tokens_total: specDraftTokens,
+    spec_decode_accepted_tokens_total: specAcceptedTokens,
+    spec_decode_drafts_total: specDrafts,
+    spec_decode_acceptance_rate: ratio(specAcceptedTokens, specDraftTokens, 100),
+    // Live TAR is a per-poll rolling value with no underlying delta exposed
+    // here to re-sum, so we weight each engine's live TAR by its lifetime
+    // draft-token volume. This is an approximation: vLLM exposes no windowed
+    // draft count, so a long-running high-traffic engine biases the blend even
+    // if its current draft rate matches a newer engine. Engines without
+    // spec-decode contribute {value: null, weight: null} and are dropped by
+    // weightedMeanOrNull, so a mixed fleet blends only the spec-decode engines.
+    spec_decode_acceptance_rate_live: weightedMeanOrNull(
+      get('spec_decode_acceptance_rate_live').map((value, i) => ({
+        value,
+        weight: get('spec_decode_draft_tokens_total')[i],
+      })),
+    ),
+    spec_decode_mean_acceptance_length: ratio(specAcceptedTokens, specDrafts),
 
     // Weighted mean
     ttft_ms: weightedBy('ttft_ms'),

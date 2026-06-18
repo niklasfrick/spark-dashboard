@@ -10,6 +10,7 @@ import {
   KvBar,
   TrendArrow,
   GoodputTile,
+  SpecDecodeSection,
   computeTrend,
   fmtVal,
   fmtInt,
@@ -134,6 +135,17 @@ export function EngineCard({
   const prefixCacheHit = v('prefix_cache_hit_rate')
   const prefixCacheQueries = v('prefix_cache_queries_total')
   const preemptions = v('preemptions_total')
+  // Speculative decoding — present only when the served model has it enabled.
+  const specDraftTokens = v('spec_decode_draft_tokens_total')
+  const specAcceptedTokens = v('spec_decode_accepted_tokens_total')
+  const specAcceptanceRate = v('spec_decode_acceptance_rate')
+  const specAcceptanceRateLive = v('spec_decode_acceptance_rate_live')
+  const specMeanAcceptanceLength = v('spec_decode_mean_acceptance_length')
+  // Show the section only once the engine has actually drafted tokens. The
+  // counter is present (non-null) whenever spec decoding is configured, but it
+  // sits at 0 on a freshly-started idle engine — gating on >0 keeps the card
+  // from showing an all-dashes section until the metrics carry real values.
+  const hasSpecDecode = specDraftTokens !== null && specDraftTokens > 0
   const engineKey = `${engine.engine_type}-${engine.endpoint}`
   const modelName = engine.model?.name ?? null
   const { thresholds: slo, setThresholds: setSlo, reset: resetSlo, isCustomized: sloCustomized } =
@@ -289,9 +301,9 @@ export function EngineCard({
               </div>
             </div>
 
-            {/* Cache */}
+            {/* Cache & Speculative Decoding */}
             <div className="bg-white/[0.02] rounded-md px-3 py-2.5 2xl:px-4 2xl:py-3 min-w-0">
-              <div className="text-[11px] 2xl:text-xs min-[1920px]:text-sm font-semibold text-zinc-300 tracking-tight mb-1.5 truncate">Cache</div>
+              <div className="text-[11px] 2xl:text-xs min-[1920px]:text-sm font-semibold text-zinc-300 tracking-tight mb-1.5 truncate">Cache &amp; Speculative Decoding</div>
               <div className="grid grid-cols-2 gap-1.5">
                 <div className="flex flex-col gap-0.5 min-w-0">
                   <span className="text-[10px] font-medium text-zinc-400 uppercase tracking-wider truncate">KV Cache</span>
@@ -316,6 +328,15 @@ export function EngineCard({
                   className="text-lg xl:text-xl 2xl:text-2xl min-[1920px]:text-3xl min-[2560px]:text-4xl font-bold text-zinc-100 font-mono tabular-nums leading-none"
                 />
               </div>
+              {hasSpecDecode && (
+                <SpecDecodeSection
+                  acceptanceRate={specAcceptanceRate}
+                  acceptanceRateLive={specAcceptanceRateLive}
+                  meanAcceptanceLength={specMeanAcceptanceLength}
+                  acceptedTokens={specAcceptedTokens}
+                  draftTokens={specDraftTokens}
+                />
+              )}
             </div>
           </div>
 

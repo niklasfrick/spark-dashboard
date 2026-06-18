@@ -128,6 +128,13 @@ export function formatCompactTokens(n: number | null): string {
   return `${text}${unit.suffix}`
 }
 
+/** Format mean acceptance length (accepted tokens per draft attempt): two
+ *  decimals, e.g. "3.42". Null/non-finite/negative -> '--'. */
+export function formatAcceptanceLength(n: number | null): string {
+  if (n === null || !Number.isFinite(n) || n < 0) return '--'
+  return n.toFixed(2)
+}
+
 /** Map EngineType enum to human-readable display name. */
 export function engineDisplayName(engineType: EngineType): string {
   const names: Record<EngineType, string> = {

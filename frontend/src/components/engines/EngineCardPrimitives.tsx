@@ -5,7 +5,7 @@
  */
 
 import type { LatencyPercentiles } from '@/types/metrics'
-import { formatCompactTokens } from '@/lib/format'
+import { formatCompactTokens, formatAcceptanceLength } from '@/lib/format'
 import { AnimatedCounter } from './AnimatedCounter'
 
 export interface ChartDataPoint {
@@ -164,6 +164,104 @@ export function KvBar({ percent }: KvBarProps) {
 
 export function fmtVal(v: number | null, fmt: (n: number) => string): string {
   return v === null ? '--' : fmt(v)
+}
+
+interface SpecDecodeSectionProps {
+  /** Lifetime token acceptance rate (TAR), 0-100. */
+  acceptanceRate: number | null
+  /** Live (windowed) TAR, 0-100. Shown as a secondary line when present. */
+  acceptanceRateLive: number | null
+  /** Mean accepted tokens per draft attempt. */
+  meanAcceptanceLength: number | null
+  /** Cumulative accepted tokens (counts up). */
+  acceptedTokens: number | null
+  /** Cumulative drafted tokens (counts up). */
+  draftTokens: number | null
+}
+
+/**
+ * Speculative-decoding sub-section of the Cache card. Rendered only when the
+ * served model has speculative decoding enabled (the caller gates on metric
+ * presence). Surfaces the token acceptance rate (lifetime + live), mean
+ * acceptance length, and the cumulative accepted/draft token counters that
+ * animate upward. Higher acceptance is better, so TAR is colored green (≥70%),
+ * yellow (≥40%), else red.
+ */
+export function SpecDecodeSection({
+  acceptanceRate,
+  acceptanceRateLive,
+  meanAcceptanceLength,
+  acceptedTokens,
+  draftTokens,
+}: SpecDecodeSectionProps) {
+  const tarColor =
+    acceptanceRate === null
+      ? 'text-zinc-100'
+      : acceptanceRate >= 70
+        ? 'text-[#76B900]'
+        : acceptanceRate >= 40
+          ? 'text-yellow-400'
+          : 'text-red-400'
+  return (
+    <div className="flex flex-col gap-0.5 mt-2 pt-2 border-t border-white/[0.04] min-w-0">
+      <span className="text-[10px] 2xl:text-xs min-[1920px]:text-sm font-medium text-zinc-400 uppercase tracking-wider truncate">
+        Speculative Decoding
+      </span>
+      <div className="grid grid-cols-2 gap-1.5 mt-0.5">
+        <div className="flex flex-col gap-0.5 min-w-0">
+          <span className="text-[10px] font-medium text-zinc-400 uppercase tracking-wider truncate">
+            Acceptance · TAR
+          </span>
+          <div className="flex items-baseline">
+            <span
+              className={`text-lg xl:text-xl 2xl:text-2xl min-[1920px]:text-3xl min-[2560px]:text-4xl font-bold font-mono tabular-nums leading-none ${tarColor}`}
+            >
+              {acceptanceRate === null ? '--' : Math.round(acceptanceRate)}
+            </span>
+            <span className="text-xs text-zinc-500 ml-1">%</span>
+          </div>
+          {acceptanceRateLive !== null && (
+            <span className="text-[9px] text-zinc-500 font-mono tabular-nums tracking-tight truncate">
+              live {Math.round(acceptanceRateLive)}%
+            </span>
+          )}
+        </div>
+        <MetricTile
+          label="Accept Len"
+          value={fmtVal(meanAcceptanceLength, formatAcceptanceLength)}
+          unit="tok/draft"
+        />
+      </div>
+      <div className="flex items-start justify-between gap-2 mt-2 min-w-0">
+        <div className="flex flex-col gap-0.5 min-w-0">
+          <span className="text-[10px] 2xl:text-xs min-[1920px]:text-sm font-medium uppercase tracking-wider truncate text-zinc-400">
+            Accepted
+          </span>
+          <div className="flex items-baseline min-w-0">
+            <AnimatedCounter
+              value={acceptedTokens}
+              format={formatCompactTokens}
+              className="text-base xl:text-lg 2xl:text-xl min-[1920px]:text-2xl min-[2560px]:text-3xl font-bold font-mono tabular-nums leading-none text-zinc-100 truncate"
+            />
+            <span className="text-[10px] 2xl:text-xs ml-1 text-zinc-500">tok</span>
+          </div>
+        </div>
+        <div className="flex flex-col gap-0.5 min-w-0 items-end text-right">
+          <span className="text-[10px] 2xl:text-xs min-[1920px]:text-sm font-medium uppercase tracking-wider truncate text-zinc-400">
+            Draft
+          </span>
+          <div className="flex items-baseline min-w-0">
+            <AnimatedCounter
+              value={draftTokens}
+              format={formatCompactTokens}
+              className="text-base xl:text-lg 2xl:text-xl min-[1920px]:text-2xl min-[2560px]:text-3xl font-bold font-mono tabular-nums leading-none text-zinc-100 truncate"
+            />
+            <span className="text-[10px] 2xl:text-xs ml-1 text-zinc-500">tok</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 export function fmtInt(v: number | null): string {

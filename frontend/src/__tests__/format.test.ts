@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatBytes, formatGiB, formatCompactTokens } from '../lib/format'
+import { formatBytes, formatGiB, formatCompactTokens, formatAcceptanceLength } from '../lib/format'
 
 const GIB = 1_073_741_824
 const MIB = 1_048_576
@@ -51,5 +51,20 @@ describe('formatCompactTokens', () => {
     expect(formatCompactTokens(1_000_000)).toBe('1M')
     expect(formatCompactTokens(1_250_000_000)).toBe('1.3B')
     expect(formatCompactTokens(3.4e12)).toBe('3.4T')
+  })
+})
+
+describe('formatAcceptanceLength', () => {
+  it('renders -- for null, negative, or non-finite', () => {
+    expect(formatAcceptanceLength(null)).toBe('--')
+    expect(formatAcceptanceLength(-1)).toBe('--')
+    expect(formatAcceptanceLength(Number.NaN)).toBe('--')
+    expect(formatAcceptanceLength(Number.POSITIVE_INFINITY)).toBe('--')
+  })
+
+  it('formats accepted-tokens-per-draft to two decimals', () => {
+    expect(formatAcceptanceLength(3)).toBe('3.00')
+    expect(formatAcceptanceLength(3.4167)).toBe('3.42')
+    expect(formatAcceptanceLength(0)).toBe('0.00')
   })
 })

@@ -39,6 +39,12 @@ function fullMetrics(overrides: Partial<EngineMetrics> = {}): EngineMetrics {
     tpot_percentiles: null,
     tpot_goodput_pct: null,
     tpot_buckets: null,
+    spec_decode_draft_tokens_total: null,
+    spec_decode_accepted_tokens_total: null,
+    spec_decode_drafts_total: null,
+    spec_decode_acceptance_rate: null,
+    spec_decode_acceptance_rate_live: null,
+    spec_decode_mean_acceptance_length: null,
     ...overrides,
   }
 }
@@ -120,6 +126,73 @@ describe('aggregateEngines', () => {
     ]
     const snap = aggregateEngines(engines)
     expect(snap.prefix_cache_queries_total).toBeNull()
+  })
+
+  it('sums spec-decode counters and recomputes TAR/mean-length from the sums', () => {
+    // Deliberately UNEQUAL draft volumes so the sum-weighted TAR cannot be
+    // confused with a naive per-engine average:
+    //   Engine A: 720 accepted / 800 draft / 200 draft-attempts (TAR 90%)
+    //   Engine B:  20 accepted / 200 draft / 100 draft-attempts (TAR 10%)
+    //   sum-derived TAR = 740/1000 = 74%   (naive mean of 90,10 would be 50%)
+    //   mean acceptance length = 740/300 = 2.4667
+    const engines = [
+      engine(
+        'Running',
+        fullMetrics({
+          spec_decode_accepted_tokens_total: 720,
+          spec_decode_draft_tokens_total: 800,
+          spec_decode_drafts_total: 200,
+          spec_decode_acceptance_rate: 90,
+        }),
+      ),
+      engine(
+        'Running',
+        fullMetrics({
+          spec_decode_accepted_tokens_total: 20,
+          spec_decode_draft_tokens_total: 200,
+          spec_decode_drafts_total: 100,
+          spec_decode_acceptance_rate: 10,
+        }),
+      ),
+    ]
+    const snap = aggregateEngines(engines)
+    expect(snap.spec_decode_accepted_tokens_total).toBe(740)
+    expect(snap.spec_decode_draft_tokens_total).toBe(1_000)
+    expect(snap.spec_decode_drafts_total).toBe(300)
+    // 74, NOT the naive average of 90 and 10 (= 50).
+    expect(snap.spec_decode_acceptance_rate).toBeCloseTo(74, 5)
+    expect(snap.spec_decode_mean_acceptance_length).toBeCloseTo(740 / 300, 5)
+  })
+
+  it('blends live TAR weighted by each engine draft-token volume', () => {
+    // Engine A: live 80%, 800 draft tokens; Engine B: live 20%, 200 draft.
+    // Weighted mean = (80*800 + 20*200) / 1000 = 68.
+    const engines = [
+      engine(
+        'Running',
+        fullMetrics({
+          spec_decode_acceptance_rate_live: 80,
+          spec_decode_draft_tokens_total: 800,
+        }),
+      ),
+      engine(
+        'Running',
+        fullMetrics({
+          spec_decode_acceptance_rate_live: 20,
+          spec_decode_draft_tokens_total: 200,
+        }),
+      ),
+    ]
+    const snap = aggregateEngines(engines)
+    expect(snap.spec_decode_acceptance_rate_live).toBeCloseTo(68, 5)
+  })
+
+  it('leaves spec-decode fields null when no running engine reports them', () => {
+    const snap = aggregateEngines([engine('Running', fullMetrics())])
+    expect(snap.spec_decode_draft_tokens_total).toBeNull()
+    expect(snap.spec_decode_acceptance_rate).toBeNull()
+    expect(snap.spec_decode_acceptance_rate_live).toBeNull()
+    expect(snap.spec_decode_mean_acceptance_length).toBeNull()
   })
 
   it('weighted mean for latencies uses total_requests as the weight', () => {

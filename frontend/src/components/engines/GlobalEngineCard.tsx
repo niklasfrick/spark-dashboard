@@ -1,6 +1,6 @@
 import { formatTps, formatTtft, formatDurationMs, formatCompactTokens } from '@/lib/format'
 import type { AggregateSnapshot } from '@/lib/engineAggregate'
-import { MetricTile, LiveWithTotal, KvBar, GoodputTile, fmtVal, fmtInt } from './EngineCardPrimitives'
+import { MetricTile, LiveWithTotal, KvBar, GoodputTile, SpecDecodeSection, fmtVal, fmtInt } from './EngineCardPrimitives'
 import { AnimatedCounter } from './AnimatedCounter'
 import { type LatencyMode, latencyModeLabel, pickLatencyValue } from './LatencyModeControl'
 import { SLO, combinedGoodput } from '@/lib/slo'
@@ -49,6 +49,11 @@ export function GlobalEngineCard({ snapshot, latencyMode = 'avg' }: GlobalEngine
     kv_cache_percent,
     prefix_cache_hit_rate,
     prefix_cache_queries_total,
+    spec_decode_draft_tokens_total,
+    spec_decode_accepted_tokens_total,
+    spec_decode_acceptance_rate,
+    spec_decode_acceptance_rate_live,
+    spec_decode_mean_acceptance_length,
     ttft_percentiles,
     itl_percentiles,
     e2e_percentiles,
@@ -157,10 +162,10 @@ export function GlobalEngineCard({ snapshot, latencyMode = 'avg' }: GlobalEngine
           </div>
         </div>
 
-        {/* Cache */}
+        {/* Cache & Speculative Decoding */}
         <div className="bg-white/[0.02] rounded-md px-3 py-2.5 2xl:px-4 2xl:py-3 min-w-0">
           <div className="text-[11px] 2xl:text-xs min-[1920px]:text-sm font-semibold text-zinc-300 tracking-tight mb-1.5 truncate">
-            Cache
+            Cache &amp; Speculative Decoding
             <span className="ml-1 text-[9px] font-normal text-zinc-500">(avg)</span>
           </div>
           <div className="grid grid-cols-2 gap-1.5">
@@ -190,6 +195,15 @@ export function GlobalEngineCard({ snapshot, latencyMode = 'avg' }: GlobalEngine
               className="text-lg xl:text-xl 2xl:text-2xl min-[1920px]:text-3xl min-[2560px]:text-4xl font-bold text-zinc-100 font-mono tabular-nums leading-none"
             />
           </div>
+          {spec_decode_draft_tokens_total !== null && spec_decode_draft_tokens_total > 0 && (
+            <SpecDecodeSection
+              acceptanceRate={spec_decode_acceptance_rate}
+              acceptanceRateLive={spec_decode_acceptance_rate_live}
+              meanAcceptanceLength={spec_decode_mean_acceptance_length}
+              acceptedTokens={spec_decode_accepted_tokens_total}
+              draftTokens={spec_decode_draft_tokens_total}
+            />
+          )}
         </div>
       </div>
     </div>
