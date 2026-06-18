@@ -7,6 +7,7 @@ mod ws;
 use clap::{Args, Parser, Subcommand};
 use cli::service::ServiceCommand;
 use engines::{ApiKeyResolver, EngineOverride, EngineType};
+use std::process::ExitCode;
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 
@@ -26,6 +27,23 @@ enum Command {
     /// Manage the systemd service (install, uninstall, status).
     #[command(subcommand)]
     Service(ServiceCommand),
+    /// Probe the local /healthz endpoint and exit 0 (healthy) or 1.
+    ///
+    /// Used as the container HEALTHCHECK: the distroless runtime has no shell or
+    /// `wget`, so the image execs the binary itself to check liveness.
+    Healthcheck(HealthcheckArgs),
+}
+
+#[derive(Args, Debug)]
+struct HealthcheckArgs {
+    /// Port the server listens on (probed over 127.0.0.1).
+    #[arg(
+        short = 'p',
+        long,
+        env = "SPARK_DASHBOARD_PORT",
+        default_value_t = 3000
+    )]
+    port: u16,
 }
 
 #[derive(Args, Debug)]
@@ -78,12 +96,21 @@ struct RunArgs {
     provider_api_key: Option<String>,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> ExitCode {
     let cli = Cli::parse();
 
-    match cli.command {
+    let result = match cli.command {
         Some(Command::Service(cmd)) => cli::service::dispatch(cmd),
+        Some(Command::Healthcheck(args)) => return cli::healthcheck::run(args.port),
         None => run_server(cli.run),
+    };
+
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            eprintln!("error: {err}");
+            ExitCode::FAILURE
+        }
     }
 }
 

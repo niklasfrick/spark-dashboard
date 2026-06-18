@@ -133,11 +133,29 @@ jobs:
       - uses: docker/setup-buildx-action@v3
       # Native per-arch build (no QEMU): confirms the multi-stage Dockerfile
       # compiles for both targets. Publishes nothing — that's docker-publish.yml.
+      # amd64 loads the image so Trivy can scan it; arm64 just confirms the build.
       - name: Build image (${{ matrix.platform }})
         uses: docker/build-push-action@v6
         with:
           context: .
           platforms: ${{ matrix.platform }}
           push: false
+          load: ${{ matrix.arch == 'amd64' }}
+          tags: spark-dashboard:ci-${{ matrix.arch }}
           cache-from: type=gha,scope=docker-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=docker-${{ matrix.arch }}
+
+      # Fail the build on new HIGH/CRITICAL OS or library CVEs in the runtime
+      # image. ignore-unfixed skips CVEs with no available fix (e.g. distroless's
+      # own glibc advisories awaiting a Debian patch) so the gate stays actionable.
+      # Scanned once on amd64 — OS-package findings are arch-independent.
+      - name: Scan image for vulnerabilities
+        if: matrix.arch == 'amd64'
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: spark-dashboard:ci-amd64
+          scan-type: image
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"

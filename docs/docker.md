@@ -145,8 +145,13 @@ deliberately permissive:
 - **`/var/run/docker.sock` (read-only)** — read access to the Docker API. Mounted
   `:ro`, but socket access is still powerful; only run this on hosts you trust.
 
-The image itself is hardened: it runs as a non-root user (uid 10001) on
-`debian:trixie-slim`, mirroring the systemd profile's `User=spark-dashboard`.
+The image itself is hardened: it runs as a non-root user (uid 65532) on
+`gcr.io/distroless/cc-debian13`. Distroless ships only glibc and CA
+certificates — no shell, no package manager, none of the Debian userland a
+`-slim` base carries — which removes essentially the entire OS-package CVE
+surface. One operational consequence: there is no shell, so `docker exec
+<container> sh` won't work for debugging; the built-in liveness probe runs the
+binary's own `healthcheck` subcommand instead of shelling out to `wget`.
 
 ## Updating
 
