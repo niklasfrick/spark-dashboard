@@ -8,7 +8,7 @@ vLLM engine statistics and streams them over WebSocket to a React frontend.
 
 ![Stack](https://img.shields.io/badge/Rust-Axum-orange) ![Stack](https://img.shields.io/badge/React_19-TypeScript-blue) ![Stack](https://img.shields.io/badge/Tailwind_CSS_4-06B6D4) ![Stack](https://img.shields.io/badge/Vite_8-646CFF) ![License](https://img.shields.io/badge/license-MIT-green)
 
-![Spark Dashboard](./docs/dashboard.gif)
+![Spark Dashboard](./docs/spark-dashboard-demo-0-11-0.gif)
 
 ## Quick Start
 
