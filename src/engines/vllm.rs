@@ -83,6 +83,10 @@ pub struct VllmAdapter {
     prev_gen_tokens: Mutex<Option<(f64, Instant)>>,
     /// Previous prompt_tokens_total counter reading for rate computation.
     prev_prompt_tokens: Mutex<Option<(f64, Instant)>>,
+    /// Previous (accepted, draft) spec-decode counter readings, used to compute
+    /// the live (windowed) token acceptance rate from per-poll deltas. No
+    /// timestamp is stored because the live TAR is a unit-free ratio of deltas.
+    prev_spec_decode: Mutex<Option<(f64, f64)>>,
     /// Running average for generation: (sum_of_tps_readings, count_of_readings)
     avg_accum: Mutex<(f64, u64)>,
     /// Running average for prompt: (sum_of_tps_readings, count_of_readings)
@@ -115,6 +119,7 @@ impl VllmAdapter {
             served_model,
             prev_gen_tokens: Mutex::new(None),
             prev_prompt_tokens: Mutex::new(None),
+            prev_spec_decode: Mutex::new(None),
             avg_accum: Mutex::new((0.0, 0)),
             avg_prompt_accum: Mutex::new((0.0, 0)),
             warmup: Mutex::new(WarmupTracker::new(warmup_skip_from_env())),
@@ -432,6 +437,7 @@ impl EngineAdapter for VllmAdapter {
         if warmup_out.just_transitioned {
             *self.prev_gen_tokens.lock().await = None;
             *self.prev_prompt_tokens.lock().await = None;
+            *self.prev_spec_decode.lock().await = None;
             *self.avg_accum.lock().await = (0.0, 0);
             *self.avg_prompt_accum.lock().await = (0.0, 0);
             tracing::info!(
@@ -650,6 +656,61 @@ impl EngineAdapter for VllmAdapter {
             .get("vllm_num_preemptions_total")
             .map(|v| *v as u64);
 
+        // Speculative decoding. vLLM only emits these counters when the served
+        // model has speculative decoding configured, so their presence is the
+        // signal the frontend uses to show the section at all. The values are
+        // read from `raw` (absolute lifetime) so the cumulative token counters
+        // count up continuously and the lifetime acceptance ratios are stable.
+        // vLLM's prometheus_client appends `_total` to counter names, so try the
+        // `_total` key first and fall back to the bare logical name.
+        let spec_counter = |name: &str| -> Option<f64> {
+            raw.counters
+                .get(&format!("vllm_spec_decode_{name}_total"))
+                .or_else(|| raw.counters.get(&format!("vllm_spec_decode_{name}")))
+                .copied()
+        };
+        let spec_draft = spec_counter("num_draft_tokens");
+        let spec_accepted = spec_counter("num_accepted_tokens");
+        let spec_drafts = spec_counter("num_drafts");
+
+        // Prometheus counters are non-negative by spec; clamp before the lossy
+        // f64->u64 cast so a malformed/negative sample can never wrap to a huge
+        // value (same boundary as `preemptions_total` / `total_requests`).
+        let spec_decode_draft_tokens_total = spec_draft.map(|v| v.max(0.0) as u64);
+        let spec_decode_accepted_tokens_total = spec_accepted.map(|v| v.max(0.0) as u64);
+        let spec_decode_drafts_total = spec_drafts.map(|v| v.max(0.0) as u64);
+
+        // Lifetime token acceptance rate (TAR) = accepted / draft * 100.
+        let spec_decode_acceptance_rate = spec_acceptance_rate(spec_accepted, spec_draft);
+        // Mean acceptance length = accepted tokens / draft attempts.
+        let spec_decode_mean_acceptance_length =
+            spec_mean_acceptance_length(spec_accepted, spec_drafts);
+        // Live (windowed) TAR from per-poll deltas: Δaccepted / Δdraft * 100.
+        // The snapshot is discarded (`prev = None`) whenever a counter is
+        // missing this poll or appears to have gone backwards (engine restart
+        // resets its counters). Both cases would otherwise diff against a stale
+        // snapshot and silently inflate or negate the live rate.
+        let spec_decode_acceptance_rate_live = {
+            let mut prev_lock = self.prev_spec_decode.lock().await;
+            match (spec_accepted, spec_draft) {
+                (Some(acc), Some(draft)) => {
+                    let live = prev_lock.as_ref().and_then(|&(prev_acc, prev_draft)| {
+                        if acc >= prev_acc && draft >= prev_draft {
+                            spec_acceptance_rate(Some(acc - prev_acc), Some(draft - prev_draft))
+                        } else {
+                            None
+                        }
+                    });
+                    *prev_lock = Some((acc, draft));
+                    live
+                }
+                _ => {
+                    *prev_lock = None;
+                    None
+                }
+            }
+        };
+
         // Average batch size (tokens per iteration step)
         let avg_batch_size = {
             let sum = parsed.counters.get("vllm_iteration_tokens_total_sum");
@@ -825,8 +886,46 @@ impl EngineAdapter for VllmAdapter {
             tpot_percentiles: if blank { None } else { tpot_percentiles },
             tpot_goodput_pct: if blank { None } else { tpot_goodput_pct },
             tpot_buckets: if blank { None } else { tpot_buckets },
+            // Cumulative counters and lifetime ratios are pass-through (ungated
+            // by warmup) so they count up / stay stable continuously. Live TAR
+            // is a delta-derived rate, so it is blanked during warmup like the
+            // other per-poll rates.
+            spec_decode_draft_tokens_total,
+            spec_decode_accepted_tokens_total,
+            spec_decode_drafts_total,
+            spec_decode_acceptance_rate,
+            spec_decode_acceptance_rate_live: if blank {
+                None
+            } else {
+                spec_decode_acceptance_rate_live
+            },
+            spec_decode_mean_acceptance_length,
             warming_up,
         })
+    }
+}
+
+/// Token acceptance rate (TAR) as a percentage: `accepted / draft * 100`.
+///
+/// Returns `None` unless both counts are present, `draft > 0`, and `accepted`
+/// is non-negative, so the tile stays blank until at least one token has been
+/// drafted and never surfaces a negative rate from a malformed/reset counter.
+/// Used for both the lifetime TAR (absolute counters) and the live TAR
+/// (per-poll deltas).
+fn spec_acceptance_rate(accepted: Option<f64>, draft: Option<f64>) -> Option<f64> {
+    match (accepted, draft) {
+        (Some(a), Some(d)) if d > 0.0 && a >= 0.0 => Some((a / d) * 100.0),
+        _ => None,
+    }
+}
+
+/// Mean acceptance length: accepted tokens per draft attempt (`accepted / drafts`).
+///
+/// Returns `None` unless both counts are present and `drafts > 0`.
+fn spec_mean_acceptance_length(accepted: Option<f64>, drafts: Option<f64>) -> Option<f64> {
+    match (accepted, drafts) {
+        (Some(a), Some(n)) if n > 0.0 => Some(a / n),
+        _ => None,
     }
 }
 
@@ -1216,5 +1315,83 @@ vllm:prefix_cache_hits_total 123456.0
             .copied()
             .map(|v| v as u64);
         assert_eq!(queries, Some(654_321));
+    }
+
+    #[test]
+    fn spec_acceptance_rate_computes_percentage_and_guards_zero() {
+        assert_eq!(spec_acceptance_rate(Some(75.0), Some(100.0)), Some(75.0));
+        // Zero or missing draft tokens => blank, no divide-by-zero.
+        assert_eq!(spec_acceptance_rate(Some(10.0), Some(0.0)), None);
+        assert_eq!(spec_acceptance_rate(Some(10.0), None), None);
+        assert_eq!(spec_acceptance_rate(None, Some(10.0)), None);
+        // A negative numerator (e.g. a counter-reset delta) must not surface a
+        // negative rate.
+        assert_eq!(spec_acceptance_rate(Some(-5.0), Some(100.0)), None);
+    }
+
+    #[test]
+    fn spec_mean_acceptance_length_divides_accepted_by_drafts() {
+        assert_eq!(
+            spec_mean_acceptance_length(Some(300.0), Some(100.0)),
+            Some(3.0)
+        );
+        assert_eq!(spec_mean_acceptance_length(Some(5.0), Some(0.0)), None);
+        assert_eq!(spec_mean_acceptance_length(None, Some(2.0)), None);
+    }
+
+    /// vLLM's prometheus_client appends `_total` to the speculative-decoding
+    /// counters. Assert the parser captures them under the normalized
+    /// `vllm_spec_decode_*_total` keys the adapter reads.
+    #[test]
+    fn spec_decode_counters_roundtrip_from_metrics_body() {
+        let body = "\
+# HELP vllm:spec_decode_num_draft_tokens Cumulative drafted tokens.
+# TYPE vllm:spec_decode_num_draft_tokens counter
+vllm:spec_decode_num_draft_tokens_total 1000.0
+# HELP vllm:spec_decode_num_accepted_tokens Cumulative accepted tokens.
+# TYPE vllm:spec_decode_num_accepted_tokens counter
+vllm:spec_decode_num_accepted_tokens_total 720.0
+# HELP vllm:spec_decode_num_drafts Cumulative draft attempts.
+# TYPE vllm:spec_decode_num_drafts counter
+vllm:spec_decode_num_drafts_total 240.0
+";
+        let parsed = parse_prometheus_text(body).expect("parse");
+        let draft = parsed
+            .counters
+            .get("vllm_spec_decode_num_draft_tokens_total")
+            .copied();
+        let accepted = parsed
+            .counters
+            .get("vllm_spec_decode_num_accepted_tokens_total")
+            .copied();
+        let drafts = parsed
+            .counters
+            .get("vllm_spec_decode_num_drafts_total")
+            .copied();
+        assert_eq!(draft, Some(1000.0));
+        assert_eq!(accepted, Some(720.0));
+        assert_eq!(drafts, Some(240.0));
+        // Derived signals computed from the parsed counters.
+        assert_eq!(spec_acceptance_rate(accepted, draft), Some(72.0));
+        assert_eq!(spec_mean_acceptance_length(accepted, drafts), Some(3.0));
+    }
+
+    /// A metrics body without any speculative-decoding lines must leave every
+    /// spec-decode counter absent, so the adapter reports `None` and the
+    /// frontend hides the section.
+    #[test]
+    fn spec_decode_counters_absent_when_not_configured() {
+        let body = "\
+# HELP vllm:generation_tokens Generated tokens.
+# TYPE vllm:generation_tokens counter
+vllm:generation_tokens_total 42.0
+";
+        let parsed = parse_prometheus_text(body).expect("parse");
+        assert!(!parsed
+            .counters
+            .contains_key("vllm_spec_decode_num_draft_tokens_total"));
+        assert!(!parsed
+            .counters
+            .contains_key("vllm_spec_decode_num_draft_tokens"));
     }
 }

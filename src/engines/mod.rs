@@ -162,6 +162,25 @@ pub struct EngineMetrics {
     pub tpot_goodput_pct: Option<f64>,
     /// Raw TPOT histogram buckets (cumulative).
     pub tpot_buckets: Option<Vec<HistogramBucket>>,
+    // --- Speculative decoding ---
+    // These are populated only when the served model has speculative decoding
+    // configured (vLLM emits `vllm:spec_decode_*` only in that case). When the
+    // metrics are absent all six fields are `None`, which the frontend uses to
+    // hide the speculative-decoding section entirely.
+    /// Cumulative speculatively-generated (draft) tokens. Raw lifetime counter,
+    /// not warmup-adjusted, so it counts up continuously across the engine's life.
+    pub spec_decode_draft_tokens_total: Option<u64>,
+    /// Cumulative draft tokens that passed verification. Raw lifetime counter.
+    pub spec_decode_accepted_tokens_total: Option<u64>,
+    /// Cumulative number of speculative-decode draft attempts. Raw lifetime counter.
+    pub spec_decode_drafts_total: Option<u64>,
+    /// Lifetime token acceptance rate (TAR) as a percentage: accepted/draft*100.
+    pub spec_decode_acceptance_rate: Option<f64>,
+    /// Live (windowed) TAR from per-poll deltas: Δaccepted/Δdraft*100. Fluctuates
+    /// with recent traffic; `None` during warmup and on the first reading.
+    pub spec_decode_acceptance_rate_live: Option<f64>,
+    /// Mean accepted tokens per draft attempt: accepted/drafts (acceptance length).
+    pub spec_decode_mean_acceptance_length: Option<f64>,
     /// True while the engine is still in warmup — histogram-derived fields
     /// (averages, percentiles, goodput, rates) are intentionally `None` so the
     /// first slow inference does not pollute steady-state metrics. See
