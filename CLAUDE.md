@@ -50,6 +50,21 @@ Docker changes (`Dockerfile`, `docker-compose*.yml`):
 ./dev/docker-dev.sh --build-local   # buildx multi-stage build smoke test (no GPU)
 ```
 
+## Dependencies — pick the latest stable
+
+When a dependency is **introduced or selected for the first time** — a crate, npm
+package, Docker base image, GitHub Action, toolchain version, anything pinned —
+check its newest/latest **stable** release first and pin to that, rather than
+copying an older version from memory or an existing line. Verify against the
+source of truth (crates.io / npm / the registry's tags / upstream releases), not
+training-data recall.
+
+Pick the latest stable available for that distribution channel — and actually
+look it up. (Lesson learned the hard way: Google distroless's newest Debian
+variant is `-debian13`/trixie, which is also its default — not `-debian12`, which
+recall wrongly insisted was the newest. The registry/README is the source of
+truth.) State the version you picked and why in the PR/commit.
+
 ## Metrics contract (Rust ↔ frontend)
 
 When you change `MemoryMetrics`/`GpuMetrics`/`CpuMetrics` shape, serde names, display logic, or fields — update all of these in the same PR:
