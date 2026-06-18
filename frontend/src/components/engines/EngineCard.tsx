@@ -230,7 +230,7 @@ export function EngineCard({
       ) : (
         <>
           {/* ── Grouped metrics with trend arrows — 6 categories ── */}
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2 py-1">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 py-1">
             {/* Prefill Throughput */}
             <div className="bg-white/[0.02] rounded-md px-3 py-2.5 2xl:px-4 2xl:py-3 min-w-0">
               <div className="text-[11px] 2xl:text-xs min-[1920px]:text-sm font-semibold text-zinc-300 tracking-tight mb-1.5 truncate">Prompt Processing / Prefill Throughput</div>
@@ -345,7 +345,7 @@ export function EngineCard({
            *   1 Prefill · 2 Decode · 3 Latency · 4 SLO Goodput · 5 Requests · 6 Cache
            * E2E sits under SLO Goodput (col 4); Requests under col 5; KV under Cache (col 6). */}
           {showCharts && chartData && (
-            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 pt-1">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 pt-1">
               <TimeSeriesChart
                 title="Prefill Throughput (tok/s)"
                 hideTooltipLabel
