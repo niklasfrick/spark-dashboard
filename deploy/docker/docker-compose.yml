@@ -3,20 +3,20 @@
 # Defaults to host networking so the dashboard can discover vLLM/engine
 # processes and containers running on the host network. For an isolated bridge
 # setup, layer the override:
-#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.bridge.yml up -d
+#   docker compose -f deploy/docker/docker-compose.yml -f deploy/docker/docker-compose.bridge.yml up -d
 #
 # Configure via a .env file (see .env.docker.example). By default this pulls the
 # published image; run `docker compose build` to build from source instead.
 #
-# Run from the repo root with `-f deploy/docker-compose.yml` (or `cd deploy`).
-# The build context is the repo root (`..`) because the Dockerfile copies src/,
-# frontend/, Cargo.*, and deploy/.
+# Run from the repo root with `-f deploy/docker/docker-compose.yml` (or
+# `cd deploy/docker`). The build context is the repo root (`../..`) because the
+# Dockerfile copies src/, frontend/, Cargo.*, and deploy/host/.
 services:
   spark-dashboard:
     image: ${SPARK_DASHBOARD_IMAGE:-ghcr.io/niklasfrick/spark-dashboard:latest}
     build:
-      context: ..
-      dockerfile: deploy/Dockerfile
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
       args:
         VCS_REF: ${VCS_REF:-}
         VERSION: ${VERSION:-}

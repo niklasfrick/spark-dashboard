@@ -30,11 +30,11 @@ long-lived.
 
 `docker-compose.yml` ships host networking, GPU passthrough, the read-only
 Docker socket mount, and `pid:host` preconfigured. The compose files live in this
-`deploy/` directory — run the commands below from there (`cd deploy`). Configure
-it with a `.env` file (copy [`.env.docker.example`](./.env.docker.example)):
+`deploy/docker/` directory — run the commands below from there (`cd deploy/docker`).
+Configure it with a `.env` file (copy [`.env.docker.example`](./.env.docker.example)):
 
 ```bash
-cd deploy
+cd deploy/docker
 cp .env.docker.example .env
 # set DOCKER_GID — see "The DOCKER_GID gotcha" below
 docker compose up -d
@@ -170,7 +170,7 @@ Or pin to a new explicit `SPARK_DASHBOARD_IMAGE` tag and re-run `up -d`.
 
 ## Building / testing locally
 
-Use the dev harness (see [`dev/README.md`](../dev/README.md)):
+Use the dev harness (see [`dev/README.md`](../../dev/README.md)):
 
 ```bash
 ./dev/docker-dev.sh --build-local     # buildx linux/arm64 --load — Dockerfile smoke test

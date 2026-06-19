@@ -45,21 +45,21 @@ engines won't appear.
 Or with Compose (host networking + GPU + socket mount preconfigured):
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/niklasfrick/spark-dashboard/main/deploy/docker-compose.yml
-curl -fsSL https://raw.githubusercontent.com/niklasfrick/spark-dashboard/main/deploy/.env.docker.example -o .env
+curl -fsSLO https://raw.githubusercontent.com/niklasfrick/spark-dashboard/main/deploy/docker/docker-compose.yml
+curl -fsSL https://raw.githubusercontent.com/niklasfrick/spark-dashboard/main/deploy/docker/.env.docker.example -o .env
 # set DOCKER_GID to your host's docker group: getent group docker | cut -d: -f3
 docker compose up -d
 ```
 
-See [`deploy/docker.md`](./deploy/docker.md) for networking modes, GPU passthrough,
-env vars, and troubleshooting.
+See [`deploy/docker/docker.md`](./deploy/docker/docker.md) for networking modes, GPU
+passthrough, env vars, and troubleshooting.
 
 ### Develop locally
 
 ```bash
 git clone https://github.com/niklasfrick/spark-dashboard.git
 cd spark-dashboard
-cp .env.example .env           # edit with your remote host's user/host
+cp dev/.env.example .env           # edit with your remote host's user/host
 ./dev/dev.sh
 ```
 
@@ -131,7 +131,7 @@ All operator config lives in a repo-root `.env` file. Copy the template and
 edit:
 
 ```bash
-cp .env.example .env
+cp dev/.env.example .env
 ```
 
 | Variable           | Purpose                                                                              |
@@ -184,7 +184,7 @@ air-gapped install, or deploy an unreleased commit).
 # only for the systemd wiring step.
 git clone https://github.com/niklasfrick/spark-dashboard.git
 cd spark-dashboard
-./deploy/install.sh
+./deploy/host/install.sh
 ```
 
 This builds the frontend (`npm run build`) and the Rust binary
@@ -212,7 +212,7 @@ Optional overrides live in `/etc/spark-dashboard/config.env` — set
 cargo install --force spark-dashboard && sudo ~/.cargo/bin/spark-dashboard service install
 
 # Option B
-cd spark-dashboard && git pull && ./deploy/install.sh
+cd spark-dashboard && git pull && ./deploy/host/install.sh
 ```
 
 Re-running `service install` is idempotent: it stops the service, swaps the
@@ -360,18 +360,21 @@ real NVML/procfs parsing on Linux, with compile-time stubs on other platforms.
 │       │   └── gauges/         ArcGauge
 │       ├── types/              TypeScript type definitions
 │       └── lib/                Circular buffer, formatting, theme
-├── deploy/
-│   ├── Dockerfile              Multi-stage container build
-│   ├── docker-compose.yml      Host-network compose (+ bridge override)
-│   ├── install.sh              Source-build + systemd installer
-│   ├── systemd/                spark-dashboard.service unit
-│   ├── config.env.example      /etc/spark-dashboard/config.env template
-│   └── docker.md               Container deployment guide
+├── deploy/                     Deployment & install artifacts, by type
+│   ├── docker/                 Container install
+│   │   ├── Dockerfile          Multi-stage container build
+│   │   ├── docker-compose.yml  Host-network compose (+ bridge override)
+│   │   ├── .env.docker.example Compose configuration template
+│   │   └── docker.md           Container deployment guide
+│   └── host/                   Cargo + systemd source install
+│       ├── install.sh          Source-build + systemd installer
+│       ├── systemd/            spark-dashboard.service unit
+│       └── config.env.example  /etc/spark-dashboard/config.env template
 ├── dev/
 │   ├── dev.sh                  Dev loop (local frontend + remote backend)
 │   ├── docker-dev.sh           Containerized build/deploy harness
+│   ├── .env.example            Dev configuration template
 │   └── README.md               Operator docs
-├── .env.example                Configuration template
 ├── LICENSE                     MIT
 ├── CONTRIBUTING.md
 └── Cargo.toml

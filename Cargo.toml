@@ -21,8 +21,8 @@ include = [
     "/LICENSE",
     "/CHANGELOG.md",
     "/frontend/dist/**",
-    "/deploy/systemd/spark-dashboard.service",
-    "/deploy/config.env.example",
+    "/deploy/host/systemd/spark-dashboard.service",
+    "/deploy/host/config.env.example",
 ]
 
 [dependencies]

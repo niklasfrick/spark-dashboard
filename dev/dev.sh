@@ -46,8 +46,8 @@ fi
 if [ -n "${SPARK_USER:-}${SPARK_HOST:-}${SPARK_DIR:-}" ]; then
     echo "note: SPARK_USER/SPARK_HOST/SPARK_DIR are deprecated — rename to DEPLOY_* in .env (old names still work for now)" >&2
 fi
-: "${DEPLOY_USER:?Set DEPLOY_USER in .env (copy .env.example to .env)}"
-: "${DEPLOY_HOST:?Set DEPLOY_HOST in .env (copy .env.example to .env)}"
+: "${DEPLOY_USER:?Set DEPLOY_USER in .env (copy dev/.env.example to .env)}"
+: "${DEPLOY_HOST:?Set DEPLOY_HOST in .env (copy dev/.env.example to .env)}"
 
 # Strip a leading `~/` — bash expands that to the *local* home when sourcing
 # .env, which would then rsync to the wrong place. Remote paths without a

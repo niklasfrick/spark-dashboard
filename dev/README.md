@@ -1,10 +1,10 @@
 # dev/
 
 Development-only scripts for spark-dashboard. Configuration is read from a
-repo-root `.env` file — copy `.env.example` to `.env` and edit before running.
+repo-root `.env` file — copy `dev/.env.example` to `.env` and edit before running.
 
 For **production installs**, use `cargo install spark-dashboard` or
-`deploy/install.sh`. See the repo [README](../README.md#install-on-your-linux-host).
+`deploy/host/install.sh`. See the repo [README](../README.md#install-on-your-linux-host).
 
 ## Scripts
 

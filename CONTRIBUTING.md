@@ -8,7 +8,7 @@ bug reports, clear reproductions, and targeted PRs are all welcome.
 ```bash
 git clone https://github.com/niklasfrick/spark-dashboard.git
 cd spark-dashboard
-cp .env.example .env           # edit with your remote host's user/host
+cp dev/.env.example .env       # edit with your remote host's user/host
 ./dev/dev.sh
 ```
 
@@ -25,8 +25,8 @@ cd frontend && npm test
 cargo test
 ```
 
-If you change the `deploy/Dockerfile` or `deploy/docker-compose*.yml`, also
-smoke-test the image build before pushing (see [`deploy/docker.md`](./deploy/docker.md)):
+If you change the `deploy/docker/Dockerfile` or `deploy/docker/docker-compose*.yml`,
+also smoke-test the image build before pushing (see [`deploy/docker/docker.md`](./deploy/docker/docker.md)):
 
 ```bash
 ./dev/docker-dev.sh --build-local      # buildx multi-stage build, no GPU needed

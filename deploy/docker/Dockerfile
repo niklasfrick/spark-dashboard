@@ -42,8 +42,8 @@ COPY src/ ./src/
 # Embedded by include_str! at compile time (systemd unit + config example for the
 # `service` subcommand). Only these two paths — not the whole deploy/ folder — so
 # the Dockerfile/compose files don't bust this layer's cache.
-COPY deploy/systemd ./deploy/systemd
-COPY deploy/config.env.example ./deploy/config.env.example
+COPY deploy/host/systemd ./deploy/host/systemd
+COPY deploy/host/config.env.example ./deploy/host/config.env.example
 COPY --from=frontend /app/frontend/dist ./frontend/dist/
 RUN cargo build --release --locked
 

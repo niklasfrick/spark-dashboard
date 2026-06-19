@@ -1,7 +1,7 @@
 //! systemd service management subcommand.
 //!
 //! Exposes `spark-dashboard service {install,uninstall,status}` so both install
-//! paths (`cargo install` and `deploy/install.sh`) share the same logic.
+//! paths (`cargo install` and `deploy/host/install.sh`) share the same logic.
 //! Linux-only; stubs return a helpful error on other platforms.
 
 use clap::Subcommand;
@@ -51,8 +51,8 @@ mod linux {
     const CONFIG_PATH: &str = "/etc/spark-dashboard/config.env";
     const CONFIG_EXAMPLE_PATH: &str = "/etc/spark-dashboard/config.env.example";
 
-    const UNIT_FILE: &str = include_str!("../../deploy/systemd/spark-dashboard.service");
-    const CONFIG_EXAMPLE: &str = include_str!("../../deploy/config.env.example");
+    const UNIT_FILE: &str = include_str!("../../deploy/host/systemd/spark-dashboard.service");
+    const CONFIG_EXAMPLE: &str = include_str!("../../deploy/host/config.env.example");
 
     type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 

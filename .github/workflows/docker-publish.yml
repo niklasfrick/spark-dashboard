@@ -46,7 +46,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: deploy/Dockerfile
+          file: deploy/docker/Dockerfile
           platforms: ${{ matrix.platform }}
           build-args: |
             VCS_REF=${{ github.sha }}

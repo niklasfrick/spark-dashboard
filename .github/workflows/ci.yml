@@ -29,20 +29,20 @@ jobs:
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'frontend/**'
-              - 'deploy/systemd/**'
-              - 'deploy/config.env.example'
+              - 'deploy/host/systemd/**'
+              - 'deploy/host/config.env.example'
               - '.github/workflows/ci.yml'
             frontend:
               - 'frontend/**'
               - '.github/workflows/ci.yml'
             installer:
-              - 'deploy/install.sh'
-              - 'deploy/systemd/**'
-              - 'deploy/config.env.example'
+              - 'deploy/host/install.sh'
+              - 'deploy/host/systemd/**'
+              - 'deploy/host/config.env.example'
               - '.github/workflows/ci.yml'
             docker:
-              - 'deploy/Dockerfile'
-              - 'deploy/docker-compose*.yml'
+              - 'deploy/docker/Dockerfile'
+              - 'deploy/docker/docker-compose*.yml'
               - '.dockerignore'
               - 'src/**'
               - 'frontend/**'
@@ -108,13 +108,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: shellcheck install.sh
-        run: shellcheck deploy/install.sh
+        run: shellcheck deploy/host/install.sh
       - name: systemd-analyze verify
         run: |
           # systemd-analyze exits non-zero on validation errors but can spit
           # warnings about missing users at lint time — we care about syntax.
           sudo apt-get update -qq && sudo apt-get install -y systemd
-          systemd-analyze verify deploy/systemd/spark-dashboard.service || \
+          systemd-analyze verify deploy/host/systemd/spark-dashboard.service || \
             echo "(warnings above are OK on a CI host without the service user)"
 
   docker:
@@ -142,7 +142,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: deploy/Dockerfile
+          file: deploy/docker/Dockerfile
           platforms: ${{ matrix.platform }}
           push: false
           load: ${{ matrix.arch == 'amd64' }}
