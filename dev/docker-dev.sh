@@ -121,6 +121,7 @@ build_local() {
     docker buildx build \
         --platform linux/arm64 \
         --load \
+        -f deploy/Dockerfile \
         -t "$IMAGE_NAME:dev" \
         .
     SIZE_BYTES=$(docker image inspect "$IMAGE_NAME:dev" --format '{{.Size}}')
@@ -145,17 +146,20 @@ deploy_remote() {
         ./ "${REMOTE}:${DEPLOY_DIR}/"
 
     echo "==> Building and starting container on remote"
+    # Compose lives in deploy/; --env-file keeps the repo-root .env (DEPLOY_*,
+    # DOCKER_GID) as the substitution source even though the compose file moved.
     # shellcheck disable=SC2087  # we want $DEPLOY_DIR expanded locally
     ssh "${REMOTE}" bash -lc "set -e
         cd '${DEPLOY_DIR}'
-        docker compose build
-        docker compose up -d
+        compose='docker compose --env-file .env -f deploy/docker-compose.yml'
+        \$compose build
+        \$compose up -d
         echo
         echo '--- container state ---'
-        docker compose ps
+        \$compose ps
         echo
         echo '--- recent logs ---'
-        docker compose logs --tail=20 spark-dashboard || true
+        \$compose logs --tail=20 spark-dashboard || true
     "
     echo "==> Done. Dashboard: http://${DEPLOY_HOST}:${DASH_PORT}"
     echo "    Health check: docker inspect $IMAGE_NAME --format '{{.State.Health.Status}}'"
@@ -177,27 +181,29 @@ deploy_ghcr() {
     docker buildx build \
         --platform linux/arm64,linux/amd64 \
         --push \
+        -f deploy/Dockerfile \
         -t "${GHCR_IMAGE}:${GHCR_TAG}" \
         .
 
     echo "==> Deploying on remote via docker compose pull"
     ssh "${REMOTE}" bash -lc "set -e
         cd '${DEPLOY_DIR}'
-        docker compose pull
-        docker compose up -d
-        docker compose ps
+        compose='docker compose --env-file .env -f deploy/docker-compose.yml'
+        \$compose pull
+        \$compose up -d
+        \$compose ps
     "
     echo "==> Done. Dashboard: http://${DEPLOY_HOST}:${DASH_PORT}"
 }
 
 remote_logs() {
     needs_remote
-    ssh "${REMOTE}" "cd '${DEPLOY_DIR}' && docker compose logs -f --tail=100 spark-dashboard"
+    ssh "${REMOTE}" "cd '${DEPLOY_DIR}' && docker compose --env-file .env -f deploy/docker-compose.yml logs -f --tail=100 spark-dashboard"
 }
 
 remote_down() {
     needs_remote
-    ssh "${REMOTE}" "cd '${DEPLOY_DIR}' && docker compose down"
+    ssh "${REMOTE}" "cd '${DEPLOY_DIR}' && docker compose --env-file .env -f deploy/docker-compose.yml down"
 }
 
 case "$MODE" in

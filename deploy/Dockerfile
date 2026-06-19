@@ -39,7 +39,11 @@ RUN cargo chef cook --release --locked --recipe-path recipe.json
 # frontend/dist at compile time, so it must exist here).
 COPY Cargo.toml Cargo.lock ./
 COPY src/ ./src/
-COPY packaging/ ./packaging/
+# Embedded by include_str! at compile time (systemd unit + config example for the
+# `service` subcommand). Only these two paths — not the whole deploy/ folder — so
+# the Dockerfile/compose files don't bust this layer's cache.
+COPY deploy/systemd ./deploy/systemd
+COPY deploy/config.env.example ./deploy/config.env.example
 COPY --from=frontend /app/frontend/dist ./frontend/dist/
 RUN cargo build --release --locked
 

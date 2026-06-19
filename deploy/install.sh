@@ -6,9 +6,9 @@
 # normal user — do NOT prefix with `sudo`. The script builds the frontend and
 # binary as you, and escalates to sudo only when wiring up the systemd service.
 #
-#   ./packaging/install.sh              # build + install + enable service
-#   ./packaging/install.sh --no-service # build + install binary only
-#   ./packaging/install.sh --uninstall  # remove service + binary
+#   ./deploy/install.sh              # build + install + enable service
+#   ./deploy/install.sh --no-service # build + install binary only
+#   ./deploy/install.sh --uninstall  # remove service + binary
 #
 # Primary install path is `cargo install spark-dashboard`. Use this script when
 # you want to install from a local checkout (air-gapped, auditing, or
@@ -84,8 +84,8 @@ Running under sudo strips PATH and breaks lookups for cargo/npm installed
 in your home (nvm, rustup, etc.).
 
 Re-run without sudo:
-  ./packaging/install.sh                 # install
-  ./packaging/install.sh --uninstall     # uninstall
+  ./deploy/install.sh                 # install
+  ./deploy/install.sh --uninstall     # uninstall
 
 You'll be prompted for your sudo password when the service is wired up.
 MSG
