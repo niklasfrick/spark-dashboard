@@ -44,7 +44,7 @@ cd frontend && npm run build && npm test -- --run
 
 If both stacks changed, run both blocks. If embedded assets changed, build the frontend first (`rust-embed` needs `frontend/dist/`).
 
-Docker changes (`Dockerfile`, `docker-compose*.yml`):
+Docker changes (`deploy/Dockerfile`, `deploy/docker-compose*.yml`):
 
 ```bash
 ./dev/docker-dev.sh --build-local   # buildx multi-stage build smoke test (no GPU)

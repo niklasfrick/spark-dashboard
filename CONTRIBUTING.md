@@ -25,8 +25,8 @@ cd frontend && npm test
 cargo test
 ```
 
-If you change the `Dockerfile` or `docker-compose*.yml`, also smoke-test the
-image build before pushing (see [`docs/docker.md`](./docs/docker.md)):
+If you change the `deploy/Dockerfile` or `deploy/docker-compose*.yml`, also
+smoke-test the image build before pushing (see [`deploy/docker.md`](./deploy/docker.md)):
 
 ```bash
 ./dev/docker-dev.sh --build-local      # buildx multi-stage build, no GPU needed

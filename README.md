@@ -33,19 +33,25 @@ Prefer containers? Run the published multi-arch image (needs the
 ```bash
 docker run --rm --gpus all --pid=host -p 3000:3000 \
   -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  --group-add "$(getent group docker | cut -d: -f3)" \
   ghcr.io/niklasfrick/spark-dashboard:latest
 ```
+
+`--group-add` puts the container in the host's `docker` group so it can read the
+mounted socket and discover vLLM **containers**. Skip it (or get the GID wrong)
+and engine discovery silently falls back to host processes only — containerized
+engines won't appear.
 
 Or with Compose (host networking + GPU + socket mount preconfigured):
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/niklasfrick/spark-dashboard/main/docker-compose.yml
-curl -fsSL https://raw.githubusercontent.com/niklasfrick/spark-dashboard/main/.env.docker.example -o .env
+curl -fsSLO https://raw.githubusercontent.com/niklasfrick/spark-dashboard/main/deploy/docker-compose.yml
+curl -fsSL https://raw.githubusercontent.com/niklasfrick/spark-dashboard/main/deploy/.env.docker.example -o .env
 # set DOCKER_GID to your host's docker group: getent group docker | cut -d: -f3
 docker compose up -d
 ```
 
-See [`docs/docker.md`](./docs/docker.md) for networking modes, GPU passthrough,
+See [`deploy/docker.md`](./deploy/docker.md) for networking modes, GPU passthrough,
 env vars, and troubleshooting.
 
 ### Develop locally
@@ -178,7 +184,7 @@ air-gapped install, or deploy an unreleased commit).
 # only for the systemd wiring step.
 git clone https://github.com/niklasfrick/spark-dashboard.git
 cd spark-dashboard
-./packaging/install.sh
+./deploy/install.sh
 ```
 
 This builds the frontend (`npm run build`) and the Rust binary
@@ -206,7 +212,7 @@ Optional overrides live in `/etc/spark-dashboard/config.env` — set
 cargo install --force spark-dashboard && sudo ~/.cargo/bin/spark-dashboard service install
 
 # Option B
-cd spark-dashboard && git pull && ./packaging/install.sh
+cd spark-dashboard && git pull && ./deploy/install.sh
 ```
 
 Re-running `service install` is idempotent: it stops the service, swaps the
@@ -354,8 +360,16 @@ real NVML/procfs parsing on Linux, with compile-time stubs on other platforms.
 │       │   └── gauges/         ArcGauge
 │       ├── types/              TypeScript type definitions
 │       └── lib/                Circular buffer, formatting, theme
+├── deploy/
+│   ├── Dockerfile              Multi-stage container build
+│   ├── docker-compose.yml      Host-network compose (+ bridge override)
+│   ├── install.sh              Source-build + systemd installer
+│   ├── systemd/                spark-dashboard.service unit
+│   ├── config.env.example      /etc/spark-dashboard/config.env template
+│   └── docker.md               Container deployment guide
 ├── dev/
 │   ├── dev.sh                  Dev loop (local frontend + remote backend)
+│   ├── docker-dev.sh           Containerized build/deploy harness
 │   └── README.md               Operator docs
 ├── .env.example                Configuration template
 ├── LICENSE                     MIT

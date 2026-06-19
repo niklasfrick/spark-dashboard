@@ -10,10 +10,14 @@ to **`ghcr.io/niklasfrick/spark-dashboard`**, tagged `:vX.Y.Z`, `:vX.Y`, and
 ```bash
 docker run --rm --gpus all --pid=host -p 3000:3000 \
   -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  --group-add "$(getent group docker | cut -d: -f3)" \
   ghcr.io/niklasfrick/spark-dashboard:latest
 ```
 
-The dashboard is served on port 3000. Prefer Compose for anything long-lived.
+The dashboard is served on port 3000. `--group-add` joins the host's docker
+group so container-based engine discovery works — see
+[The DOCKER_GID gotcha](#the-docker_gid-gotcha). Prefer Compose for anything
+long-lived.
 
 ## Prerequisites
 
@@ -25,10 +29,12 @@ The dashboard is served on port 3000. Prefer Compose for anything long-lived.
 ## Compose
 
 `docker-compose.yml` ships host networking, GPU passthrough, the read-only
-Docker socket mount, and `pid:host` preconfigured. Configure it with a `.env`
-file (copy [`.env.docker.example`](../.env.docker.example)):
+Docker socket mount, and `pid:host` preconfigured. The compose files live in this
+`deploy/` directory — run the commands below from there (`cd deploy`). Configure
+it with a `.env` file (copy [`.env.docker.example`](./.env.docker.example)):
 
 ```bash
+cd deploy
 cp .env.docker.example .env
 # set DOCKER_GID — see "The DOCKER_GID gotcha" below
 docker compose up -d
@@ -129,9 +135,10 @@ join the host's **docker group GID** to do so. This GID varies by distro
 getent group docker | cut -d: -f3
 ```
 
-Set it in `.env` as `DOCKER_GID`. On a mismatch the container still starts but
-container-based engine discovery silently degrades — you'll see a one-line
-"Docker detection unavailable" note in the logs.
+Set it in `.env` as `DOCKER_GID` (Compose). With plain `docker run`, pass the
+equivalent `--group-add "$(getent group docker | cut -d: -f3)"`. On a mismatch
+the container still starts but container-based engine discovery silently degrades
+— you'll see a one-line "Docker detection unavailable" note in the logs.
 
 ## Security tradeoffs
 
