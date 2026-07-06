@@ -12,7 +12,12 @@ use tokio::sync::broadcast;
 #[derive(Clone, serde::Serialize, Debug)]
 pub struct MetricsSnapshot {
     pub timestamp_ms: u64,
+    /// Backwards-compatible primary GPU metric. Mirrors the first entry in
+    /// `gpus`, or an empty metric when no GPU is available.
     pub gpu: GpuMetrics,
+    /// Metrics for every monitored GPU. Empty when NVML is unavailable or the
+    /// requested `--gpu-index` filter is out of range.
+    pub gpus: Vec<GpuMetrics>,
     pub cpu: CpuMetrics,
     pub memory: MemoryMetrics,
     pub disk: DiskMetrics,
@@ -29,7 +34,7 @@ pub struct MetricsSnapshot {
 pub async fn metrics_collector(
     tx: broadcast::Sender<String>,
     poll_interval_ms: u64,
-    gpu_index: u32,
+    gpu_index: Option<u32>,
     engine_state: std::sync::Arc<tokio::sync::RwLock<Vec<EngineSnapshot>>>,
 ) {
     let mut interval = tokio::time::interval(Duration::from_millis(poll_interval_ms));
@@ -41,36 +46,44 @@ pub async fn metrics_collector(
 
     // Initialize NVML (gracefully handle absence)
     let nvml = nvml_wrapper::Nvml::init().ok();
-    let device = match nvml.as_ref() {
+    let devices = match nvml.as_ref() {
         Some(n) => {
             let count = n.device_count().unwrap_or(0);
             tracing::info!("NVML initialized: {} GPU(s) available", count);
-            if gpu_index >= count {
-                tracing::warn!(
-                    "--gpu-index {} is out of range (found {} GPU(s)); GPU metrics disabled",
-                    gpu_index,
-                    count
-                );
-                None
-            } else {
-                match n.device_by_index(gpu_index) {
-                    Ok(d) => Some(d),
+            let indexes: Vec<u32> = match gpu_index {
+                Some(index) if index >= count => {
+                    tracing::warn!(
+                        "--gpu-index {} is out of range (found {} GPU(s)); GPU metrics disabled",
+                        index,
+                        count
+                    );
+                    Vec::new()
+                }
+                Some(index) => vec![index],
+                None => (0..count).collect(),
+            };
+
+            indexes
+                .into_iter()
+                .filter_map(|index| match n.device_by_index(index) {
+                    Ok(device) => Some((index, device)),
                     Err(e) => {
                         tracing::warn!(
-                            "Failed to open GPU at index {}: {} — GPU metrics disabled",
-                            gpu_index,
+                            "Failed to open GPU at index {}: {} - skipping device",
+                            index,
                             e
                         );
                         None
                     }
-                }
-            }
+                })
+                .collect()
         }
         None => {
             tracing::warn!("NVML not available -- GPU metrics will be empty");
-            None
+            Vec::new()
         }
     };
+    let primary_device = devices.first().map(|(_, device)| device);
 
     // Initial CPU refresh (first reading will be 0%, second will be accurate)
     sys.refresh_cpu_usage();
@@ -94,9 +107,9 @@ pub async fn metrics_collector(
         // Read latest engine snapshots (non-blocking read from shared state)
         let engines = engine_state.read().await.clone();
 
-        let gpu_events = gpu::detect_gpu_events(&device, timestamp_ms);
+        let gpu_events = gpu::detect_gpu_events(&devices, timestamp_ms);
 
-        let memory_metrics = memory::collect_memory_metrics(&device);
+        let memory_metrics = memory::collect_memory_metrics(primary_device);
         if !memory_logged {
             tracing::info!(
                 kernel_total_bytes = memory_metrics.total_bytes,
@@ -108,9 +121,13 @@ pub async fn metrics_collector(
             memory_logged = true;
         }
 
+        let gpus = gpu::collect_gpu_metrics(&devices);
+        let gpu = gpus.first().cloned().unwrap_or_else(gpu::empty_gpu_metrics);
+
         let snapshot = MetricsSnapshot {
             timestamp_ms,
-            gpu: gpu::collect_gpu_metrics(&device),
+            gpu,
+            gpus,
             cpu: cpu::collect_cpu_metrics(&sys),
             memory: memory_metrics,
             disk: disk::collect_disk_metrics(&disks),
@@ -136,7 +153,7 @@ pub async fn metrics_collector(
 pub async fn metrics_collector(
     tx: broadcast::Sender<String>,
     poll_interval_ms: u64,
-    _gpu_index: u32,
+    _gpu_index: Option<u32>,
     engine_state: std::sync::Arc<tokio::sync::RwLock<Vec<EngineSnapshot>>>,
 ) {
     let mut interval = tokio::time::interval(Duration::from_millis(poll_interval_ms));
@@ -169,9 +186,11 @@ pub async fn metrics_collector(
 
         let gpu_events = gpu::detect_gpu_events(timestamp_ms);
 
+        let gpu = gpu::collect_gpu_metrics();
         let snapshot = MetricsSnapshot {
             timestamp_ms,
-            gpu: gpu::collect_gpu_metrics(),
+            gpu: gpu.clone(),
+            gpus: vec![gpu],
             cpu: cpu::collect_cpu_metrics(&sys),
             memory: memory::collect_memory_metrics(&sys),
             disk: disk::collect_disk_metrics(&disks),
@@ -195,8 +214,11 @@ pub async fn metrics_collector(
 /// Fields are `Option` because some queries may return `NotSupported` depending on the GPU.
 #[derive(Clone, serde::Serialize, Debug)]
 pub struct GpuMetrics {
+    pub index: Option<u32>,
     pub name: Option<String>,
     pub utilization_percent: Option<u32>,
+    pub memory_total_bytes: Option<u64>,
+    pub memory_used_bytes: Option<u64>,
     pub temperature_celsius: Option<u32>,
     pub power_watts: Option<f64>,
     pub power_limit_watts: Option<f64>,

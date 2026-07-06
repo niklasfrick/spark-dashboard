@@ -70,11 +70,11 @@ struct RunArgs {
     #[arg(long, env = "SPARK_DASHBOARD_POLL_INTERVAL", default_value_t = 1000)]
     poll_interval: u64,
 
-    /// NVML GPU index to monitor (0 = first GPU). On multi-GPU hosts, pick which
-    /// device the dashboard reads. Out-of-range values log a warning and fall
-    /// back to empty GPU metrics.
-    #[arg(long, env = "SPARK_DASHBOARD_GPU_INDEX", default_value_t = 0)]
-    gpu_index: u32,
+    /// Optional NVML GPU index to monitor. By default, all available NVIDIA GPUs
+    /// are monitored; set this to keep the dashboard focused on one device.
+    /// Out-of-range values log a warning and fall back to empty GPU metrics.
+    #[arg(long, env = "SPARK_DASHBOARD_GPU_INDEX")]
+    gpu_index: Option<u32>,
 
     /// Manually specify engine type (use with --engine-url)
     #[arg(long, value_name = "TYPE")]

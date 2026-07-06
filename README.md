@@ -236,16 +236,17 @@ spark-dashboard service status
   -p, --port <PORT>           Listen port [default: 3000] [env: SPARK_DASHBOARD_PORT]
   -b, --bind <BIND>           Bind address [default: 0.0.0.0] [env: SPARK_DASHBOARD_BIND]
       --poll-interval <MS>    Polling interval ms [default: 1000] [env: SPARK_DASHBOARD_POLL_INTERVAL]
-      --gpu-index <IDX>       NVML GPU index to monitor [default: 0] [env: SPARK_DASHBOARD_GPU_INDEX]
+      --gpu-index <IDX>       Optional NVML GPU index to monitor [env: SPARK_DASHBOARD_GPU_INDEX]
       --engine <TYPE>         Manual engine type (e.g. vllm)
       --engine-url <URL>      Manual engine endpoint (requires --engine)
       --engine-api-key <KEY>  API key for an endpoint, paired by index with --engine-url
       --provider-api-key <KEY> Fallback API key for any endpoint [env: SPARK_DASHBOARD_PROVIDER_API_KEY]
 ```
 
-On multi-GPU hosts use `--gpu-index` to select which device the dashboard
-monitors. Engines are auto-detected via process scan and Docker API. Use
-`--engine` and `--engine-url` to override when auto-detection doesn't work.
+On multi-GPU hosts, Spark Dashboard monitors all available NVIDIA GPUs by
+default. Use `--gpu-index` to focus on one device. Engines are auto-detected via
+process scan and Docker API. Use `--engine` and `--engine-url` to override when
+auto-detection doesn't work.
 
 For auth-gated deployments (e.g. vLLM started with `--api-key`), pass
 `--engine-api-key` (index-paired with `--engine-url`) or set

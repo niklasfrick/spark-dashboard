@@ -1,6 +1,7 @@
 export interface MetricsSnapshot {
   timestamp_ms: number
   gpu: GpuMetrics
+  gpus?: GpuMetrics[]
   cpu: CpuMetrics
   memory: MemoryMetrics
   disk: DiskMetrics
@@ -12,6 +13,7 @@ export interface MetricsSnapshot {
 /** Wire-format GPU event matching backend GpuEvent struct */
 export interface GpuEventData {
   timestamp_ms: number
+  gpu_index?: number | null
   event_type: string
   detail: string
 }
@@ -25,8 +27,11 @@ export interface InferenceRequestData {
 }
 
 export interface GpuMetrics {
+  index?: number | null
   name: string | null
   utilization_percent: number | null
+  memory_total_bytes?: number | null
+  memory_used_bytes?: number | null
   temperature_celsius: number | null
   power_watts: number | null
   power_limit_watts: number | null

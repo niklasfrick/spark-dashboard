@@ -2,7 +2,7 @@ import { MetricCard } from './MetricCard'
 import { MetricRow } from './MetricRow'
 import { ArcGauge } from './gauges/ArcGauge'
 import { TimeSeriesChart } from './charts/TimeSeriesChart'
-import { formatPercent, formatPower, formatMhz } from '../lib/format'
+import { formatBytes, formatPercent, formatPower, formatMhz } from '../lib/format'
 import { computePowerScale, powerPeak } from '../lib/gpuPower'
 import { THRESHOLDS } from '../lib/theme'
 import type { GpuMetrics } from '../types/metrics'
@@ -29,6 +29,13 @@ interface GpuCardProps {
 export function GpuCard({ metrics, chartData, events, requests, showCharts = false }: GpuCardProps) {
   if (!metrics) return <MetricCard title="GPU"><p className="text-zinc-500">Waiting for data...</p></MetricCard>
 
+  const gpuIndex = metrics.index ?? 0
+  const gpuTitle = metrics.index !== null && metrics.index !== undefined ? `GPU ${metrics.index}` : 'GPU'
+  const scopedEvents = events?.filter(e => e.gpu_index === undefined || e.gpu_index === null || e.gpu_index === gpuIndex)
+  const vram = metrics.memory_total_bytes && metrics.memory_total_bytes > 0 && metrics.memory_used_bytes !== null && metrics.memory_used_bytes !== undefined
+    ? `${formatBytes(metrics.memory_used_bytes)} / ${formatBytes(metrics.memory_total_bytes)}`
+    : null
+
   // No hardware power cap is exposed on the GB10 (unified-memory SoC), so scale
   // the gauge against the observed peak draw when the limit is absent.
   const powerPercent = computePowerScale(
@@ -38,13 +45,13 @@ export function GpuCard({ metrics, chartData, events, requests, showCharts = fal
   ).percent
 
   // Map events for chart overlays
-  const thermalEvents = events?.filter(e => e.event_type === 'thermal').map(e => ({
+  const thermalEvents = scopedEvents?.filter(e => e.event_type === 'thermal').map(e => ({
     timestamp: e.timestamp_ms, type: e.event_type, detail: e.detail,
   }))
-  const throttleEvents = events?.filter(e => ['throttle', 'power_brake'].includes(e.event_type)).map(e => ({
+  const throttleEvents = scopedEvents?.filter(e => ['throttle', 'power_brake'].includes(e.event_type)).map(e => ({
     timestamp: e.timestamp_ms, type: e.event_type, detail: e.detail,
   }))
-  const allEvents = events?.map(e => ({
+  const allEvents = scopedEvents?.map(e => ({
     timestamp: e.timestamp_ms, type: e.event_type, detail: e.detail,
   }))
   const requestSpans = requests?.map(r => ({
@@ -52,7 +59,7 @@ export function GpuCard({ metrics, chartData, events, requests, showCharts = fal
   }))
 
   return (
-    <MetricCard title="GPU" subtitle={metrics.name ?? undefined}>
+    <MetricCard title={gpuTitle} subtitle={metrics.name ?? undefined}>
       {/* Compact layout: gauges left, key metrics right */}
       <div className="flex flex-wrap items-start gap-6">
         <div className="flex flex-wrap justify-center gap-4">
@@ -80,6 +87,7 @@ export function GpuCard({ metrics, chartData, events, requests, showCharts = fal
         </div>
         <div className="flex-1 min-w-[200px] grid grid-cols-2 gap-x-6 gap-y-0 text-sm">
           <MetricRow label="Power" value={formatPower(metrics.power_watts, metrics.power_limit_watts)} />
+          {vram && <MetricRow label="VRAM" value={vram} />}
           <MetricRow label="Clock (Graphics)" value={formatMhz(metrics.clock_graphics_mhz)} />
           <MetricRow label="Clock (SM)" value={formatMhz(metrics.clock_sm_mhz)} />
           <MetricRow label="Clock (Memory)" value={formatMhz(metrics.clock_memory_mhz)} />
@@ -119,7 +127,7 @@ export function GpuCard({ metrics, chartData, events, requests, showCharts = fal
             title="Clock (Graphics)"
             data={chartData.clockGraphics}
             unit="MHz"
-            events={events?.filter(e => e.event_type === 'throttle').map(e => ({
+            events={scopedEvents?.filter(e => e.event_type === 'throttle').map(e => ({
               timestamp: e.timestamp_ms, type: e.event_type, detail: e.detail,
             }))}
           />

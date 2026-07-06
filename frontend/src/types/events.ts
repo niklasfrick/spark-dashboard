@@ -4,6 +4,7 @@
 // which can be mapped to GpuEvent[] when passed to components
 export interface GpuEvent {
   timestamp_ms: number
+  gpu_index?: number | null
   event_type: 'thermal' | 'throttle' | 'power_brake' | 'xid'
   detail: string
 }

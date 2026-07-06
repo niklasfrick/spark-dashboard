@@ -106,7 +106,7 @@ pub fn select_display_total(
 /// device is available. Detects unified vs discrete memory topology by
 /// comparing NVML VRAM total to system RAM total.
 #[cfg(target_os = "linux")]
-pub fn collect_memory_metrics(device: &Option<nvml_wrapper::Device>) -> MemoryMetrics {
+pub fn collect_memory_metrics(device: Option<&nvml_wrapper::Device>) -> MemoryMetrics {
     use crate::metrics::gpu::nvml_optional;
     use procfs::Current;
 
@@ -132,19 +132,18 @@ pub fn collect_memory_metrics(device: &Option<nvml_wrapper::Device>) -> MemoryMe
     // systems this reports the same pool as /proc/meminfo, and on GB10 it
     // returns NotSupported entirely).
     let (gpu_memory_total_bytes, gpu_memory_used_bytes) = device
-        .as_ref()
         .and_then(|d| nvml_optional(d.memory_info()))
         .map(|info| (Some(info.total), Some(info.used)))
         .unwrap_or((None, None));
 
     // GPU name powers the unified-memory family check (Grace/GB10/Jetson/etc.)
     // when NVML's memory_info isn't available to do the size-comparison check.
-    let gpu_name = device.as_ref().and_then(|d| nvml_optional(d.name()));
+    let gpu_name = device.and_then(|d| nvml_optional(d.name()));
 
     // Estimate GPU memory from running compute processes (process-list sum).
     // Retained because it's the only per-process breakdown signal we have —
     // useful on unified-memory systems where memory_info mirrors /proc/meminfo.
-    let gpu_estimated_bytes = device.as_ref().and_then(|d| {
+    let gpu_estimated_bytes = device.and_then(|d| {
         nvml_optional(d.running_compute_processes()).map(|procs| {
             procs
                 .iter()
@@ -393,7 +392,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn collect_memory_metrics_none_device_reads_meminfo() {
-        let metrics = collect_memory_metrics(&None);
+        let metrics = collect_memory_metrics(None);
         // On Linux, /proc/meminfo should be available so total > 0
         assert!(metrics.total_bytes > 0);
         assert!(metrics.available_bytes > 0);

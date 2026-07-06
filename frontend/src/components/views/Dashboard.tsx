@@ -65,6 +65,7 @@ export function Dashboard({
 
   // No hardware power cap is exposed on the GB10 (unified-memory SoC), so scale
   // the gauge against the observed peak draw when the limit is absent.
+  const gpus = metrics.gpus && metrics.gpus.length > 0 ? metrics.gpus : [metrics.gpu]
   const powerHistory = history.getChartData('gpuPower')
   const powerPercent = computePowerScale(
     metrics.gpu.power_watts,
@@ -89,7 +90,9 @@ export function Dashboard({
     { value: free, total: metrics.memory.total_bytes, color: '#27272A', label: `Free: ${formatBytes(free)}` },
   ]
 
-  const allEvents = events.map(e => ({
+  const primaryGpuIndex = metrics.gpu.index ?? 0
+  const primaryGpuEvents = events.filter(e => e.gpu_index === undefined || e.gpu_index === null || e.gpu_index === primaryGpuIndex)
+  const allEvents = primaryGpuEvents.map(e => ({
     timestamp: e.timestamp_ms, type: e.event_type, detail: e.detail,
   }))
   const requestSpans = requests.map(r => ({
@@ -153,6 +156,26 @@ export function Dashboard({
 
       {/* ── Hardware Overview — fills the rest of the viewport ── */}
       <div className="flex-1 min-h-0 bg-[#0a0a0d]/80 rounded-xl border border-white/[0.03] p-1 lg:p-1.5 2xl:p-2 flex flex-col">
+        {gpus.length > 1 && (
+          <div className="shrink-0 grid grid-cols-2 lg:grid-cols-4 gap-1 lg:gap-1.5 mb-1 lg:mb-1.5">
+            {gpus.map((gpu) => (
+              <div key={gpu.index ?? 'primary'} className="min-w-0 rounded-md border border-white/[0.04] bg-[#151519] px-2 py-1">
+                <div className="flex items-baseline justify-between gap-2 min-w-0">
+                  <span className="text-[10px] lg:text-[11px] font-semibold text-zinc-200 truncate">
+                    {gpu.index !== null && gpu.index !== undefined ? `GPU ${gpu.index}` : 'GPU'}
+                  </span>
+                  <span className="text-[10px] text-zinc-500 truncate">{gpu.name}</span>
+                </div>
+                <div className="mt-0.5 grid grid-cols-3 gap-2 text-[10px] lg:text-[11px] font-mono tabular-nums text-zinc-300">
+                  <span>{gpu.utilization_percent ?? 0}%</span>
+                  <span>{gpu.temperature_celsius ?? 0}C</span>
+                  <span>{gpu.power_watts !== null ? `${Math.round(gpu.power_watts)}W` : '--'}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div ref={hwGridRef} className="flex-1 min-h-0 grid grid-cols-2 sm:grid-cols-4 gap-1 lg:gap-1.5 auto-rows-fr">
 
           {/* GPU Utilization */}

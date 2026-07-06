@@ -44,16 +44,28 @@ function createBuffers(): Record<MetricKey, CircularBuffer<DataPoint>> {
   return buffers
 }
 
+function extractGpuValue(gpu: MetricsSnapshot['gpu'], key: MetricKey): number | null {
+  switch (key) {
+    case 'gpuUtil':
+      return gpu.utilization_percent
+    case 'gpuTemp':
+      return gpu.temperature_celsius
+    case 'gpuPower':
+      return gpu.power_watts
+    case 'gpuClockGraphics':
+      return gpu.clock_graphics_mhz
+    default:
+      return null
+  }
+}
+
 function extractValue(metrics: MetricsSnapshot, key: MetricKey): number | null {
   switch (key) {
     case 'gpuUtil':
-      return metrics.gpu.utilization_percent
     case 'gpuTemp':
-      return metrics.gpu.temperature_celsius
     case 'gpuPower':
-      return metrics.gpu.power_watts
     case 'gpuClockGraphics':
-      return metrics.gpu.clock_graphics_mhz
+      return extractGpuValue(metrics.gpu, key)
     case 'cpuAggregate':
       return metrics.cpu.aggregate_percent
     case 'memoryUsedPercent':
@@ -77,6 +89,9 @@ export function useMetricsHistory(
   metrics: MetricsSnapshot | null,
 ) {
   const buffersRef = useRef(createBuffers())
+  const gpuBuffersRef = useRef<
+    Record<string, Record<MetricKey, CircularBuffer<DataPoint>>>
+  >({})
   const engineBuffersRef = useRef<
     Record<string, Record<string, CircularBuffer<DataPoint>>>
   >({})
@@ -100,6 +115,21 @@ export function useMetricsHistory(
       const val = extractValue(metrics, key)
       if (val !== null) {
         buffers[key].push({ timestamp: ts, value: val })
+      }
+    }
+
+    const gpus = metrics.gpus && metrics.gpus.length > 0 ? metrics.gpus : [metrics.gpu]
+    for (const gpu of gpus) {
+      const gpuKey = String(gpu.index ?? 0)
+      if (!gpuBuffersRef.current[gpuKey]) {
+        gpuBuffersRef.current[gpuKey] = createBuffers()
+      }
+      const gb = gpuBuffersRef.current[gpuKey]
+      for (const key of ['gpuUtil', 'gpuTemp', 'gpuPower', 'gpuClockGraphics'] as MetricKey[]) {
+        const val = extractGpuValue(gpu, key)
+        if (val !== null) {
+          gb[key].push({ timestamp: ts, value: val })
+        }
       }
     }
 
@@ -264,6 +294,17 @@ export function useMetricsHistory(
           .filter((dp) => dp.timestamp >= cutoff)
       }
 
+      const gpuMatch = metric.match(/^gpu:(\d+):(gpuUtil|gpuTemp|gpuPower|gpuClockGraphics)$/)
+      if (gpuMatch) {
+        const gb = gpuBuffersRef.current[gpuMatch[1]]
+        const buffer = gb?.[gpuMatch[2] as MetricKey]
+        if (buffer) {
+          return buffer
+            .toArray()
+            .filter((dp) => dp.timestamp >= cutoff)
+        }
+      }
+
       // Check engine metrics (format: "engineKey:metricName")
       const colonIndex = metric.lastIndexOf(':')
       if (colonIndex > 0) {
@@ -290,6 +331,15 @@ export function useMetricsHistory(
         buffersRef.current[metric as MetricKey]
       if (systemBuffer) {
         return systemBuffer.last(count).map((dp) => dp.value)
+      }
+
+      const gpuMatch = metric.match(/^gpu:(\d+):(gpuUtil|gpuTemp|gpuPower|gpuClockGraphics)$/)
+      if (gpuMatch) {
+        const gb = gpuBuffersRef.current[gpuMatch[1]]
+        const buffer = gb?.[gpuMatch[2] as MetricKey]
+        if (buffer) {
+          return buffer.last(count).map((dp) => dp.value)
+        }
       }
 
       const colonIndex = metric.lastIndexOf(':')

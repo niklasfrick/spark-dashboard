@@ -9,6 +9,7 @@ use tracing::warn;
 #[derive(Clone, serde::Serialize, Debug)]
 pub struct GpuEvent {
     pub timestamp_ms: u64,
+    pub gpu_index: Option<u32>,
     pub event_type: String,
     pub detail: String,
 }
@@ -44,27 +45,42 @@ fn resolve_power_limit_mw(device: &nvml_wrapper::Device) -> Option<u32> {
         .filter(|&mw| mw > 0)
 }
 
-/// Collect GPU metrics from an NVML device.
-/// Returns all-None GpuMetrics when no device is available.
+/// Empty GPU metric used when NVML or a selected GPU is unavailable.
 #[cfg(target_os = "linux")]
-pub fn collect_gpu_metrics(device: &Option<nvml_wrapper::Device>) -> GpuMetrics {
-    let Some(device) = device else {
-        return GpuMetrics {
-            name: None,
-            utilization_percent: None,
-            temperature_celsius: None,
-            power_watts: None,
-            power_limit_watts: None,
-            clock_graphics_mhz: None,
-            clock_sm_mhz: None,
-            clock_memory_mhz: None,
-            fan_speed_percent: None,
-        };
-    };
+pub fn empty_gpu_metrics() -> GpuMetrics {
+    GpuMetrics {
+        index: None,
+        name: None,
+        utilization_percent: None,
+        memory_total_bytes: None,
+        memory_used_bytes: None,
+        temperature_celsius: None,
+        power_watts: None,
+        power_limit_watts: None,
+        clock_graphics_mhz: None,
+        clock_sm_mhz: None,
+        clock_memory_mhz: None,
+        fan_speed_percent: None,
+    }
+}
 
+/// Collect GPU metrics from all opened NVML devices.
+#[cfg(target_os = "linux")]
+pub fn collect_gpu_metrics(devices: &[(u32, nvml_wrapper::Device)]) -> Vec<GpuMetrics> {
+    devices
+        .iter()
+        .map(|(index, device)| collect_gpu_metrics_for_device(*index, device))
+        .collect()
+}
+
+#[cfg(target_os = "linux")]
+fn collect_gpu_metrics_for_device(index: u32, device: &nvml_wrapper::Device) -> GpuMetrics {
     let name = nvml_optional(device.name());
 
     let utilization_percent = nvml_optional(device.utilization_rates()).map(|u| u.gpu);
+    let (memory_total_bytes, memory_used_bytes) = nvml_optional(device.memory_info())
+        .map(|info| (Some(info.total), Some(info.used)))
+        .unwrap_or((None, None));
 
     let temperature_celsius = nvml_optional(
         device.temperature(nvml_wrapper::enum_wrappers::device::TemperatureSensor::Gpu),
@@ -86,8 +102,11 @@ pub fn collect_gpu_metrics(device: &Option<nvml_wrapper::Device>) -> GpuMetrics 
     let fan_speed_percent = nvml_optional(device.fan_speed(0));
 
     GpuMetrics {
+        index: Some(index),
         name,
         utilization_percent,
+        memory_total_bytes,
+        memory_used_bytes,
         temperature_celsius,
         power_watts,
         power_limit_watts,
@@ -102,46 +121,49 @@ pub fn collect_gpu_metrics(device: &Option<nvml_wrapper::Device>) -> GpuMetrics 
 /// Returns empty vec if no device or no active throttle reasons.
 #[cfg(target_os = "linux")]
 pub fn detect_gpu_events(
-    device: &Option<nvml_wrapper::Device>,
+    devices: &[(u32, nvml_wrapper::Device)],
     timestamp_ms: u64,
 ) -> Vec<GpuEvent> {
-    let Some(device) = device else {
-        return Vec::new();
-    };
     let mut events = Vec::new();
 
-    if let Some(reasons) = nvml_optional(device.current_throttle_reasons()) {
-        use nvml_wrapper::bitmasks::device::ThrottleReasons;
+    for (index, device) in devices {
+        if let Some(reasons) = nvml_optional(device.current_throttle_reasons()) {
+            use nvml_wrapper::bitmasks::device::ThrottleReasons;
 
-        if reasons.contains(ThrottleReasons::HW_THERMAL_SLOWDOWN)
-            || reasons.contains(ThrottleReasons::SW_THERMAL_SLOWDOWN)
-        {
-            events.push(GpuEvent {
-                timestamp_ms,
-                event_type: "thermal".into(),
-                detail: "Thermal throttling active".into(),
-            });
-        }
-        if reasons.contains(ThrottleReasons::HW_SLOWDOWN) {
-            events.push(GpuEvent {
-                timestamp_ms,
-                event_type: "throttle".into(),
-                detail: "Hardware slowdown engaged".into(),
-            });
-        }
-        if reasons.contains(ThrottleReasons::HW_POWER_BRAKE_SLOWDOWN) {
-            events.push(GpuEvent {
-                timestamp_ms,
-                event_type: "power_brake".into(),
-                detail: "Power brake engaged".into(),
-            });
-        }
-        if reasons.contains(ThrottleReasons::SW_POWER_CAP) {
-            events.push(GpuEvent {
-                timestamp_ms,
-                event_type: "throttle".into(),
-                detail: "Software power cap limiting clocks".into(),
-            });
+            if reasons.contains(ThrottleReasons::HW_THERMAL_SLOWDOWN)
+                || reasons.contains(ThrottleReasons::SW_THERMAL_SLOWDOWN)
+            {
+                events.push(GpuEvent {
+                    timestamp_ms,
+                    gpu_index: Some(*index),
+                    event_type: "thermal".into(),
+                    detail: "Thermal throttling active".into(),
+                });
+            }
+            if reasons.contains(ThrottleReasons::HW_SLOWDOWN) {
+                events.push(GpuEvent {
+                    timestamp_ms,
+                    gpu_index: Some(*index),
+                    event_type: "throttle".into(),
+                    detail: "Hardware slowdown engaged".into(),
+                });
+            }
+            if reasons.contains(ThrottleReasons::HW_POWER_BRAKE_SLOWDOWN) {
+                events.push(GpuEvent {
+                    timestamp_ms,
+                    gpu_index: Some(*index),
+                    event_type: "power_brake".into(),
+                    detail: "Power brake engaged".into(),
+                });
+            }
+            if reasons.contains(ThrottleReasons::SW_POWER_CAP) {
+                events.push(GpuEvent {
+                    timestamp_ms,
+                    gpu_index: Some(*index),
+                    event_type: "throttle".into(),
+                    detail: "Software power cap limiting clocks".into(),
+                });
+            }
         }
     }
 
@@ -159,8 +181,11 @@ pub fn detect_gpu_events(timestamp_ms: u64) -> Vec<GpuEvent> {
 #[cfg(not(target_os = "linux"))]
 pub fn collect_gpu_metrics() -> GpuMetrics {
     GpuMetrics {
+        index: Some(0),
         name: Some("Stub (non-Linux)".to_string()),
         utilization_percent: None,
+        memory_total_bytes: None,
+        memory_used_bytes: None,
         temperature_celsius: None,
         power_watts: None,
         power_limit_watts: None,
@@ -195,9 +220,12 @@ mod tests {
 
         #[test]
         fn collect_gpu_metrics_none_device_returns_all_none() {
-            let metrics = collect_gpu_metrics(&None);
+            let metrics = empty_gpu_metrics();
+            assert!(metrics.index.is_none());
             assert!(metrics.name.is_none());
             assert!(metrics.utilization_percent.is_none());
+            assert!(metrics.memory_total_bytes.is_none());
+            assert!(metrics.memory_used_bytes.is_none());
             assert!(metrics.temperature_celsius.is_none());
             assert!(metrics.power_watts.is_none());
             assert!(metrics.power_limit_watts.is_none());
@@ -215,8 +243,10 @@ mod tests {
         #[test]
         fn collect_gpu_metrics_stub_returns_stub_name() {
             let metrics = collect_gpu_metrics();
+            assert_eq!(metrics.index, Some(0));
             assert_eq!(metrics.name, Some("Stub (non-Linux)".to_string()));
             assert!(metrics.utilization_percent.is_none());
+            assert!(metrics.memory_total_bytes.is_none());
         }
 
         #[test]
@@ -232,7 +262,7 @@ mod tests {
 
         #[test]
         fn detect_gpu_events_no_device_returns_empty() {
-            let events = detect_gpu_events(&None, 1000);
+            let events = detect_gpu_events(&[], 1000);
             assert!(events.is_empty());
         }
     }

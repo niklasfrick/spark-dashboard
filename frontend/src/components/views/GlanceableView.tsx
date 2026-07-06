@@ -29,6 +29,8 @@ export function GlanceableView({ metrics, tpsSparkline }: GlanceableViewProps) {
     { value: free, total: metrics.memory.total_bytes, color: '#27272A', label: `Free: ${formatBytes(free)}` },
   ]
 
+  const gpus = metrics.gpus && metrics.gpus.length > 0 ? metrics.gpus : [metrics.gpu]
+
   // Active engine: first engine with Running status
   const activeEngine = metrics.engines.find(e => e.status.type === 'Running')
   const engineTitle = activeEngine
@@ -42,16 +44,22 @@ export function GlanceableView({ metrics, tpsSparkline }: GlanceableViewProps) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
       {/* GPU Utilization */}
-      <MetricCard title="GPU Utilization" subtitle={metrics.gpu.name ?? undefined}>
-        <div className="flex justify-center p-4">
-          <ArcGauge
-            value={metrics.gpu.utilization_percent ?? 0}
-            label="GPU Util"
-            unit="%"
-            size={160}
-          />
-        </div>
-      </MetricCard>
+      {gpus.map((gpu) => (
+        <MetricCard
+          key={gpu.index ?? 'primary'}
+          title={gpu.index !== null && gpu.index !== undefined ? `GPU ${gpu.index} Utilization` : 'GPU Utilization'}
+          subtitle={gpu.name ?? undefined}
+        >
+          <div className="flex justify-center p-4">
+            <ArcGauge
+              value={gpu.utilization_percent ?? 0}
+              label="GPU Util"
+              unit="%"
+              size={160}
+            />
+          </div>
+        </MetricCard>
+      ))}
 
       {/* CPU Usage */}
       <MetricCard title="CPU Usage" subtitle={metrics.cpu.name ?? undefined}>

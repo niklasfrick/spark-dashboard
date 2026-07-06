@@ -15,6 +15,7 @@ function App() {
   const events = useMemo((): GpuEvent[] =>
     getEvents().map((e) => ({
       timestamp_ms: e.timestamp_ms,
+      gpu_index: e.gpu_index,
       event_type: e.event_type as GpuEvent['event_type'],
       detail: e.detail,
     })),

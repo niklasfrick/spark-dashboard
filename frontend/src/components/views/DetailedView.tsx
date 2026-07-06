@@ -40,6 +40,11 @@ export function DetailedView({
     { label: 'TX', value: formatRate(metrics.network.tx_bytes_per_sec) },
   ]
 
+  const gpus = metrics.gpus && metrics.gpus.length > 0 ? metrics.gpus : [metrics.gpu]
+  const gpuMetricKey = (gpuIndex: number | null | undefined, metric: string) => (
+    gpuIndex === null || gpuIndex === undefined ? metric : `gpu:${gpuIndex}:${metric}`
+  )
+
   return (
     <div className="space-y-6">
       {/* Time Window Selector */}
@@ -47,19 +52,24 @@ export function DetailedView({
         <TimeWindowSelector value={timeWindow} onChange={onTimeWindowChange} />
       </div>
 
-      {/* Row 1: GPU gauges + GPU charts in 3-col grid */}
-      <GpuCard
-        metrics={metrics.gpu}
-        showCharts={true}
-        chartData={{
-          utilization: history.getChartData('gpuUtil'),
-          temperature: history.getChartData('gpuTemp'),
-          power: history.getChartData('gpuPower'),
-          clockGraphics: history.getChartData('gpuClockGraphics'),
-        }}
-        events={events}
-        requests={requests}
-      />
+      {/* Row 1: GPU gauges + GPU charts */}
+      <div className="space-y-4">
+        {gpus.map((gpu) => (
+          <GpuCard
+            key={gpu.index ?? 'primary'}
+            metrics={gpu}
+            showCharts={true}
+            chartData={{
+              utilization: history.getChartData(gpuMetricKey(gpu.index, 'gpuUtil')),
+              temperature: history.getChartData(gpuMetricKey(gpu.index, 'gpuTemp')),
+              power: history.getChartData(gpuMetricKey(gpu.index, 'gpuPower')),
+              clockGraphics: history.getChartData(gpuMetricKey(gpu.index, 'gpuClockGraphics')),
+            }}
+            events={events}
+            requests={requests}
+          />
+        ))}
+      </div>
 
       {/* Row 2: CPU, Memory, System side by side */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

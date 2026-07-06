@@ -95,8 +95,9 @@ deploy:
           capabilities: [gpu]
 ```
 
-For `docker run`, the equivalent is `--gpus all`. Select a specific device with
-`SPARK_DASHBOARD_GPU_INDEX` on multi-GPU hosts.
+For `docker run`, the equivalent is `--gpus all`. Spark Dashboard monitors all
+visible NVIDIA GPUs by default; set `SPARK_DASHBOARD_GPU_INDEX` to focus on one
+specific device.
 
 ## Environment variables
 
@@ -109,7 +110,7 @@ All are optional; defaults match the binary. Set them in `.env`.
 | `SPARK_DASHBOARD_PORT`              | `3000`      | Listen port.                                         |
 | `SPARK_DASHBOARD_BIND`              | `0.0.0.0`   | Bind address.                                        |
 | `SPARK_DASHBOARD_POLL_INTERVAL`     | `1000`      | Metrics polling interval (ms).                       |
-| `SPARK_DASHBOARD_GPU_INDEX`         | `0`         | NVML GPU index to monitor.                           |
+| `SPARK_DASHBOARD_GPU_INDEX`         | _(unset)_   | Optional NVML GPU index; unset monitors all GPUs.    |
 | `SPARK_DASHBOARD_PROVIDER_API_KEY`  | _(unset)_   | Fallback API key for auth-gated engines.             |
 | `RUST_LOG`                          | `info`      | Log filter (`error`/`warn`/`info`/`debug`/`trace`).  |
 
