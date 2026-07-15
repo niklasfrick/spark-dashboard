@@ -4,6 +4,9 @@ mod metrics;
 mod server;
 mod ws;
 
+#[cfg(target_os = "linux")]
+mod logs;
+
 use clap::{Args, Parser, Subcommand};
 use cli::service::ServiceCommand;
 use engines::{ApiKeyResolver, EngineOverride, EngineType};
@@ -101,6 +104,20 @@ struct RunArgs {
     /// --engine-api-key (also covers auto-detected engines).
     #[arg(long, env = "SPARK_DASHBOARD_PROVIDER_API_KEY")]
     provider_api_key: Option<String>,
+
+    /// Enable the experimental log viewer at /ws/logs (Linux only).
+    ///
+    /// When set, the dashboard streams container logs from the Docker daemon
+    /// using the bollard API. This is opt-in because engine logs can contain
+    /// prompts and request payloads; the dashboard binds 0.0.0.0 by default
+    /// and /ws/logs is unauthenticated.
+    #[cfg(target_os = "linux")]
+    #[arg(
+        long,
+        env = "SPARK_DASHBOARD_ENABLE_LOG_VIEWER",
+        default_value_t = false
+    )]
+    enable_log_viewer: bool,
 }
 
 fn main() -> ExitCode {
@@ -173,8 +190,7 @@ async fn run_server_inner(args: RunArgs) -> Result<(), Box<dyn std::error::Error
     // Shared engine state: engine collector writes, metrics collector reads
     let engine_state: Arc<RwLock<Vec<engines::EngineSnapshot>>> = Arc::new(RwLock::new(Vec::new()));
 
-    // Spawn engine collector loop as separate tokio task (Research Pitfall 7:
-    // separate task so slow engine API calls don't block hardware metrics)
+    // Spawn engine collector loop as separate tokio task
     tokio::spawn(engines::engine_collector_loop(
         engine_state.clone(),
         overrides,
@@ -189,6 +205,16 @@ async fn run_server_inner(args: RunArgs) -> Result<(), Box<dyn std::error::Error
         args.simulate_gpus,
         engine_state.clone(),
     ));
+
+    // Enable the log viewer if the opt-in flag was passed (Linux only).
+    // This registers /ws/logs in the router; nothing is exposed by default.
+    #[cfg(target_os = "linux")]
+    if args.enable_log_viewer {
+        logs::enable_log_viewer();
+        tracing::info!(
+            "Log viewer enabled at /ws/logs - unauthenticated, container logs are exposed"
+        );
+    }
 
     let app = server::create_router(tx);
 

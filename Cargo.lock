@@ -2084,6 +2084,7 @@ dependencies = [
  "axum",
  "bollard",
  "clap",
+ "futures-util",
  "mime_guess",
  "nvml-wrapper",
  "procfs",
