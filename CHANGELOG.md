@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.12.0](https://github.com/niklasfrick/spark-dashboard/compare/spark-dashboard-v0.11.0...spark-dashboard-v0.12.0) (2026-07-21)
+
+
+### Features
+
+* **engines:** associate detected engines with the GPUs they run on ([e406a50](https://github.com/niklasfrick/spark-dashboard/commit/e406a505f52a606a1b6a0138d8e49cc81e660fc0))
+* **frontend:** show per-engine GPU badge on multi-GPU hosts ([180e414](https://github.com/niklasfrick/spark-dashboard/commit/180e414f39550b5b1ace70918e0f749add6a7dd6)), closes [#45](https://github.com/niklasfrick/spark-dashboard/issues/45)
+* **gpu:** add --simulate-gpus flag appending fictive GPUs to snapshots ([f6e29c5](https://github.com/niklasfrick/spark-dashboard/commit/f6e29c5b49ebb9178f3b03031aba4e95a0b02b32))
+* **gpu:** make main Dashboard hardware panels switch between GPUs ([a34c31a](https://github.com/niklasfrick/spark-dashboard/commit/a34c31ab718bdd88d1cc4d955e71cecc00024670)), closes [#44](https://github.com/niklasfrick/spark-dashboard/issues/44)
+* **gpu:** monitor all NVIDIA GPUs while preserving backward compatibility ([8d6033c](https://github.com/niklasfrick/spark-dashboard/commit/8d6033c3f94b6c00e50922aa1dbd423642441942))
+
+
+### Bug Fixes
+
+* **engines:** clear stale engine PIDs and test the detection merge ([6970153](https://github.com/niklasfrick/spark-dashboard/commit/69701531a5217ba2ba2fe1c7cd4d2d2c5baf0e37))
+* **gpu:** keep Dashboard hook order stable across the first snapshot ([2afad09](https://github.com/niklasfrick/spark-dashboard/commit/2afad09e8b3be91c7c4a31bc942f8e59f0c45c11))
+
+
+### Dependencies & Chores
+
+* **dev:** forward SPARK_DASHBOARD_SIMULATE_GPUS in the bare-metal dev loop ([cd3290c](https://github.com/niklasfrick/spark-dashboard/commit/cd3290cbc0159c8917bb5eccf39b7da27b41233f))
+
 ## [0.11.0](https://github.com/niklasfrick/spark-dashboard/compare/spark-dashboard-v0.10.0...spark-dashboard-v0.11.0) (2026-06-18)
 
 
