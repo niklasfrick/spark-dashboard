@@ -200,7 +200,8 @@ export interface EngineSnapshot {
   recent_requests: InferenceRequestData[]
   deployment_mode: DeploymentMode
   /** Indexes of the GPU(s) the engine was observed running on (NVML
-   *  compute-process match on the backend). Empty or absent = unknown;
-   *  the UI shows the badge only on multi-GPU hosts. */
+   *  compute-process match on the backend). Empty = unknown; the UI shows
+   *  the badge only on multi-GPU hosts. The backend always serializes the
+   *  field — optional only so snapshots from older backends still parse. */
   gpu_indexes?: number[]
 }

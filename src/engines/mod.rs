@@ -352,6 +352,20 @@ impl EngineState {
     }
 }
 
+/// Clear the PID set of every engine the current detection pass did not see.
+/// Their snapshots keep being emitted through the grace period, but matching
+/// stale PIDs against NVML risks a wrong GPU badge once the OS recycles a PID.
+fn clear_stale_pids(
+    engine_map: &mut HashMap<(EngineType, String), EngineState>,
+    detected_keys: &std::collections::HashSet<(EngineType, String)>,
+) {
+    for (key, state) in engine_map.iter_mut() {
+        if !detected_keys.contains(key) {
+            state.pids.clear();
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Manual override (D-11, D-12)
 // ---------------------------------------------------------------------------
@@ -515,6 +529,17 @@ pub async fn engine_collector_loop(
                     // restart and fork workers over their lifetime.
                     state.pids = d.pids.clone();
                 }
+
+                // Engines absent from this pass (stopped, restarting, probe
+                // blip) keep emitting snapshots through the grace period, but
+                // their PIDs are stale — the OS may recycle one onto an
+                // unrelated GPU process, turning the badge into a confident
+                // wrong guess. Clear them: empty = unknown = no badge.
+                let detected_keys: std::collections::HashSet<_> = detected
+                    .iter()
+                    .map(|d| (d.engine_type.clone(), d.endpoint.clone()))
+                    .collect();
+                clear_stale_pids(&mut engine_map, &detected_keys);
             }
 
             _ = poll_interval.tick() => {
@@ -715,6 +740,25 @@ mod tests {
         let r =
             ApiKeyResolver::from_pairs(&["http://a:8000".into()], &["".into()], Some("".into()));
         assert_eq!(r.resolve("http://a:8000"), None);
+    }
+
+    #[test]
+    fn stale_pids_cleared_for_engines_absent_from_detection() {
+        let mut map: HashMap<(EngineType, String), EngineState> = HashMap::new();
+        let seen_key = (EngineType::Vllm, "http://a:8000".to_string());
+        let stale_key = (EngineType::Vllm, "http://b:8001".to_string());
+        let mut seen = state();
+        seen.pids = vec![100];
+        let mut stale = state();
+        stale.pids = vec![200];
+        map.insert(seen_key.clone(), seen);
+        map.insert(stale_key.clone(), stale);
+
+        let detected_keys = std::collections::HashSet::from([seen_key.clone()]);
+        clear_stale_pids(&mut map, &detected_keys);
+
+        assert_eq!(map[&seen_key].pids, vec![100], "detected engine keeps PIDs");
+        assert!(map[&stale_key].pids.is_empty(), "undetected engine cleared");
     }
 
     #[test]

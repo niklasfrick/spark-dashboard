@@ -41,12 +41,30 @@ pub async fn detect_engines(
 
     // Layer 2: Docker scan (Linux-only)
     let docker_candidates = detect_docker_engines().await;
+    merge_docker_candidates(&mut candidates, docker_candidates);
 
-    // Merge Docker results. Key by (engine_type, endpoint) so multiple
-    // instances of the same engine on different ports are preserved as
-    // distinct entries. When a Docker candidate matches an existing
-    // process-scan entry by exact endpoint, upgrade its deployment_mode to
-    // Docker (Docker detection is authoritative for container metadata).
+    // Layer 3: API health probe -- verify each candidate is actually reachable
+    let mut verified = Vec::new();
+    for candidate in candidates {
+        if probe_engine(client, &candidate).await {
+            verified.push(candidate);
+        }
+    }
+
+    verified
+}
+
+/// Merge Docker results into the process-scan candidates. Key by
+/// (engine_type, endpoint) so multiple instances of the same engine on
+/// different ports are preserved as distinct entries. When a Docker candidate
+/// matches an existing process-scan entry by exact endpoint, upgrade its
+/// deployment_mode to Docker (Docker detection is authoritative for container
+/// metadata) and union the PID sets — `docker top` and the host process scan
+/// may each see processes the other missed.
+fn merge_docker_candidates(
+    candidates: &mut Vec<DetectedEngine>,
+    docker_candidates: Vec<DetectedEngine>,
+) {
     let mut seen: HashSet<(EngineType, String)> = candidates
         .iter()
         .map(|c| (c.engine_type.clone(), c.endpoint.clone()))
@@ -67,8 +85,6 @@ pub async fn detect_engines(
                 if existing.served_model.is_none() && dc.served_model.is_some() {
                     existing.served_model = dc.served_model.clone();
                 }
-                // Union the PID sets: `docker top` and the host process scan
-                // may each see processes the other missed.
                 for pid in &dc.pids {
                     if !existing.pids.contains(pid) {
                         existing.pids.push(*pid);
@@ -81,16 +97,6 @@ pub async fn detect_engines(
             candidates.push(dc);
         }
     }
-
-    // Layer 3: API health probe -- verify each candidate is actually reachable
-    let mut verified = Vec::new();
-    for candidate in candidates {
-        if probe_engine(client, &candidate).await {
-            verified.push(candidate);
-        }
-    }
-
-    verified
 }
 
 // ---------------------------------------------------------------------------
@@ -98,7 +104,7 @@ pub async fn detect_engines(
 // ---------------------------------------------------------------------------
 
 fn detect_by_process(sys: &sysinfo::System) -> Vec<DetectedEngine> {
-    let mut detected = Vec::new();
+    let mut detected: Vec<DetectedEngine> = Vec::new();
 
     for &(binary, ref engine_type, default_endpoint) in ENGINE_BINARIES {
         // Direct binary match (e.g. process named "vllm")
@@ -700,5 +706,46 @@ mod tests {
         // Degenerate parent data forming a cycle must not loop forever.
         let processes = vec![(100, Some(101)), (101, Some(100))];
         assert_eq!(expand_pid_tree(&[100], &processes), vec![100, 101]);
+    }
+
+    fn candidate(endpoint: &str, mode: DeploymentMode, pids: &[u32]) -> DetectedEngine {
+        DetectedEngine {
+            engine_type: EngineType::Vllm,
+            endpoint: endpoint.to_string(),
+            deployment_mode: mode,
+            served_model: None,
+            pids: pids.to_vec(),
+        }
+    }
+
+    #[test]
+    fn docker_merge_unions_pids_and_upgrades_mode() {
+        let mut candidates = vec![candidate(
+            "http://localhost:8000",
+            DeploymentMode::Native,
+            &[100, 101],
+        )];
+        let docker = vec![candidate(
+            "http://localhost:8000",
+            DeploymentMode::Docker,
+            &[101, 102],
+        )];
+        merge_docker_candidates(&mut candidates, docker);
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].deployment_mode, DeploymentMode::Docker);
+        assert_eq!(candidates[0].pids, vec![100, 101, 102]);
+    }
+
+    #[test]
+    fn docker_merge_keeps_distinct_endpoints_separate() {
+        let mut candidates =
+            vec![candidate("http://localhost:8000", DeploymentMode::Native, &[100])];
+        let docker = vec![candidate("http://localhost:8001", DeploymentMode::Docker, &[200])];
+        merge_docker_candidates(&mut candidates, docker);
+
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].pids, vec![100]);
+        assert_eq!(candidates[1].pids, vec![200]);
     }
 }
