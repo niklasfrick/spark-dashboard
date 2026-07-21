@@ -115,6 +115,12 @@ rebuild_backend() {
             backend_env="SPARK_DASHBOARD_PROVIDER_API_KEY=$(printf %q "${SPARK_DASHBOARD_PROVIDER_API_KEY}") "
             echo "==> Forwarding SPARK_DASHBOARD_PROVIDER_API_KEY to backend"
         fi
+        # SPARK_DASHBOARD_SIMULATE_GPUS appends fictive GPUs for multi-GPU UI
+        # testing on the single-GPU Spark (the binary reads it via clap `env=`).
+        if [ -n "${SPARK_DASHBOARD_SIMULATE_GPUS:-}" ]; then
+            backend_env="${backend_env}SPARK_DASHBOARD_SIMULATE_GPUS=$(printf %q "${SPARK_DASHBOARD_SIMULATE_GPUS}") "
+            echo "==> Forwarding SPARK_DASHBOARD_SIMULATE_GPUS to backend"
+        fi
         ssh "${REMOTE}" "cd ${DEPLOY_DIR} && > /tmp/spark-dashboard.log && (nohup env ${backend_env}./target/release/spark-dashboard >> /tmp/spark-dashboard.log 2>&1 < /dev/null &) &"
         echo "==> Backend running"
     else
