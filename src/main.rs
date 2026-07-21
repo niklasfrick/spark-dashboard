@@ -76,6 +76,13 @@ struct RunArgs {
     #[arg(long, env = "SPARK_DASHBOARD_GPU_INDEX")]
     gpu_index: Option<u32>,
 
+    /// Number of fictive GPUs to append after the real ones (development aid).
+    /// Each emits plausible oscillating metrics and occasional thermal events
+    /// through the normal snapshot pipeline, so multi-GPU UI paths can be
+    /// exercised on single-GPU (or GPU-less) hosts.
+    #[arg(long, env = "SPARK_DASHBOARD_SIMULATE_GPUS", default_value_t = 0)]
+    simulate_gpus: u32,
+
     /// Manually specify engine type (use with --engine-url)
     #[arg(long, value_name = "TYPE")]
     engine: Vec<String>,
@@ -179,6 +186,7 @@ async fn run_server_inner(args: RunArgs) -> Result<(), Box<dyn std::error::Error
         tx.clone(),
         args.poll_interval,
         args.gpu_index,
+        args.simulate_gpus,
         engine_state.clone(),
     ));
 

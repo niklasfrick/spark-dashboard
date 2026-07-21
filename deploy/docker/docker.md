@@ -111,6 +111,7 @@ All are optional; defaults match the binary. Set them in `.env`.
 | `SPARK_DASHBOARD_BIND`              | `0.0.0.0`   | Bind address.                                        |
 | `SPARK_DASHBOARD_POLL_INTERVAL`     | `1000`      | Metrics polling interval (ms).                       |
 | `SPARK_DASHBOARD_GPU_INDEX`         | _(unset)_   | Optional NVML GPU index; unset monitors all GPUs.    |
+| `SPARK_DASHBOARD_SIMULATE_GPUS`     | `0`         | Dev aid: append N fictive GPUs with simulated data.  |
 | `SPARK_DASHBOARD_PROVIDER_API_KEY`  | _(unset)_   | Fallback API key for auth-gated engines.             |
 | `RUST_LOG`                          | `info`      | Log filter (`error`/`warn`/`info`/`debug`/`trace`).  |
 

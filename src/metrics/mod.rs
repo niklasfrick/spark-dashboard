@@ -1,6 +1,7 @@
 pub mod cpu;
 pub mod disk;
 pub mod gpu;
+pub mod gpu_sim;
 pub mod memory;
 pub mod network;
 
@@ -35,6 +36,7 @@ pub async fn metrics_collector(
     tx: broadcast::Sender<String>,
     poll_interval_ms: u64,
     gpu_index: Option<u32>,
+    simulate_gpus: u32,
     engine_state: std::sync::Arc<tokio::sync::RwLock<Vec<EngineSnapshot>>>,
 ) {
     let mut interval = tokio::time::interval(Duration::from_millis(poll_interval_ms));
@@ -85,6 +87,20 @@ pub async fn metrics_collector(
     };
     let primary_device = devices.first().map(|(_, device)| device);
 
+    // Fictive GPUs slot in after every device NVML reports (not just the
+    // monitored ones), so their indices can never collide with real hardware.
+    let simulated_base_index = nvml
+        .as_ref()
+        .and_then(|n| n.device_count().ok())
+        .unwrap_or(0);
+    if simulate_gpus > 0 {
+        tracing::info!(
+            "Simulating {} fictive GPU(s) at index {} and up (--simulate-gpus)",
+            simulate_gpus,
+            simulated_base_index
+        );
+    }
+
     // Initial CPU refresh (first reading will be 0%, second will be accurate)
     sys.refresh_cpu_usage();
 
@@ -107,7 +123,12 @@ pub async fn metrics_collector(
         // Read latest engine snapshots (non-blocking read from shared state)
         let engines = engine_state.read().await.clone();
 
-        let gpu_events = gpu::detect_gpu_events(&devices, timestamp_ms);
+        let mut gpu_events = gpu::detect_gpu_events(&devices, timestamp_ms);
+        gpu_events.extend(gpu_sim::simulated_gpu_events(
+            simulate_gpus,
+            simulated_base_index,
+            timestamp_ms,
+        ));
 
         let memory_metrics = memory::collect_memory_metrics(primary_device);
         if !memory_logged {
@@ -121,7 +142,12 @@ pub async fn metrics_collector(
             memory_logged = true;
         }
 
-        let gpus = gpu::collect_gpu_metrics(&devices);
+        let mut gpus = gpu::collect_gpu_metrics(&devices);
+        gpus.extend(gpu_sim::simulated_gpus(
+            simulate_gpus,
+            simulated_base_index,
+            timestamp_ms,
+        ));
         let gpu = gpus.first().cloned().unwrap_or_else(gpu::empty_gpu_metrics);
 
         let snapshot = MetricsSnapshot {
@@ -154,6 +180,7 @@ pub async fn metrics_collector(
     tx: broadcast::Sender<String>,
     poll_interval_ms: u64,
     _gpu_index: Option<u32>,
+    simulate_gpus: u32,
     engine_state: std::sync::Arc<tokio::sync::RwLock<Vec<EngineSnapshot>>>,
 ) {
     let mut interval = tokio::time::interval(Duration::from_millis(poll_interval_ms));
@@ -184,13 +211,18 @@ pub async fn metrics_collector(
         // Read latest engine snapshots (non-blocking read from shared state)
         let engines = engine_state.read().await.clone();
 
-        let gpu_events = gpu::detect_gpu_events(timestamp_ms);
+        // The non-Linux stub always exposes one fake primary GPU at index 0,
+        // so fictive GPUs start at index 1.
+        let mut gpu_events = gpu::detect_gpu_events(timestamp_ms);
+        gpu_events.extend(gpu_sim::simulated_gpu_events(simulate_gpus, 1, timestamp_ms));
 
         let gpu = gpu::collect_gpu_metrics();
+        let mut gpus = vec![gpu.clone()];
+        gpus.extend(gpu_sim::simulated_gpus(simulate_gpus, 1, timestamp_ms));
         let snapshot = MetricsSnapshot {
             timestamp_ms,
-            gpu: gpu.clone(),
-            gpus: vec![gpu],
+            gpu,
+            gpus,
             cpu: cpu::collect_cpu_metrics(&sys),
             memory: memory::collect_memory_metrics(&sys),
             disk: disk::collect_disk_metrics(&disks),
