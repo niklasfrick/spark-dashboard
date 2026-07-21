@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { ArcGauge, type GaugeSegment } from '@/components/gauges/ArcGauge'
 import { HBar } from '@/components/gauges/HBar'
 import { CoreHeatmap } from '@/components/charts/CoreHeatmap'
@@ -61,16 +62,31 @@ export function Dashboard({
   events,
   requests,
 }: DashboardProps) {
+  // Which GPU the hardware chart panels show on multi-GPU hosts. Held above
+  // the early return so incoming snapshots cannot reset it.
+  const [selectedGpuIndex, setSelectedGpuIndex] = useState(0)
+
   if (!metrics) return null
+
+  const gpus = metrics.gpus && metrics.gpus.length > 0 ? metrics.gpus : [metrics.gpu]
+  const multiGpu = gpus.length > 1
+  // Fall back to the primary GPU if the selected index vanishes from the feed.
+  const activeGpu = gpus.find((g) => (g.index ?? 0) === selectedGpuIndex) ?? gpus[0]
+  const activeGpuIndex = activeGpu.index ?? 0
+  // Single-GPU hosts keep the legacy un-prefixed history keys so the
+  // pre-multi-GPU rendering stays identical; multi-GPU hosts read the
+  // `gpu:<index>:<metric>` series (same scheme as DetailedView).
+  const gpuMetricKey = (metric: string) => (multiGpu ? `gpu:${activeGpuIndex}:${metric}` : metric)
+  const gpuName = activeGpu.name ?? undefined
+  const gpuSubtitle = multiGpu ? `GPU ${activeGpuIndex}${gpuName ? ` · ${gpuName}` : ''}` : gpuName
 
   // No hardware power cap is exposed on the GB10 (unified-memory SoC), so scale
   // the gauge against the observed peak draw when the limit is absent.
-  const gpus = metrics.gpus && metrics.gpus.length > 0 ? metrics.gpus : [metrics.gpu]
-  const powerHistory = history.getChartData('gpuPower')
+  const powerHistory = history.getChartData(gpuMetricKey('gpuPower'))
   const powerPercent = computePowerScale(
-    metrics.gpu.power_watts,
-    metrics.gpu.power_limit_watts,
-    powerPeak(powerHistory, metrics.gpu.power_watts),
+    activeGpu.power_watts,
+    activeGpu.power_limit_watts,
+    powerPeak(powerHistory, activeGpu.power_watts),
   ).percent
 
   const memUsedPercent = metrics.memory.total_bytes > 0
@@ -90,9 +106,9 @@ export function Dashboard({
     { value: free, total: metrics.memory.total_bytes, color: '#27272A', label: `Free: ${formatBytes(free)}` },
   ]
 
-  const primaryGpuIndex = metrics.gpu.index ?? 0
-  const primaryGpuEvents = events.filter(e => e.gpu_index === undefined || e.gpu_index === null || e.gpu_index === primaryGpuIndex)
-  const allEvents = primaryGpuEvents.map(e => ({
+  // Un-indexed events apply to all GPUs; indexed events only to their GPU.
+  const activeGpuEvents = events.filter(e => e.gpu_index === undefined || e.gpu_index === null || e.gpu_index === activeGpuIndex)
+  const allEvents = activeGpuEvents.map(e => ({
     timestamp: e.timestamp_ms, type: e.event_type, detail: e.detail,
   }))
   const requestSpans = requests.map(r => ({
@@ -156,65 +172,78 @@ export function Dashboard({
 
       {/* ── Hardware Overview — fills the rest of the viewport ── */}
       <div className="flex-1 min-h-0 bg-[#0a0a0d]/80 rounded-xl border border-white/[0.03] p-1 lg:p-1.5 2xl:p-2 flex flex-col">
-        {gpus.length > 1 && (
-          <div className="shrink-0 grid grid-cols-2 lg:grid-cols-4 gap-1 lg:gap-1.5 mb-1 lg:mb-1.5">
-            {gpus.map((gpu) => (
-              <div key={gpu.index ?? 'primary'} className="min-w-0 rounded-md border border-white/[0.04] bg-[#151519] px-2 py-1">
-                <div className="flex items-baseline justify-between gap-2 min-w-0">
-                  <span className="text-[10px] lg:text-[11px] font-semibold text-zinc-200 truncate">
-                    {gpu.index !== null && gpu.index !== undefined ? `GPU ${gpu.index}` : 'GPU'}
-                  </span>
-                  <span className="text-[10px] text-zinc-500 truncate">{gpu.name}</span>
-                </div>
-                <div className="mt-0.5 grid grid-cols-3 gap-2 text-[10px] lg:text-[11px] font-mono tabular-nums text-zinc-300">
-                  <span>{gpu.utilization_percent ?? 0}%</span>
-                  <span>{gpu.temperature_celsius ?? 0}C</span>
-                  <span>{gpu.power_watts !== null ? `${Math.round(gpu.power_watts)}W` : '--'}</span>
-                </div>
-              </div>
-            ))}
+        {multiGpu && (
+          <div role="group" aria-label="GPU selector" className="shrink-0 grid grid-cols-2 lg:grid-cols-4 gap-1 lg:gap-1.5 mb-1 lg:mb-1.5">
+            {gpus.map((gpu) => {
+              const isActive = (gpu.index ?? 0) === activeGpuIndex
+              return (
+                <button
+                  key={gpu.index ?? 'primary'}
+                  type="button"
+                  onClick={() => setSelectedGpuIndex(gpu.index ?? 0)}
+                  aria-pressed={isActive}
+                  className={`min-w-0 rounded-md border px-2 py-1 text-left cursor-pointer transition-colors duration-150 ${
+                    isActive
+                      ? 'border-[#76B900]/50 bg-[#76B900]/[0.06]'
+                      : 'border-white/[0.04] bg-[#151519] hover:border-white/[0.12]'
+                  }`}
+                >
+                  <div className="flex items-baseline justify-between gap-2 min-w-0">
+                    <span className="text-[10px] lg:text-[11px] font-semibold text-zinc-200 truncate">
+                      {gpu.index !== null && gpu.index !== undefined ? `GPU ${gpu.index}` : 'GPU'}
+                    </span>
+                    <span className="text-[10px] text-zinc-500 truncate">{gpu.name}</span>
+                  </div>
+                  <div className="mt-0.5 grid grid-cols-3 gap-2 text-[10px] lg:text-[11px] font-mono tabular-nums text-zinc-300">
+                    <span>{gpu.utilization_percent ?? 0}%</span>
+                    <span>{gpu.temperature_celsius ?? 0}C</span>
+                    <span>{gpu.power_watts !== null ? `${Math.round(gpu.power_watts)}W` : '--'}</span>
+                  </div>
+                </button>
+              )
+            })}
           </div>
         )}
 
         <div ref={hwGridRef} className="flex-1 min-h-0 grid grid-cols-2 sm:grid-cols-4 gap-1 lg:gap-1.5 auto-rows-fr">
 
           {/* GPU Utilization */}
-          <HwCard title="GPU Utilization" subtitle={metrics.gpu.name ?? undefined}>
+          <HwCard title="GPU Utilization" subtitle={gpuSubtitle}>
             {compact ? (
-              <HBar value={metrics.gpu.utilization_percent ?? 0} label="GPU Util" unit="%" />
+              <HBar value={activeGpu.utilization_percent ?? 0} label="GPU Util" unit="%" />
             ) : (
               <div className="flex items-center gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
-                <ArcGauge value={metrics.gpu.utilization_percent ?? 0} label="GPU Util" unit="%" size={HW_GAUGE_PX} />
+                <ArcGauge value={activeGpu.utilization_percent ?? 0} label="GPU Util" unit="%" size={HW_GAUGE_PX} />
                 <div className="flex-1 min-w-0">
-                  <TimeSeriesChart data={history.getChartData('gpuUtil')} yDomain={[0, 100]} unit="%" events={allEvents} requests={requestSpans} height={HW_CHART_HEIGHT} />
+                  <TimeSeriesChart data={history.getChartData(gpuMetricKey('gpuUtil'))} yDomain={[0, 100]} unit="%" events={allEvents} requests={requestSpans} height={HW_CHART_HEIGHT} />
                 </div>
               </div>
             )}
           </HwCard>
 
           {/* GPU Temperature */}
-          <HwCard title="GPU Temp" subtitle={metrics.gpu.name ?? undefined}>
+          <HwCard title="GPU Temp" subtitle={gpuSubtitle}>
             {compact ? (
-              <HBar value={metrics.gpu.temperature_celsius ?? 0} label="GPU Temp" unit="°C" thresholds={THRESHOLDS.gpuTemp} />
+              <HBar value={activeGpu.temperature_celsius ?? 0} label="GPU Temp" unit="°C" thresholds={THRESHOLDS.gpuTemp} />
             ) : (
               <div className="flex items-center gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
-                <ArcGauge value={metrics.gpu.temperature_celsius ?? 0} label="GPU Temp" unit="°C" thresholds={THRESHOLDS.gpuTemp} size={HW_GAUGE_PX} />
+                <ArcGauge value={activeGpu.temperature_celsius ?? 0} label="GPU Temp" unit="°C" thresholds={THRESHOLDS.gpuTemp} size={HW_GAUGE_PX} />
                 <div className="flex-1 min-w-0">
-                  <TimeSeriesChart data={history.getChartData('gpuTemp')} yDomain={[0, 100]} unit="°C" height={HW_CHART_HEIGHT} />
+                  <TimeSeriesChart data={history.getChartData(gpuMetricKey('gpuTemp'))} yDomain={[0, 100]} unit="°C" height={HW_CHART_HEIGHT} />
                 </div>
               </div>
             )}
           </HwCard>
 
           {/* GPU Power */}
-          <HwCard title="GPU Power" subtitle={metrics.gpu.name ?? undefined}>
+          <HwCard title="GPU Power" subtitle={gpuSubtitle}>
             {compact ? (
               <HBar
                 value={powerPercent}
                 label="GPU Power"
                 unit="W"
                 thresholds={THRESHOLDS.gpuPower}
-                displayValue={metrics.gpu.power_watts !== null ? Math.round(metrics.gpu.power_watts) : 0}
+                displayValue={activeGpu.power_watts !== null ? Math.round(activeGpu.power_watts) : 0}
               />
             ) : (
               <div className="flex items-center gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
@@ -223,30 +252,30 @@ export function Dashboard({
                   label="GPU Power"
                   unit="W"
                   thresholds={THRESHOLDS.gpuPower}
-                  displayValue={metrics.gpu.power_watts !== null ? Math.round(metrics.gpu.power_watts) : 0}
+                  displayValue={activeGpu.power_watts !== null ? Math.round(activeGpu.power_watts) : 0}
                   size={HW_GAUGE_PX}
                 />
                 <div className="flex-1 min-w-0">
-                  <TimeSeriesChart data={history.getChartData('gpuPower')} unit="W" height={HW_CHART_HEIGHT} />
+                  <TimeSeriesChart data={powerHistory} unit="W" height={HW_CHART_HEIGHT} />
                 </div>
               </div>
             )}
           </HwCard>
 
           {/* GPU Clock */}
-          <HwCard title="GPU Clock" subtitle={metrics.gpu.name ?? undefined}>
+          <HwCard title="GPU Clock" subtitle={gpuSubtitle}>
             {compact ? (
               <div className="flex items-baseline justify-between gap-2 min-w-0">
                 <span className="text-[9px] lg:text-[10px] text-zinc-400 uppercase tracking-wider truncate">Graphics</span>
-                <span className="ml-auto shrink-0 text-xs lg:text-sm 2xl:text-base font-bold text-zinc-100 font-mono tabular-nums">{formatMhz(metrics.gpu.clock_graphics_mhz)}</span>
+                <span className="ml-auto shrink-0 text-xs lg:text-sm 2xl:text-base font-bold text-zinc-100 font-mono tabular-nums">{formatMhz(activeGpu.clock_graphics_mhz)}</span>
               </div>
             ) : (
               <div className="flex items-center gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
                 <div className="flex flex-col items-center justify-center shrink-0" style={{ width: HW_GAUGE_PX, height: HW_GAUGE_PX }}>
-                  <span className="text-sm 2xl:text-base min-[1920px]:text-lg font-bold text-zinc-100 font-mono">{formatMhz(metrics.gpu.clock_graphics_mhz)}</span>
+                  <span className="text-sm 2xl:text-base min-[1920px]:text-lg font-bold text-zinc-100 font-mono">{formatMhz(activeGpu.clock_graphics_mhz)}</span>
                 </div>
                 <div className="flex-1 min-w-0">
-                  <TimeSeriesChart data={history.getChartData('gpuClockGraphics')} unit="MHz" height={HW_CHART_HEIGHT} />
+                  <TimeSeriesChart data={history.getChartData(gpuMetricKey('gpuClockGraphics'))} unit="MHz" height={HW_CHART_HEIGHT} />
                 </div>
               </div>
             )}
