@@ -237,6 +237,7 @@ spark-dashboard service status
   -b, --bind <BIND>           Bind address [default: 0.0.0.0] [env: SPARK_DASHBOARD_BIND]
       --poll-interval <MS>    Polling interval ms [default: 1000] [env: SPARK_DASHBOARD_POLL_INTERVAL]
       --gpu-index <IDX>       Optional NVML GPU index to monitor [env: SPARK_DASHBOARD_GPU_INDEX]
+      --simulate-gpus <N>     Append N fictive GPUs with simulated data (dev aid) [env: SPARK_DASHBOARD_SIMULATE_GPUS]
       --engine <TYPE>         Manual engine type (e.g. vllm)
       --engine-url <URL>      Manual engine endpoint (requires --engine)
       --engine-api-key <KEY>  API key for an endpoint, paired by index with --engine-url

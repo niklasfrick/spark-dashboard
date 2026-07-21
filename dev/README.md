@@ -93,6 +93,7 @@ startup.
 | Variable                           | Purpose                                                                  |
 |------------------------------------|--------------------------------------------------------------------------|
 | `SPARK_DASHBOARD_PROVIDER_API_KEY` | Fallback API key for auth-gated engines. Forwarded to the remote backend. |
+| `SPARK_DASHBOARD_SIMULATE_GPUS`    | Append N fictive GPUs with simulated data for multi-GPU UI testing (see below). |
 
 ### Testing against an auth-gated vLLM
 
@@ -118,6 +119,28 @@ This forwards the **global** key, which also covers auto-detected engines. For
 per-endpoint keys across multiple engines, run the binary with `--engine-url`
 + `--engine-api-key` (see the main
 [README CLI options](../README.md#cli-options)).
+
+### Simulating extra GPUs
+
+The DGX Spark has a single GB10, so multi-GPU UI paths (per-GPU history keys,
+the Dashboard's GPU selector, per-GPU event overlays) can't be exercised
+against real hardware. Add to your repo-root `.env`:
+
+```bash
+SPARK_DASHBOARD_SIMULATE_GPUS=1
+```
+
+The backend then appends that many fictive GPUs after the real NVML devices,
+indexed past the NVML device count. They ride the normal `gpus` / `gpu_events`
+snapshot pipeline: deterministic sine-wave utilization/temperature/power/clocks
+over a 5-minute cycle (phase-shifted per index), plus a simulated `thermal`
+event near each utilization peak — the frontend can't tell them apart from real
+devices except by their `Simulated GPU <n>` name.
+
+Works in both loops: `dev.sh` forwards the variable to the remote backend
+launch, and `docker-dev.sh` passes it through compose (see
+[`docker.md`](../deploy/docker/docker.md#environment-variables)). Set `0` or
+remove the line to return to hardware-only metrics.
 
 ## Prerequisites
 
