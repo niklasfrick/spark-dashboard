@@ -135,6 +135,14 @@ export function formatAcceptanceLength(n: number | null): string {
   return n.toFixed(2)
 }
 
+/** Label for an engine's GPU badge: "GPU 0", or "GPU 0+1" when the engine
+ *  spans multiple GPUs (tensor parallel). Empty string when no indexes are
+ *  known — callers hide the badge entirely in that case. */
+export function formatGpuIndexes(indexes: number[]): string {
+  if (indexes.length === 0) return ''
+  return `GPU ${indexes.join('+')}`
+}
+
 /** Map EngineType enum to human-readable display name. */
 export function engineDisplayName(engineType: EngineType): string {
   const names: Record<EngineType, string> = {

@@ -107,6 +107,7 @@ export function DetailedView({
         showCharts={true}
         getChartData={history.getChartData}
         requests={requests}
+        gpuCount={gpus.length}
       />
     </div>
   )

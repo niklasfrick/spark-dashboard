@@ -18,7 +18,7 @@ import {
   type LatencyMode,
 } from './LatencyModeControl'
 import { aggregateEngines, groupRunningByProvider } from '@/lib/engineAggregate'
-import { engineDisplayName } from '@/lib/format'
+import { engineDisplayName, formatGpuIndexes } from '@/lib/format'
 import { getProviderLogo } from '@/lib/providerLogo'
 import { useTabRotation } from '@/hooks/useTabRotation'
 import type { EngineSnapshot, EngineType, DeploymentMode } from '@/types/metrics'
@@ -121,6 +121,9 @@ interface EngineSectionProps {
   showCharts?: boolean
   getChartData?: (metric: string) => ChartDataPoint[]
   requests?: InferenceRequest[]
+  /** Number of GPUs in the host snapshot. The per-engine GPU badge renders
+   *  only when there are 2+ — on single-GPU hosts the placement is trivial. */
+  gpuCount?: number
 }
 
 export function EngineSection({
@@ -128,6 +131,7 @@ export function EngineSection({
   showCharts = false,
   getChartData,
   requests,
+  gpuCount = 0,
 }: EngineSectionProps) {
   const [activeTab, setActiveTab] = useState<string>(() => {
     if (typeof window === 'undefined') return GLOBAL_TAB_VALUE
@@ -341,6 +345,11 @@ export function EngineSection({
                     iconSrc={ENGINE_ICON[activeEngine.engine_type]}
                   />
                   <DeploymentChip mode={activeEngine.deployment_mode} />
+                  {gpuCount >= 2 &&
+                    activeEngine.gpu_indexes &&
+                    activeEngine.gpu_indexes.length > 0 && (
+                      <EngineChip label={formatGpuIndexes(activeEngine.gpu_indexes)} />
+                    )}
                   {activeEngine.model?.parameter_size && (
                     <EngineChip label={activeEngine.model.parameter_size} />
                   )}

@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { formatBytes, formatGiB, formatCompactTokens, formatAcceptanceLength } from '../lib/format'
+import {
+  formatBytes,
+  formatGiB,
+  formatCompactTokens,
+  formatAcceptanceLength,
+  formatGpuIndexes,
+} from '../lib/format'
 
 const GIB = 1_073_741_824
 const MIB = 1_048_576
@@ -66,5 +72,20 @@ describe('formatAcceptanceLength', () => {
     expect(formatAcceptanceLength(3)).toBe('3.00')
     expect(formatAcceptanceLength(3.4167)).toBe('3.42')
     expect(formatAcceptanceLength(0)).toBe('0.00')
+  })
+})
+
+describe('formatGpuIndexes', () => {
+  it('renders a single index as "GPU N"', () => {
+    expect(formatGpuIndexes([0])).toBe('GPU 0')
+    expect(formatGpuIndexes([3])).toBe('GPU 3')
+  })
+
+  it('joins multiple indexes with "+" (tensor parallel)', () => {
+    expect(formatGpuIndexes([0, 1])).toBe('GPU 0+1')
+  })
+
+  it('renders an empty string when no indexes are known', () => {
+    expect(formatGpuIndexes([])).toBe('')
   })
 })

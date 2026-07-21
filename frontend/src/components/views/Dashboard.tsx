@@ -170,6 +170,7 @@ export function Dashboard({
           showCharts={showEngineCharts}
           getChartData={history.getChartData}
           requests={requests}
+          gpuCount={gpus.length}
         />
       </div>
 
