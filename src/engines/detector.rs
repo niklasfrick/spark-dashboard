@@ -1,5 +1,5 @@
 use super::{DeploymentMode, EngineType};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::time::Duration;
 
@@ -14,6 +14,11 @@ pub struct DetectedEngine {
     /// fallback when `/v1/models` returns a bare slug without the HF-style
     /// `Provider/` prefix that the operator actually started the server with.
     pub served_model: Option<String>,
+    /// Host-namespace PIDs belonging to this engine: the detected process and
+    /// its descendants (native scan), or every process `docker top` reports
+    /// for the container. Matched against NVML's per-device compute-process
+    /// lists to attribute the engine to the GPU(s) it runs on.
+    pub pids: Vec<u32>,
 }
 
 /// Known engine binaries and their default ports.
@@ -62,6 +67,14 @@ pub async fn detect_engines(
                 if existing.served_model.is_none() && dc.served_model.is_some() {
                     existing.served_model = dc.served_model.clone();
                 }
+                // Union the PID sets: `docker top` and the host process scan
+                // may each see processes the other missed.
+                for pid in &dc.pids {
+                    if !existing.pids.contains(pid) {
+                        existing.pids.push(*pid);
+                    }
+                }
+                existing.pids.sort_unstable();
             }
         } else {
             seen.insert(key);
@@ -116,7 +129,7 @@ fn detect_by_process(sys: &sysinfo::System) -> Vec<DetectedEngine> {
         // Emit one DetectedEngine per distinct endpoint. Multi-instance native
         // setups (three `vllm serve --port 8000/8001/8002` processes) need each
         // port to surface as its own engine rather than collapsing to the first.
-        let mut seen_endpoints: HashSet<String> = HashSet::new();
+        let mut seen_endpoints: HashMap<String, usize> = HashMap::new();
         for p in &procs {
             if p.cmd().is_empty() {
                 continue;
@@ -124,18 +137,65 @@ fn detect_by_process(sys: &sysinfo::System) -> Vec<DetectedEngine> {
             let endpoint = parse_endpoint_from_args(p.cmd(), default_endpoint)
                 .unwrap_or_else(|| default_endpoint.to_string());
             let served_model = parse_model_from_args(p.cmd());
-            if seen_endpoints.insert(endpoint.clone()) {
-                detected.push(DetectedEngine {
-                    engine_type: engine_type.clone(),
-                    endpoint,
-                    deployment_mode: DeploymentMode::Native,
-                    served_model,
-                });
+            let pid = p.pid().as_u32();
+            match seen_endpoints.get(&endpoint) {
+                Some(&slot) => detected[slot].pids.push(pid),
+                None => {
+                    seen_endpoints.insert(endpoint.clone(), detected.len());
+                    detected.push(DetectedEngine {
+                        engine_type: engine_type.clone(),
+                        endpoint,
+                        deployment_mode: DeploymentMode::Native,
+                        served_model,
+                        pids: vec![pid],
+                    });
+                }
             }
         }
     }
 
+    // vLLM's API-server process rarely holds the CUDA context itself — the
+    // engine-core / tensor-parallel worker child processes do — so NVML's
+    // compute-process list must be matched against the whole process tree,
+    // not just the detected root PID.
+    if !detected.is_empty() {
+        let processes: Vec<(u32, Option<u32>)> = sys
+            .processes()
+            .iter()
+            .map(|(pid, proc_)| (pid.as_u32(), proc_.parent().map(|pp| pp.as_u32())))
+            .collect();
+        for d in &mut detected {
+            d.pids = expand_pid_tree(&d.pids, &processes);
+        }
+    }
+
     detected
+}
+
+/// Expand root PIDs to the full set including every descendant process,
+/// given `(pid, parent_pid)` pairs for all processes on the host. Returned
+/// sorted and deduplicated; cycles in the parent data are tolerated.
+fn expand_pid_tree(roots: &[u32], processes: &[(u32, Option<u32>)]) -> Vec<u32> {
+    let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
+    for &(pid, parent) in processes {
+        if let Some(parent) = parent {
+            children.entry(parent).or_default().push(pid);
+        }
+    }
+
+    let mut seen: HashSet<u32> = HashSet::new();
+    let mut queue: Vec<u32> = roots.iter().copied().filter(|&p| seen.insert(p)).collect();
+    let mut result = queue.clone();
+    while let Some(pid) = queue.pop() {
+        for &child in children.get(&pid).map(Vec::as_slice).unwrap_or_default() {
+            if seen.insert(child) {
+                result.push(child);
+                queue.push(child);
+            }
+        }
+    }
+    result.sort_unstable();
+    result
 }
 
 /// Parse `--port` and `--host` from a process's command-line arguments.
@@ -372,16 +432,17 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
 
         let port = mapped_port.map(|p| p.to_string()).or(cmd_port);
 
-        // 3. If still no port (e.g. host networking + `sleep infinity` container),
-        //    inspect the actual processes running inside the container via `docker top`.
-        //    The same top output is also the best source for recovering the model
-        //    argument, since `container.command` is just the container's *entrypoint*
-        //    and often omits the child vllm-serve args.
+        // 3. Inspect the actual processes running inside the container via
+        //    `docker top`. Always queried when a container id is known: its rows
+        //    carry the *host-namespace* PIDs (the namespace NVML reports) used
+        //    for GPU association, and double as the fallback source for the port
+        //    (host networking + `sleep infinity` containers) and the model
+        //    argument, since `container.command` is just the container's
+        //    *entrypoint* and often omits the child vllm-serve args.
+        let mut pids: Vec<u32> = Vec::new();
         let (port, served_model) = {
             let container_id = container.id.as_deref().unwrap_or_default();
-            let need_port = port.is_none();
-            let need_model = cmd_model.is_none();
-            if container_id.is_empty() || (!need_port && !need_model) {
+            if container_id.is_empty() {
                 (port, cmd_model)
             } else {
                 let top_opts = TopOptionsBuilder::default().ps_args("-eo pid,args").build();
@@ -391,6 +452,9 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
                         let mut found_model = cmd_model;
                         if let Some(procs) = top.processes.as_ref() {
                             for row in procs {
+                                if let Some(pid) = parse_pid_from_top_row(row) {
+                                    pids.push(pid);
+                                }
                                 let line = row.join(" ");
                                 if found_port.is_none() {
                                     if let Some(p) = parse_port_from_command_str(&line) {
@@ -412,9 +476,6 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
                                         found_model = Some(m);
                                     }
                                 }
-                                if found_port.is_some() && found_model.is_some() {
-                                    break;
-                                }
                             }
                         }
                         (found_port, found_model)
@@ -426,6 +487,8 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
                 }
             }
         };
+        pids.sort_unstable();
+        pids.dedup();
 
         if let Some(p) = port {
             let endpoint = format!("http://localhost:{}", p);
@@ -441,6 +504,7 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
                 endpoint,
                 deployment_mode: DeploymentMode::Docker,
                 served_model,
+                pids,
             });
         } else {
             tracing::debug!(
@@ -451,6 +515,17 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
     }
 
     detected
+}
+
+/// Parse the host-namespace PID from a `docker top` row produced with
+/// `ps_args("-eo pid,args")` — the PID is the first column. Returns `None`
+/// for the header row ("PID") or malformed rows.
+///
+/// Only reachable from the Linux Docker path in normal builds, but the unit
+/// tests exercise it on every platform — hence the `test` cfg.
+#[cfg(any(target_os = "linux", test))]
+fn parse_pid_from_top_row(row: &[String]) -> Option<u32> {
+    row.first().and_then(|cell| cell.trim().parse::<u32>().ok())
 }
 
 /// Parse `--port` value from a command string (space-separated).
@@ -581,5 +656,49 @@ mod tests {
     #[test]
     fn command_str_returns_none_for_unrelated_command() {
         assert_eq!(parse_model_from_command_str("sleep infinity"), None);
+    }
+
+    fn to_row(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn top_row_pid_is_parsed_from_first_column() {
+        assert_eq!(
+            parse_pid_from_top_row(&to_row(&["4242", "vllm serve --port 8000"])),
+            Some(4242),
+        );
+    }
+
+    #[test]
+    fn top_row_header_and_malformed_rows_yield_none() {
+        assert_eq!(parse_pid_from_top_row(&to_row(&["PID", "COMMAND"])), None);
+        assert_eq!(parse_pid_from_top_row(&[]), None);
+    }
+
+    #[test]
+    fn pid_tree_includes_children_and_grandchildren() {
+        // 100 (root) -> 101 -> 102, plus unrelated 200 -> 201.
+        let processes = vec![
+            (100, Some(1)),
+            (101, Some(100)),
+            (102, Some(101)),
+            (200, Some(1)),
+            (201, Some(200)),
+        ];
+        assert_eq!(expand_pid_tree(&[100], &processes), vec![100, 101, 102]);
+    }
+
+    #[test]
+    fn pid_tree_without_children_returns_only_roots() {
+        let processes = vec![(100, Some(1)), (200, Some(1))];
+        assert_eq!(expand_pid_tree(&[100], &processes), vec![100]);
+    }
+
+    #[test]
+    fn pid_tree_tolerates_parent_cycles() {
+        // Degenerate parent data forming a cycle must not loop forever.
+        let processes = vec![(100, Some(101)), (101, Some(100))];
+        assert_eq!(expand_pid_tree(&[100], &processes), vec![100, 101]);
     }
 }

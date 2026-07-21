@@ -121,7 +121,14 @@ pub async fn metrics_collector(
             .as_millis() as u64;
 
         // Read latest engine snapshots (non-blocking read from shared state)
-        let engines = engine_state.read().await.clone();
+        // and stamp each with the GPU(s) its PIDs are observed on. Computed
+        // here rather than in the engine collector because this loop owns the
+        // NVML device handles.
+        let mut engines = engine_state.read().await.clone();
+        let device_pids = gpu::collect_device_pids(&devices);
+        for engine in &mut engines {
+            engine.gpu_indexes = gpu::gpu_indexes_for_pids(&engine.pids, &device_pids);
+        }
 
         let mut gpu_events = gpu::detect_gpu_events(&devices, timestamp_ms);
         gpu_events.extend(gpu_sim::simulated_gpu_events(

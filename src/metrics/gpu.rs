@@ -64,6 +64,41 @@ pub fn empty_gpu_metrics() -> GpuMetrics {
     }
 }
 
+/// Per-device compute-process PID lists from NVML — the source of truth for
+/// engine→GPU association. Devices whose process list is unsupported or
+/// unavailable (e.g. unified-memory systems) contribute an empty list.
+#[cfg(target_os = "linux")]
+pub fn collect_device_pids(devices: &[(u32, nvml_wrapper::Device)]) -> Vec<(u32, Vec<u32>)> {
+    devices
+        .iter()
+        .map(|(index, device)| {
+            let pids = nvml_optional(device.running_compute_processes())
+                .map(|procs| procs.iter().map(|p| p.pid).collect())
+                .unwrap_or_default();
+            (*index, pids)
+        })
+        .collect()
+}
+
+/// Map an engine's process IDs to the GPU indexes those processes are
+/// observed running on.
+///
+/// `device_pids` holds, per monitored device, the PIDs from NVML's
+/// compute-process list. A PID appearing on several devices (tensor
+/// parallel) yields every matching index, sorted and deduplicated. No match
+/// — NVML unavailable, empty process lists, engine not yet on a GPU —
+/// yields an empty vec so the UI shows nothing rather than a wrong guess.
+pub fn gpu_indexes_for_pids(pids: &[u32], device_pids: &[(u32, Vec<u32>)]) -> Vec<u32> {
+    let mut indexes: Vec<u32> = device_pids
+        .iter()
+        .filter(|(_, dev_pids)| dev_pids.iter().any(|p| pids.contains(p)))
+        .map(|(index, _)| *index)
+        .collect();
+    indexes.sort_unstable();
+    indexes.dedup();
+    indexes
+}
+
 /// Collect GPU metrics from all opened NVML devices.
 #[cfg(target_os = "linux")]
 pub fn collect_gpu_metrics(devices: &[(u32, nvml_wrapper::Device)]) -> Vec<GpuMetrics> {
@@ -253,6 +288,46 @@ mod tests {
         fn detect_gpu_events_stub_returns_empty() {
             let events = detect_gpu_events(1000);
             assert!(events.is_empty());
+        }
+    }
+
+    mod gpu_association_tests {
+        use super::*;
+
+        #[test]
+        fn engine_pinned_to_one_gpu_yields_that_index() {
+            let device_pids = vec![(0, vec![999]), (1, vec![4242, 4243])];
+            assert_eq!(gpu_indexes_for_pids(&[4242], &device_pids), vec![1]);
+        }
+
+        #[test]
+        fn pid_on_two_devices_yields_both_indexes() {
+            let device_pids = vec![(0, vec![4242]), (1, vec![4242]), (2, vec![999])];
+            assert_eq!(gpu_indexes_for_pids(&[4242], &device_pids), vec![0, 1]);
+        }
+
+        #[test]
+        fn unknown_pids_yield_empty() {
+            let device_pids = vec![(0, vec![999]), (1, vec![998])];
+            assert!(gpu_indexes_for_pids(&[4242], &device_pids).is_empty());
+        }
+
+        #[test]
+        fn empty_device_process_lists_yield_empty() {
+            let device_pids = vec![(0, vec![]), (1, vec![])];
+            assert!(gpu_indexes_for_pids(&[4242], &device_pids).is_empty());
+        }
+
+        #[test]
+        fn no_engine_pids_yield_empty() {
+            let device_pids = vec![(0, vec![999])];
+            assert!(gpu_indexes_for_pids(&[], &device_pids).is_empty());
+        }
+
+        #[test]
+        fn multiple_engine_pids_on_one_device_dedup_to_one_index() {
+            let device_pids = vec![(0, vec![10, 11])];
+            assert_eq!(gpu_indexes_for_pids(&[10, 11], &device_pids), vec![0]);
         }
     }
 

@@ -207,6 +207,18 @@ pub struct EngineSnapshot {
     pub metrics: Option<EngineMetrics>,
     pub recent_requests: Vec<RecentRequest>,
     pub deployment_mode: DeploymentMode,
+    /// Indexes of the GPU(s) this engine was observed running on, derived by
+    /// matching `pids` against NVML's per-device compute-process lists.
+    /// Empty = unknown (NVML unavailable, empty process lists, engine not on
+    /// a GPU yet) — the UI shows nothing rather than a wrong guess. Filled in
+    /// by the metrics collector at snapshot-assembly time (it owns the NVML
+    /// device handles), so the copy in the shared engine state is always empty.
+    pub gpu_indexes: Vec<u32>,
+    /// Host-namespace PIDs belonging to the engine, used to compute
+    /// `gpu_indexes`. Internal plumbing between the collector loops — not
+    /// part of the wire format.
+    #[serde(skip_serializing)]
+    pub pids: Vec<u32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -251,6 +263,9 @@ pub struct EngineState {
     /// When a fetch was last attempted (success or unresolved) — drives the
     /// unresolved-retry cooldown.
     pub model_attempted_at: Option<Instant>,
+    /// Host-namespace PIDs from the most recent detection tick. Empty for
+    /// manual overrides until process/Docker detection also finds the engine.
+    pub pids: Vec<u32>,
 }
 
 impl EngineState {
@@ -265,6 +280,7 @@ impl EngineState {
             cached_model: None,
             model_fetched_at: None,
             model_attempted_at: None,
+            pids: Vec::new(),
         }
     }
 
@@ -479,7 +495,7 @@ pub async fn engine_collector_loop(
                 // Add newly detected engines
                 for d in &detected {
                     let key = (d.engine_type.clone(), d.endpoint.clone());
-                    engine_map.entry(key).or_insert_with(|| {
+                    let state = engine_map.entry(key).or_insert_with(|| {
                         let adapter = create_adapter(
                             d.engine_type.clone(),
                             d.endpoint.clone(),
@@ -495,6 +511,9 @@ pub async fn engine_collector_loop(
                         );
                         EngineState::new(adapter, d.deployment_mode.clone())
                     });
+                    // Refresh the PID set every detection tick — engines
+                    // restart and fork workers over their lifetime.
+                    state.pids = d.pids.clone();
                 }
             }
 
@@ -543,6 +562,8 @@ pub async fn engine_collector_loop(
                             metrics,
                             recent_requests: Vec::new(),
                             deployment_mode: state.deployment_mode.clone(),
+                            gpu_indexes: Vec::new(),
+                            pids: state.pids.clone(),
                         });
                     }
                 }
