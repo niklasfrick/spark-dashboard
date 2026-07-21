@@ -180,6 +180,10 @@ describe('Dashboard single-GPU regression', () => {
     expect(screen.queryByText('GPU 0')).toBeNull()
     expect(container.querySelector('[aria-pressed]')).toBeNull()
 
+    // Card subtitles carry the plain GPU name, not the multi-GPU "GPU n · name" form
+    expect(screen.getAllByText('NVIDIA Alpha 0').length).toBeGreaterThan(0)
+    expect(screen.queryByText(/GPU 0 · /)).toBeNull()
+
     // Charts read the legacy un-prefixed history keys
     for (const key of ['gpuUtil', 'gpuTemp', 'gpuPower', 'gpuClockGraphics']) {
       expect(history.calls).toContain(key)

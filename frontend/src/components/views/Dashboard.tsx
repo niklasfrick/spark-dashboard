@@ -70,9 +70,10 @@ export function Dashboard({
 
   const gpus = metrics.gpus && metrics.gpus.length > 0 ? metrics.gpus : [metrics.gpu]
   const multiGpu = gpus.length > 1
+  const gpuIndexOf = (gpu: MetricsSnapshot['gpu']) => gpu.index ?? 0
   // Fall back to the primary GPU if the selected index vanishes from the feed.
-  const activeGpu = gpus.find((g) => (g.index ?? 0) === selectedGpuIndex) ?? gpus[0]
-  const activeGpuIndex = activeGpu.index ?? 0
+  const activeGpu = gpus.find((g) => gpuIndexOf(g) === selectedGpuIndex) ?? gpus[0]
+  const activeGpuIndex = gpuIndexOf(activeGpu)
   // Single-GPU hosts keep the legacy un-prefixed history keys so the
   // pre-multi-GPU rendering stays identical; multi-GPU hosts read the
   // `gpu:<index>:<metric>` series (same scheme as DetailedView).
@@ -107,10 +108,9 @@ export function Dashboard({
   ]
 
   // Un-indexed events apply to all GPUs; indexed events only to their GPU.
-  const activeGpuEvents = events.filter(e => e.gpu_index === undefined || e.gpu_index === null || e.gpu_index === activeGpuIndex)
-  const allEvents = activeGpuEvents.map(e => ({
-    timestamp: e.timestamp_ms, type: e.event_type, detail: e.detail,
-  }))
+  const activeGpuChartEvents = events
+    .filter(e => e.gpu_index === undefined || e.gpu_index === null || e.gpu_index === activeGpuIndex)
+    .map(e => ({ timestamp: e.timestamp_ms, type: e.event_type, detail: e.detail }))
   const requestSpans = requests.map(r => ({
     start: r.start_ms, end: r.end_ms, tps: r.tps, ttft: r.ttft_ms,
   }))
@@ -175,12 +175,12 @@ export function Dashboard({
         {multiGpu && (
           <div role="group" aria-label="GPU selector" className="shrink-0 grid grid-cols-2 lg:grid-cols-4 gap-1 lg:gap-1.5 mb-1 lg:mb-1.5">
             {gpus.map((gpu) => {
-              const isActive = (gpu.index ?? 0) === activeGpuIndex
+              const isActive = gpuIndexOf(gpu) === activeGpuIndex
               return (
                 <button
                   key={gpu.index ?? 'primary'}
                   type="button"
-                  onClick={() => setSelectedGpuIndex(gpu.index ?? 0)}
+                  onClick={() => setSelectedGpuIndex(gpuIndexOf(gpu))}
                   aria-pressed={isActive}
                   className={`min-w-0 rounded-md border px-2 py-1 text-left cursor-pointer transition-colors duration-150 ${
                     isActive
@@ -215,7 +215,7 @@ export function Dashboard({
               <div className="flex items-center gap-2 min-w-0 min-h-0 flex-1 overflow-hidden">
                 <ArcGauge value={activeGpu.utilization_percent ?? 0} label="GPU Util" unit="%" size={HW_GAUGE_PX} />
                 <div className="flex-1 min-w-0">
-                  <TimeSeriesChart data={history.getChartData(gpuMetricKey('gpuUtil'))} yDomain={[0, 100]} unit="%" events={allEvents} requests={requestSpans} height={HW_CHART_HEIGHT} />
+                  <TimeSeriesChart data={history.getChartData(gpuMetricKey('gpuUtil'))} yDomain={[0, 100]} unit="%" events={activeGpuChartEvents} requests={requestSpans} height={HW_CHART_HEIGHT} />
                 </div>
               </div>
             )}
