@@ -66,6 +66,26 @@ export function Dashboard({
   // the early return so incoming snapshots cannot reset it.
   const [selectedGpuIndex, setSelectedGpuIndex] = useState(0)
 
+  // Measure the hardware grid to adapt to available *vertical* space. The grid
+  // uses auto-rows-fr, so per-card height depends only on the container height
+  // and the column count (2 below the `sm` breakpoint, 4 at/above it) — not on
+  // card content, which keeps this free of layout feedback loops. `compact`
+  // stays false until measured (height 0) so the full layout renders first.
+  const [hwGridRef, hwGridSize] = useElementSize<HTMLDivElement>()
+  const hwCols = hwGridSize.width >= 640 ? 4 : 2
+  const hwRows = Math.ceil(HW_CARD_COUNT / hwCols)
+  const perCardHeight =
+    hwGridSize.height > 0 ? (hwGridSize.height - (hwRows - 1) * 6) / hwRows : 0
+  const compact = perCardHeight > 0 && perCardHeight < HW_COMPACT_HEIGHT_PX
+
+  // Engine trend charts collapse on short viewports (see constant). Default to
+  // showing them until the root is measured (height 0).
+  // All hooks sit above this early return: the hook count must not change when
+  // the first snapshot flips `metrics` from null, or React unmounts the tree
+  // ("Rendered more hooks than during the previous render").
+  const [rootRef, rootSize] = useElementSize<HTMLDivElement>()
+  const showEngineCharts = rootSize.height === 0 || rootSize.height >= ENGINE_CHARTS_MIN_HEIGHT_PX
+
   if (!metrics) return null
 
   const gpus = metrics.gpus && metrics.gpus.length > 0 ? metrics.gpus : [metrics.gpu]
@@ -140,23 +160,6 @@ export function Dashboard({
   const TOTAL_COLOR = '#A1A1AA'
   const NET_RX_COLOR = '#3B82F6'
   const NET_TX_COLOR = '#A855F7'
-
-  // Measure the hardware grid to adapt to available *vertical* space. The grid
-  // uses auto-rows-fr, so per-card height depends only on the container height
-  // and the column count (2 below the `sm` breakpoint, 4 at/above it) — not on
-  // card content, which keeps this free of layout feedback loops. `compact`
-  // stays false until measured (height 0) so the full layout renders first.
-  const [hwGridRef, hwGridSize] = useElementSize<HTMLDivElement>()
-  const hwCols = hwGridSize.width >= 640 ? 4 : 2
-  const hwRows = Math.ceil(HW_CARD_COUNT / hwCols)
-  const perCardHeight =
-    hwGridSize.height > 0 ? (hwGridSize.height - (hwRows - 1) * 6) / hwRows : 0
-  const compact = perCardHeight > 0 && perCardHeight < HW_COMPACT_HEIGHT_PX
-
-  // Engine trend charts collapse on short viewports (see constant). Default to
-  // showing them until the root is measured (height 0).
-  const [rootRef, rootSize] = useElementSize<HTMLDivElement>()
-  const showEngineCharts = rootSize.height === 0 || rootSize.height >= ENGINE_CHARTS_MIN_HEIGHT_PX
 
   return (
     <div ref={rootRef} className="flex flex-col flex-1 min-h-0 gap-2">

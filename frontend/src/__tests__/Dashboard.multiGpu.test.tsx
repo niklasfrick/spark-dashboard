@@ -134,6 +134,21 @@ describe('Dashboard multi-GPU selection', () => {
     expect(details).not.toContain('gpu0 thermal')
   })
 
+  it('survives the metrics null → first-snapshot transition (initial WebSocket connect)', () => {
+    // Regression: with hooks split across the `if (!metrics) return null` early
+    // return, the first snapshot changed the hook count mid-life and React threw
+    // "Rendered more hooks than during the previous render" — a white screen.
+    const history = stubHistory()
+    const { rerender } = render(<Dashboard metrics={null} history={history} events={[]} requests={[]} />)
+
+    expect(() =>
+      rerender(
+        <Dashboard metrics={makeSnapshot([gpu0, gpu1])} history={history} events={[]} requests={[]} />,
+      ),
+    ).not.toThrow()
+    expect(gpuSelector()).not.toBeNull()
+  })
+
   it('keeps the selected GPU when a new snapshot arrives', () => {
     const history = stubHistory()
     const snapshot = makeSnapshot([gpu0, gpu1])
