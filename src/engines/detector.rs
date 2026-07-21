@@ -739,9 +739,16 @@ mod tests {
 
     #[test]
     fn docker_merge_keeps_distinct_endpoints_separate() {
-        let mut candidates =
-            vec![candidate("http://localhost:8000", DeploymentMode::Native, &[100])];
-        let docker = vec![candidate("http://localhost:8001", DeploymentMode::Docker, &[200])];
+        let mut candidates = vec![candidate(
+            "http://localhost:8000",
+            DeploymentMode::Native,
+            &[100],
+        )];
+        let docker = vec![candidate(
+            "http://localhost:8001",
+            DeploymentMode::Docker,
+            &[200],
+        )];
         merge_docker_candidates(&mut candidates, docker);
 
         assert_eq!(candidates.len(), 2);
