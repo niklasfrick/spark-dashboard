@@ -117,7 +117,10 @@ mod tests {
                 let util = gpu.utilization_percent.unwrap();
                 assert!(util <= 100, "util {util} out of range at t={t_ms}");
                 let temp = gpu.temperature_celsius.unwrap();
-                assert!((40..=85).contains(&temp), "temp {temp} out of range at t={t_ms}");
+                assert!(
+                    (40..=85).contains(&temp),
+                    "temp {temp} out of range at t={t_ms}"
+                );
                 let power = gpu.power_watts.unwrap();
                 assert!(power > 0.0 && power <= gpu.power_limit_watts.unwrap());
                 assert!(gpu.memory_used_bytes.unwrap() <= gpu.memory_total_bytes.unwrap());
