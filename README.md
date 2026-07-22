@@ -256,6 +256,28 @@ engines too. Model info is resolved from `/v1/models` once and cached —
 re-resolved only on engine restart or every 10 minutes — so an auth-gated
 engine is no longer hit on every poll tick.
 
+### Log viewer (`--enable-log-viewer`, Linux only, opt-in)
+
+`--enable-log-viewer` (or the `SPARK_DASHBOARD_ENABLE_LOG_VIEWER=1` env var)
+registers an extra `/ws/logs` WebSocket endpoint that streams the tracked
+engine container's Docker logs directly to the dashboard, using the bollard
+Docker API (no `docker` CLI or shell required — works in distroless images).
+
+- **Off by default.** Nothing is exposed unless the flag is passed.
+- **`/ws/logs` is unauthenticated.** The dashboard binds `0.0.0.0` by default
+  and the WebSocket has no auth layer, so anyone who can reach the port can
+  read the stream.
+- **Engine logs can contain sensitive data.** Inference-engine logs commonly
+  include prompts, request payloads, and API keys passed on the command line.
+  Treat the endpoint as equivalent to `docker logs` access.
+- **Recommendation: only enable on trusted networks.** Put the dashboard behind
+  a reverse proxy with auth, bind to `127.0.0.1`/`--bind 127.0.0.1`, or
+  restrict the port with a firewall. Do not enable on a public-facing host.
+
+The stream is shared: one background Docker log stream fans out to all
+connected clients (same pattern as metrics). stdout and stderr are line-buffered
+so split frames don't produce partial lines.
+
 ## Development
 
 ### Prerequisites

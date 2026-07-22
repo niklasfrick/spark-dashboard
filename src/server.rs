@@ -11,6 +11,9 @@ struct FrontendAssets;
 pub fn create_router(tx: broadcast::Sender<String>) -> Router {
     let mut router = Router::new()
         .route("/ws", get(crate::ws::ws_handler))
+        // Liveness probe for container HEALTHCHECK / orchestrators. Intentionally
+        // dependency-free: it reports that the HTTP server is up, not that any
+        // engine/GPU is healthy (that's surfaced over /ws).
         .route("/healthz", get(healthz))
         .fallback(static_handler)
         .with_state(tx)
@@ -37,6 +40,7 @@ async fn static_handler(uri: axum::http::Uri) -> impl IntoResponse {
         path = "index.html";
     }
 
+    // Try exact file match first
     if let Some(file) = FrontendAssets::get(path) {
         let mime = mime_guess::from_path(path).first_or_octet_stream();
         return (
@@ -47,6 +51,7 @@ async fn static_handler(uri: axum::http::Uri) -> impl IntoResponse {
             .into_response();
     }
 
+    // SPA fallback: serve index.html for any unmatched route
     if let Some(index) = FrontendAssets::get("index.html") {
         return (
             axum::http::StatusCode::OK,

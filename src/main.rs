@@ -190,7 +190,8 @@ async fn run_server_inner(args: RunArgs) -> Result<(), Box<dyn std::error::Error
     // Shared engine state: engine collector writes, metrics collector reads
     let engine_state: Arc<RwLock<Vec<engines::EngineSnapshot>>> = Arc::new(RwLock::new(Vec::new()));
 
-    // Spawn engine collector loop as separate tokio task
+    // Spawn engine collector loop as separate tokio task (Research Pitfall 7:
+    // separate task so slow engine API calls don't block hardware metrics)
     tokio::spawn(engines::engine_collector_loop(
         engine_state.clone(),
         overrides,
@@ -210,7 +211,7 @@ async fn run_server_inner(args: RunArgs) -> Result<(), Box<dyn std::error::Error
     // This registers /ws/logs in the router; nothing is exposed by default.
     #[cfg(target_os = "linux")]
     if args.enable_log_viewer {
-        logs::enable_log_viewer();
+        logs::enable_log_viewer(engine_state.clone());
         tracing::info!(
             "Log viewer enabled at /ws/logs - unauthenticated, container logs are exposed"
         );

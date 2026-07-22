@@ -19,6 +19,11 @@ pub struct DetectedEngine {
     /// for the container. Matched against NVML's per-device compute-process
     /// lists to attribute the engine to the GPU(s) it runs on.
     pub pids: Vec<u32>,
+    /// Docker container id (full) when discovered via the Docker scan layer;
+    /// `None` for natively-detected engines. Used by the log viewer to stream
+    /// the same container the dashboard is showing metrics for, rather than
+    /// re-scanning and potentially picking a different one.
+    pub container_id: Option<String>,
 }
 
 /// Known engine binaries and their default ports.
@@ -91,6 +96,10 @@ fn merge_docker_candidates(
                     }
                 }
                 existing.pids.sort_unstable();
+                // Docker discovery is authoritative for container identity.
+                if existing.container_id.is_none() && dc.container_id.is_some() {
+                    existing.container_id = dc.container_id.clone();
+                }
             }
         } else {
             seen.insert(key);
@@ -154,6 +163,7 @@ fn detect_by_process(sys: &sysinfo::System) -> Vec<DetectedEngine> {
                         deployment_mode: DeploymentMode::Native,
                         served_model,
                         pids: vec![pid],
+                        container_id: None,
                     });
                 }
             }
@@ -511,6 +521,7 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
                 deployment_mode: DeploymentMode::Docker,
                 served_model,
                 pids,
+                container_id: container.id.clone(),
             });
         } else {
             tracing::debug!(
@@ -715,6 +726,7 @@ mod tests {
             deployment_mode: mode,
             served_model: None,
             pids: pids.to_vec(),
+            container_id: None,
         }
     }
 

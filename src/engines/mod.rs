@@ -219,6 +219,12 @@ pub struct EngineSnapshot {
     /// part of the wire format.
     #[serde(skip_serializing)]
     pub pids: Vec<u32>,
+    /// Full Docker container id when the engine is running in a container
+    /// discovered via the Docker scan layer. Internal-only: not serialized to
+    /// the frontend (the dashboard has no use for it), but read by the log
+    /// viewer to stream the exact container the dashboard is showing.
+    #[serde(skip)]
+    pub container_id: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -266,6 +272,9 @@ pub struct EngineState {
     /// Host-namespace PIDs from the most recent detection tick. Empty for
     /// manual overrides until process/Docker detection also finds the engine.
     pub pids: Vec<u32>,
+    /// Docker container id captured at detection time (Linux Docker scan only).
+    /// Forwarded into each `EngineSnapshot` for the log viewer to consume.
+    pub container_id: Option<String>,
 }
 
 impl EngineState {
@@ -281,6 +290,7 @@ impl EngineState {
             model_fetched_at: None,
             model_attempted_at: None,
             pids: Vec::new(),
+            container_id: None,
         }
     }
 
@@ -523,7 +533,10 @@ pub async fn engine_collector_loop(
                             d.endpoint,
                             d.served_model,
                         );
-                        EngineState::new(adapter, d.deployment_mode.clone())
+                        let mut state =
+                            EngineState::new(adapter, d.deployment_mode.clone());
+                        state.container_id = d.container_id.clone();
+                        state
                     });
                     // Refresh the PID set every detection tick — engines
                     // restart and fork workers over their lifetime.
@@ -589,6 +602,7 @@ pub async fn engine_collector_loop(
                             deployment_mode: state.deployment_mode.clone(),
                             gpu_indexes: Vec::new(),
                             pids: state.pids.clone(),
+                            container_id: state.container_id.clone(),
                         });
                     }
                 }
