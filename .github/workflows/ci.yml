@@ -19,7 +19,7 @@ jobs:
       installer: ${{ steps.filter.outputs.installer }}
       docker: ${{ steps.filter.outputs.docker }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - id: filter
         uses: dorny/paths-filter@v4
         with:
@@ -54,14 +54,14 @@ jobs:
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
 
       # rust-embed needs frontend/dist/ present at build time.
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: npm
@@ -90,8 +90,8 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: npm
@@ -106,7 +106,7 @@ jobs:
     if: needs.changes.outputs.installer == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: shellcheck install.sh
         run: shellcheck deploy/host/install.sh
       - name: systemd-analyze verify
@@ -133,7 +133,7 @@ jobs:
             platform: linux/arm64
             runner: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4
       # Native per-arch build (no QEMU): confirms the multi-stage Dockerfile
       # compiles for both targets. Publishes nothing — that's docker-publish.yml.
