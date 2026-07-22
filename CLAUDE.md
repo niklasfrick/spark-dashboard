@@ -24,7 +24,7 @@ Project-specific. Global rules in `~/.claude/rules/` still apply.
 
 Tags: `vX.Y.Z`. After merge, release-please opens a rolling release PR; merging it tags + triggers `publish.yml` (`cargo publish`).
 
-**Never hand-edit**: `Cargo.toml` version, `Cargo.lock`, `.release-please-manifest.json`, `frontend/package.json`, `frontend/package-lock.json`, `CHANGELOG.md`. Release-please owns them.
+**Never hand-edit the release-please-owned bits**: the `version` fields of `Cargo.toml` and `frontend/package.json`, `.release-please-manifest.json`, and `CHANGELOG.md`. Dependency changes to those same files are fine when driven through the proper tooling (`cargo update`/`cargo add`, `npm install`/`npm update` — which also rewrite `Cargo.lock`/`frontend/package-lock.json`); just leave the `version` fields untouched.
 
 ## Pre-commit checks (run before pushing)
 
