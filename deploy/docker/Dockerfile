@@ -20,7 +20,7 @@ RUN npm run build
 # (gcr.io/distroless/cc-debian13 → Debian trixie) track Debian 13 / glibc 2.41 —
 # keep them on matching Debian releases (e.g. both -debian13 or both -debian12),
 # or the binary fails with a "GLIBC_x.yz not found" error at startup.
-FROM rust:1.96-slim AS chef
+FROM rust:1.97-slim AS chef
 RUN cargo install cargo-chef --locked
 WORKDIR /app
 
