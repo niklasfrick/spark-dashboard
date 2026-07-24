@@ -119,6 +119,7 @@ interface EngineChartData {
 interface EngineSectionProps {
   engines: EngineSnapshot[]
   showCharts?: boolean
+  collapseCharts?: boolean
   getChartData?: (metric: string) => ChartDataPoint[]
   requests?: InferenceRequest[]
   /** Number of GPUs in the host snapshot. The per-engine GPU badge renders
@@ -131,6 +132,7 @@ interface EngineSectionProps {
 export function EngineSection({
   engines,
   showCharts = false,
+  collapseCharts = false,
   getChartData,
   requests,
   gpuCount = 0,
@@ -497,6 +499,7 @@ export function EngineSection({
                 <EngineCard
                   engine={engine}
                   showCharts={showCharts}
+                  collapseCharts={collapseCharts}
                   chartData={chartDataForEngine}
                   requests={requests}
                   latencyMode={latencyMode}

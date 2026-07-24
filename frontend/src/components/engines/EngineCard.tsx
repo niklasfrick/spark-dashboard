@@ -64,6 +64,7 @@ interface EngineCardProps {
   ttftHistory?: number[]
   kvHistory?: number[]
   showCharts?: boolean
+  collapseCharts?: boolean
   chartData?: {
     tps: ChartDataPoint[]
     avgTps: ChartDataPoint[]
@@ -102,6 +103,7 @@ interface EngineCardProps {
 export function EngineCard({
   engine,
   showCharts = false,
+  collapseCharts = false,
   chartData,
   requests,
   latencyMode = 'avg',
@@ -344,7 +346,7 @@ export function EngineCard({
           {/* Chart columns mirror metric-card columns:
            *   1 Prefill · 2 Decode · 3 Latency · 4 SLO Goodput · 5 Requests · 6 Cache
            * E2E sits under SLO Goodput (col 4); Requests under col 5; KV under Cache (col 6). */}
-          {showCharts && chartData && (
+          {showCharts && !collapseCharts && chartData && (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 pt-1">
               <TimeSeriesChart
                 title="Prefill Throughput (tok/s)"

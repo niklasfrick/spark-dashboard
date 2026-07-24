@@ -1,12 +1,14 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useMetrics } from './hooks/useMetrics'
 import { useMetricsHistory } from './hooks/useMetricsHistory'
 import { ConnectionBadge } from './components/ConnectionBadge'
 import { Dashboard } from './components/views/Dashboard'
+import { LogViewer } from './components/LogViewer'
 import type { GpuEvent, InferenceRequest } from './types/events'
 
 function App() {
   const { metrics, connectionStatus, isStale } = useMetrics()
+  const [consoleExpanded, setConsoleExpanded] = useState(false)
 
   const history = useMetricsHistory(metrics)
 
@@ -59,7 +61,10 @@ function App() {
           history={history}
           events={events}
           requests={requests}
+          collapseCharts={consoleExpanded}
         />
+
+        <LogViewer onExpandChange={setConsoleExpanded} />
       </main>
     </div>
   )

@@ -19,6 +19,7 @@ interface DashboardProps {
   }
   events: GpuEvent[]
   requests: InferenceRequest[]
+  collapseCharts?: boolean
 }
 
 function HwCard({ title, subtitle, children }: { title?: string; subtitle?: string; children: React.ReactNode }) {
@@ -61,6 +62,7 @@ export function Dashboard({
   history,
   events,
   requests,
+  collapseCharts = false,
 }: DashboardProps) {
   // Which GPU the hardware chart panels show on multi-GPU hosts. Held above
   // the early return so incoming snapshots cannot reset it.
@@ -172,6 +174,7 @@ export function Dashboard({
         <EngineSection
           engines={metrics.engines}
           showCharts={showEngineCharts}
+          collapseCharts={collapseCharts}
           getChartData={history.getChartData}
           requests={requests}
           gpuCount={gpus.length}
