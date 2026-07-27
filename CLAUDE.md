@@ -39,8 +39,10 @@ cargo test --locked
 Frontend changes (`frontend/`):
 
 ```bash
-cd frontend && npm run build && npm test -- --run
+cd frontend && npm run lint && npm run build && npm test -- --run
 ```
+
+`npm run lint` is enforced by the `frontend` CI job and the baseline is clean — a new error fails the build, so don't let one land.
 
 If both stacks changed, run both blocks. If embedded assets changed, build the frontend first (`rust-embed` needs `frontend/dist/`).
 
