@@ -37,7 +37,7 @@ class MockWebSocket {
     if (this.onclose) this.onclose(new CloseEvent('close'))
   }
 
-  send(_data: string) {}
+  send() {}
 
   // Helper to simulate server messages
   receive(data: string) {
@@ -51,8 +51,10 @@ class MockWebSocket {
   }
 }
 
-// Restore original WebSocket type for the mock
-(globalThis as any).WebSocket = MockWebSocket as unknown as typeof WebSocket
+// Swap the global WebSocket for the mock. `globalThis` is typed without an
+// index signature, so widen it rather than reaching for `any`.
+;(globalThis as unknown as { WebSocket: typeof WebSocket }).WebSocket =
+  MockWebSocket as unknown as typeof WebSocket
 
 /** Expand the console (which lazily opens the socket) and return the socket. */
 function expand(): MockWebSocket {
