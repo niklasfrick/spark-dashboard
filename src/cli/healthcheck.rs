@@ -46,7 +46,11 @@ mod tests {
     #[tokio::test]
     async fn probe_succeeds_against_running_server() {
         let (tx, _rx) = broadcast::channel::<String>(16);
-        let app = crate::server::create_router(tx);
+        let dir = tempfile::tempdir().unwrap();
+        let app = crate::server::create_router(crate::server::AppState {
+            metrics_tx: tx,
+            config: std::sync::Arc::new(crate::config_store::ConfigStore::new(dir.path()).await),
+        });
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();

@@ -46,3 +46,6 @@ futures-util = "0.3"
 nvml-wrapper = "0.12"
 procfs = "0.18"
 bollard = "0.21"
+
+[dev-dependencies]
+tempfile = "3"

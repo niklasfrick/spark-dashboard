@@ -1,4 +1,5 @@
 mod cli;
+mod config_store;
 mod engines;
 mod metrics;
 mod server;
@@ -72,6 +73,19 @@ struct RunArgs {
     /// Metrics polling interval in milliseconds
     #[arg(long, env = "SPARK_DASHBOARD_POLL_INTERVAL", default_value_t = 1000)]
     poll_interval: u64,
+
+    /// Directory holding mutable state, currently the dashboard configuration
+    /// document (`<state-dir>/dashboards.json`). The default is the path a
+    /// systemd StateDirectory grant yields; until the unit grants one, and in
+    /// containers, point this somewhere writable explicitly.
+    /// An unwritable directory is not fatal — the dashboard runs read-only.
+    #[arg(
+        long,
+        value_name = "DIR",
+        env = "SPARK_DASHBOARD_STATE_DIR",
+        default_value = "/var/lib/spark-dashboard"
+    )]
+    state_dir: String,
 
     /// Optional NVML GPU index to monitor. By default, all available NVIDIA GPUs
     /// are monitored; set this to keep the dashboard focused on one device.
@@ -237,7 +251,19 @@ async fn run_server_inner(args: RunArgs) -> Result<(), Box<dyn std::error::Error
         );
     }
 
-    let app = server::create_router(tx);
+    // Persistence is always on: writing one small document is not the kind of
+    // capability the opt-in flags gate (a Docker socket, an unbounded database).
+    let config =
+        Arc::new(config_store::ConfigStore::new(std::path::Path::new(&args.state_dir)).await);
+    tracing::info!(
+        "Dashboard configuration state directory: {}",
+        args.state_dir
+    );
+
+    let app = server::create_router(server::AppState {
+        metrics_tx: tx,
+        config,
+    });
 
     let addr = format!("{}:{}", args.bind, args.port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
@@ -254,9 +280,9 @@ mod tests {
     use std::sync::Mutex;
 
     /// Clap reads the environment on every parse, so any test in this module
-    /// could observe the SPARK_DASHBOARD_ENGINE* variables another test set.
+    /// could observe the SPARK_DASHBOARD_* variables another test set.
     /// Every test takes this lock; env-setting tests clean up before releasing.
-    static ENGINE_ENV_LOCK: Mutex<()> = Mutex::new(());
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn parse(args: &[&str]) -> RunArgs {
         Cli::try_parse_from(std::iter::once("spark-dashboard").chain(args.iter().copied()))
@@ -265,7 +291,7 @@ mod tests {
     }
 
     fn with_env_vars(vars: &[(&str, &str)], f: impl FnOnce()) {
-        let _guard = ENGINE_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved: Vec<_> = vars
             .iter()
             .map(|(key, value)| {
@@ -288,7 +314,7 @@ mod tests {
 
     #[test]
     fn engine_flags_split_on_commas_and_pair_by_position() {
-        let _guard = ENGINE_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let args = parse(&[
             "--engine",
             "vllm,vllm",
@@ -307,7 +333,7 @@ mod tests {
 
     #[test]
     fn repeated_engine_flags_accumulate_in_order() {
-        let _guard = ENGINE_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let args = parse(&[
             "--engine",
             "vllm",
@@ -347,6 +373,27 @@ mod tests {
                 assert_eq!(args.engine_api_key, vec!["key-a", "key-b"]);
             },
         );
+    }
+
+    #[test]
+    fn state_dir_defaults_to_the_systemd_state_directory() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(parse(&[]).state_dir, "/var/lib/spark-dashboard");
+    }
+
+    #[test]
+    fn state_dir_reads_its_env_var() {
+        with_env_vars(&[("SPARK_DASHBOARD_STATE_DIR", "/srv/spark/state")], || {
+            assert_eq!(parse(&[]).state_dir, "/srv/spark/state");
+        });
+    }
+
+    #[test]
+    fn state_dir_flag_takes_precedence_over_its_env_var() {
+        with_env_vars(&[("SPARK_DASHBOARD_STATE_DIR", "/srv/spark/state")], || {
+            let args = parse(&["--state-dir", "/tmp/override"]);
+            assert_eq!(args.state_dir, "/tmp/override");
+        });
     }
 
     #[test]
