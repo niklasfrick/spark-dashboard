@@ -288,13 +288,15 @@ export function LogViewer({ engines = [], selectedEndpoint = null, onExpandChang
         )}
       </div>
 
-      {/* Log content */}
+      {/* Log content. Auto-follow must jump instantly: with smooth scrolling
+        * every appended line animates toward the bottom, and the scroll events
+        * fired mid-animation read as "not at bottom", flickering autoScroll
+        * (and the resume button) off and on with each batch. */}
       <div
         ref={containerRef}
         onScroll={handleScroll}
-        className={`h-48 overflow-y-auto bg-black/60 rounded-b-md border border-white/[0.04] 
+        className={`h-48 overflow-y-auto bg-black/60 rounded-b-md border border-white/[0.04]
                    font-mono text-[11px] leading-[1.4] p-2 space-y-0.5 ${paused ? 'opacity-60' : ''}`}
-        style={{ scrollBehavior: 'smooth' }}
       >
         {logs.length === 0 && (
           <div className="text-zinc-600 italic text-center pt-8">

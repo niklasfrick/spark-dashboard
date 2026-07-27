@@ -242,6 +242,46 @@ describe('LogViewer', () => {
     expect(screen.queryByText('line from engine 8000')).toBeNull()
   })
 
+  it('does not show the auto-scroll indicator while following the stream', () => {
+    render(<LogViewer />)
+    const ws = expand()
+    act(() => ws.connect())
+    act(() => {
+      ws.receive('line 1')
+      ws.receive('line 2')
+      ws.receive('line 3')
+    })
+    // Following the bottom: no resume affordance should appear just because
+    // new lines came in.
+    expect(screen.queryByText('↓ Auto-scroll')).toBeNull()
+  })
+
+  it('shows the auto-scroll indicator only after scrolling back, hides it at the bottom', () => {
+    const { container } = render(<LogViewer />)
+    const ws = expand()
+    act(() => ws.connect())
+    act(() => ws.receive('line 1'))
+
+    const scroller = container.querySelector('.overflow-y-auto') as HTMLElement
+    Object.defineProperty(scroller, 'scrollHeight', { configurable: true, value: 1000 })
+    Object.defineProperty(scroller, 'clientHeight', { configurable: true, value: 200 })
+
+    // User scrolls back up: resume affordance appears.
+    scroller.scrollTop = 100
+    fireEvent.scroll(scroller)
+    expect(screen.getByText('↓ Auto-scroll')).toBeDefined()
+
+    // New lines while scrolled back must not touch the viewport or the button.
+    act(() => ws.receive('line 2'))
+    expect(scroller.scrollTop).toBe(100)
+    expect(screen.getByText('↓ Auto-scroll')).toBeDefined()
+
+    // Back at the bottom (within the 50px threshold): affordance disappears.
+    scroller.scrollTop = 990
+    fireEvent.scroll(scroller)
+    expect(screen.queryByText('↓ Auto-scroll')).toBeNull()
+  })
+
   it('shows which engine is being streamed in the header', () => {
     render(
       <LogViewer engines={[engine('http://localhost:8000')]} selectedEndpoint="http://localhost:8000" />,
