@@ -39,6 +39,8 @@ const ORG_IDENTITY: ReadonlySet<string> = new Set([
   'huggingfacetb',
   'intel',
   'liquid-ai',
+  'baai',
+  'baidu',
 ])
 
 /**
@@ -49,6 +51,8 @@ const ORG_IDENTITY: ReadonlySet<string> = new Set([
 const SLUG_EXTENSION: Record<string, string> = {
   unsloth: 'webp',
   huggingfacetb: 'webp',
+  baai: 'webp',
+  baidu: 'webp',
 }
 
 /**

@@ -67,6 +67,20 @@ describe('getProviderLogo', () => {
     expect(getProviderLogo('LFM-40B')?.slug).toBe('liquid-ai')
   })
 
+  it('maps BAAI to the baai webp asset', () => {
+    const logo = getProviderLogo('BAAI/bge-m3')
+    expect(logo?.slug).toBe('baai')
+    expect(logo?.alt).toBe('BAAI')
+    expect(logo?.url).toBe('/icons/providers/baai.webp')
+  })
+
+  it('maps baidu to the baidu webp asset', () => {
+    const logo = getProviderLogo('baidu/ERNIE-4.5-21B-A3B-PT')
+    expect(logo?.slug).toBe('baidu')
+    expect(logo?.alt).toBe('baidu')
+    expect(logo?.url).toBe('/icons/providers/baidu.webp')
+  })
+
   it('maps Intel to the intel asset', () => {
     const logo = getProviderLogo('Intel/neural-chat-7b-v3-3')
     expect(logo?.slug).toBe('intel')
