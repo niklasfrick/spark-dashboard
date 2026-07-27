@@ -20,6 +20,9 @@ interface DashboardProps {
   events: GpuEvent[]
   requests: InferenceRequest[]
   collapseCharts?: boolean
+  /** Forwarded to EngineSection; reports the selected engine tab's endpoint
+   *  (undefined = Global tab) so the log viewer can follow the selection. */
+  onActiveEngineChange?: (endpoint: string | undefined) => void
 }
 
 function HwCard({ title, subtitle, children }: { title?: string; subtitle?: string; children: React.ReactNode }) {
@@ -63,6 +66,7 @@ export function Dashboard({
   events,
   requests,
   collapseCharts = false,
+  onActiveEngineChange,
 }: DashboardProps) {
   // Which GPU the hardware chart panels show on multi-GPU hosts. Held above
   // the early return so incoming snapshots cannot reset it.
@@ -175,6 +179,7 @@ export function Dashboard({
           engines={metrics.engines}
           showCharts={showEngineCharts}
           collapseCharts={collapseCharts}
+          onActiveEngineChange={onActiveEngineChange}
           getChartData={history.getChartData}
           requests={requests}
           gpuCount={gpus.length}

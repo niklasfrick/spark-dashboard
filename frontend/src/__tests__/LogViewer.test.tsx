@@ -1,6 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
 import { LogViewer } from '../components/LogViewer'
+import type { EngineSnapshot } from '../types/metrics'
+
+const engine = (
+  endpoint: string,
+  mode: 'Docker' | 'Native' = 'Docker',
+): EngineSnapshot => ({
+  engine_type: 'Vllm',
+  endpoint,
+  status: { type: 'Running' },
+  model: null,
+  metrics: null,
+  recent_requests: [],
+  deployment_mode: mode,
+  gpu_indexes: [],
+})
 
 // Mock WebSocket
 class MockWebSocket {
@@ -39,6 +54,13 @@ class MockWebSocket {
 // Restore original WebSocket type for the mock
 (globalThis as any).WebSocket = MockWebSocket as unknown as typeof WebSocket
 
+/** Expand the console (which lazily opens the socket) and return the socket. */
+function expand(): MockWebSocket {
+  fireEvent.click(screen.getByText('▶ Console Logs'))
+  expect(MockWebSocket.instances.length).toBeGreaterThan(0)
+  return MockWebSocket.instances[MockWebSocket.instances.length - 1]
+}
+
 describe('LogViewer', () => {
   beforeEach(() => {
     MockWebSocket.instances = []
@@ -51,62 +73,52 @@ describe('LogViewer', () => {
 
   it('renders collapsed by default', () => {
     render(<LogViewer />)
-    expect(screen.getByText('Console Logs')).toBeDefined()
+    expect(screen.getByText('▶ Console Logs')).toBeDefined()
     // Should not show the expanded log panel
     expect(screen.queryByText('▼ Console Logs')).toBeNull()
   })
 
-  it('shows disconnected state when collapsed', () => {
+  it('does not open a socket while collapsed (lazy connect)', () => {
     render(<LogViewer />)
-    expect(screen.getByText('○ Disconnected')).toBeDefined()
+    expect(MockWebSocket.instances).toHaveLength(0)
+    expect(screen.getByText('click to stream')).toBeDefined()
   })
 
-  it('expands when clicked', () => {
+  it('connects on first expand', () => {
     render(<LogViewer />)
-    fireEvent.click(screen.getByText('Console Logs'))
-    expect(screen.getByText('▼ Console Logs')).toBeDefined()
-  })
-
-  it('collapses when expanded and collapse button clicked', () => {
-    render(<LogViewer />)
-    // Expand
-    fireEvent.click(screen.getByText('Console Logs'))
-    expect(screen.getByText('▼ Console Logs')).toBeDefined()
-    // Collapse
-    fireEvent.click(screen.getByText('▼ Console Logs'))
-    expect(screen.queryByText('▼ Console Logs')).toBeNull()
-    expect(screen.getByText('Console Logs')).toBeDefined()
-  })
-
-  it('connects to WebSocket on mount', () => {
-    render(<LogViewer />)
+    const ws = expand()
     expect(MockWebSocket.instances).toHaveLength(1)
-    expect(MockWebSocket.instances[0].url).toContain('/ws/logs')
+    expect(ws.url).toContain('/ws/logs')
   })
 
-  it('shows live indicator when connected', () => {
+  it('closes the socket when collapsed again', () => {
     render(<LogViewer />)
-    const ws = MockWebSocket.instances[0]
+    const ws = expand()
     act(() => ws.connect())
-    expect(screen.getByText('● Live')).toBeDefined()
+    fireEvent.click(screen.getByText('▼ Console Logs'))
+    expect(ws.readyState).toBe(3)
+    expect(screen.getByText('▶ Console Logs')).toBeDefined()
+  })
+
+  it('shows live state when connected', () => {
+    render(<LogViewer />)
+    const ws = expand()
+    act(() => ws.connect())
+    expect(screen.getByText('⏵ Live')).toBeDefined()
   })
 
   it('displays log messages from WebSocket', () => {
     render(<LogViewer />)
-    const ws = MockWebSocket.instances[0]
+    const ws = expand()
     act(() => ws.connect())
-    // Expand
-    fireEvent.click(screen.getByText('Console Logs'))
-    // Receive a log line
     act(() => ws.receive('INFO: Server started on port 3000'))
     expect(screen.getByText('INFO: Server started on port 3000')).toBeDefined()
   })
 
   it('filters log lines by text', () => {
     render(<LogViewer />)
-    const ws = MockWebSocket.instances[0]
+    const ws = expand()
     act(() => ws.connect())
-    fireEvent.click(screen.getByText('Console Logs'))
     act(() => {
       ws.receive('ERROR: something broke')
       ws.receive('INFO: all good')
@@ -123,32 +135,52 @@ describe('LogViewer', () => {
 
   it('shows paused state when pause button clicked', () => {
     render(<LogViewer />)
-    const ws = MockWebSocket.instances[0]
+    const ws = expand()
     act(() => ws.connect())
-    fireEvent.click(screen.getByText('Console Logs'))
     fireEvent.click(screen.getByText('⏵ Live'))
     expect(screen.getByText('⏸ Paused')).toBeDefined()
   })
 
   it('shows waiting message when connected but no logs', () => {
     render(<LogViewer />)
-    const ws = MockWebSocket.instances[0]
+    const ws = expand()
     act(() => ws.connect())
-    fireEvent.click(screen.getByText('Console Logs'))
     expect(screen.getByText('Waiting for log output...')).toBeDefined()
   })
 
-  it('shows connecting message when not connected', () => {
+  it('shows connecting message before the socket opens', () => {
     render(<LogViewer />)
-    fireEvent.click(screen.getByText('Console Logs'))
+    expand()
     expect(screen.getByText('Connecting...')).toBeDefined()
+  })
+
+  it('shows the not-enabled hint when the handshake never succeeds', () => {
+    render(<LogViewer />)
+    const ws = expand()
+    // Close without ever opening: /ws/logs is not registered on the backend.
+    act(() => ws.close())
+    expect(
+      screen.getByText(/Log viewer not enabled on this server/),
+    ).toBeDefined()
+    // No retry loop against a doomed endpoint.
+    act(() => vi.advanceTimersByTime(10000))
+    expect(MockWebSocket.instances).toHaveLength(1)
+  })
+
+  it('reconnects after a dropped live connection', () => {
+    render(<LogViewer />)
+    const ws = expand()
+    act(() => ws.connect())
+    act(() => ws.close())
+    expect(screen.getByText(/reconnecting/)).toBeDefined()
+    act(() => vi.advanceTimersByTime(2000))
+    expect(MockWebSocket.instances).toHaveLength(2)
   })
 
   it('highlights error lines in red', () => {
     render(<LogViewer />)
-    const ws = MockWebSocket.instances[0]
+    const ws = expand()
     act(() => ws.connect())
-    fireEvent.click(screen.getByText('Console Logs'))
     act(() => ws.receive('ERROR: critical failure'))
     const errorLine = screen.getByText('ERROR: critical failure')
     expect(errorLine.className).toContain('text-red-400')
@@ -156,11 +188,64 @@ describe('LogViewer', () => {
 
   it('highlights warning lines in yellow', () => {
     render(<LogViewer />)
-    const ws = MockWebSocket.instances[0]
+    const ws = expand()
     act(() => ws.connect())
-    fireEvent.click(screen.getByText('Console Logs'))
     act(() => ws.receive('WARN: deprecated function used'))
     const warnLine = screen.getByText('WARN: deprecated function used')
     expect(warnLine.className).toContain('text-yellow-400')
+  })
+
+  it('passes the selected engine endpoint as ?engine=', () => {
+    render(
+      <LogViewer
+        engines={[engine('http://localhost:8000'), engine('http://localhost:8100')]}
+        selectedEndpoint="http://localhost:8100"
+      />,
+    )
+    const ws = expand()
+    expect(ws.url).toContain(
+      `/ws/logs?engine=${encodeURIComponent('http://localhost:8100')}`,
+    )
+  })
+
+  it('falls back to the first Docker engine when no engine is selected', () => {
+    render(
+      <LogViewer
+        engines={[engine('http://localhost:8000', 'Native'), engine('http://localhost:8100')]}
+        selectedEndpoint={null}
+      />,
+    )
+    const ws = expand()
+    expect(ws.url).toContain(
+      `/ws/logs?engine=${encodeURIComponent('http://localhost:8100')}`,
+    )
+  })
+
+  it('reconnects and clears the buffer when the selected engine changes', () => {
+    const engines = [engine('http://localhost:8000'), engine('http://localhost:8100')]
+    const { rerender } = render(
+      <LogViewer engines={engines} selectedEndpoint="http://localhost:8000" />,
+    )
+    const ws = expand()
+    act(() => ws.connect())
+    act(() => ws.receive('line from engine 8000'))
+    expect(screen.getByText('line from engine 8000')).toBeDefined()
+
+    rerender(<LogViewer engines={engines} selectedEndpoint="http://localhost:8100" />)
+
+    // A second socket is opened against the newly selected engine…
+    expect(MockWebSocket.instances).toHaveLength(2)
+    expect(MockWebSocket.instances[1].url).toContain(
+      `/ws/logs?engine=${encodeURIComponent('http://localhost:8100')}`,
+    )
+    // …and the previous engine's lines are dropped.
+    expect(screen.queryByText('line from engine 8000')).toBeNull()
+  })
+
+  it('shows which engine is being streamed in the header', () => {
+    render(
+      <LogViewer engines={[engine('http://localhost:8000')]} selectedEndpoint="http://localhost:8000" />,
+    )
+    expect(screen.getByText('http://localhost:8000')).toBeDefined()
   })
 })

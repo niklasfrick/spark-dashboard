@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useMetrics } from './hooks/useMetrics'
 import { useMetricsHistory } from './hooks/useMetricsHistory'
 import { ConnectionBadge } from './components/ConnectionBadge'
@@ -9,6 +9,12 @@ import type { GpuEvent, InferenceRequest } from './types/events'
 function App() {
   const { metrics, connectionStatus, isStale } = useMetrics()
   const [consoleExpanded, setConsoleExpanded] = useState(false)
+  // Endpoint of the engine tab selected in the engine section (null = Global
+  // tab). The log viewer follows it so logs stay in sync with the selection.
+  const [selectedEngineEndpoint, setSelectedEngineEndpoint] = useState<string | null>(null)
+  const handleActiveEngineChange = useCallback((endpoint: string | undefined) => {
+    setSelectedEngineEndpoint(endpoint ?? null)
+  }, [])
 
   const history = useMetricsHistory(metrics)
 
@@ -62,9 +68,14 @@ function App() {
           events={events}
           requests={requests}
           collapseCharts={consoleExpanded}
+          onActiveEngineChange={handleActiveEngineChange}
         />
 
-        <LogViewer onExpandChange={setConsoleExpanded} />
+        <LogViewer
+          engines={metrics?.engines ?? []}
+          selectedEndpoint={selectedEngineEndpoint}
+          onExpandChange={setConsoleExpanded}
+        />
       </main>
     </div>
   )

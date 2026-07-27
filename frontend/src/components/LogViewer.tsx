@@ -1,8 +1,15 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
+import type { EngineSnapshot } from '../types/metrics'
 
 /**
  * Scrollable log viewer that connects to the backend's /ws/logs WebSocket
  * endpoint and streams Docker container logs in real-time.
+ *
+ * The stream follows the engine selected in the engine section: when an
+ * engine tab is active its endpoint is passed as `?engine=` so the backend
+ * streams that engine's container; on the Global tab the first Docker engine
+ * is used (mirroring the backend's default). Switching engines reconnects
+ * and clears the buffer — the old lines belong to another container.
  *
  * Features:
  * - Collapsible section at the bottom of the dashboard
@@ -11,9 +18,24 @@ import { useState, useEffect, useRef, useMemo } from 'react'
  * - Auto-scroll to newest lines (pauses when scrolled up manually)
  * - Error/warning color highlighting
  */
-export function LogViewer({ onExpandChange }: { onExpandChange?: (expanded: boolean) => void }) {
+interface LogViewerProps {
+  /** Engine snapshots from the current metrics payload. */
+  engines?: EngineSnapshot[]
+  /** Endpoint of the engine tab selected in the engine section; null on the
+   *  Global tab. */
+  selectedEndpoint?: string | null
+  onExpandChange?: (expanded: boolean) => void
+}
+
+/** Connection lifecycle of the log socket. `idle` while collapsed (lazy
+ *  connect); `unavailable` when the handshake never succeeds — the backend
+ *  runs without --enable-log-viewer, so /ws/logs is not registered. */
+type LogConnState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'unavailable'
+
+export function LogViewer({ engines = [], selectedEndpoint = null, onExpandChange }: LogViewerProps) {
   const [logs, setLogs] = useState<string[]>([])
-  const [connected, setConnected] = useState(false)
+  const [connState, setConnState] = useState<LogConnState>('idle')
+  const connected = connState === 'connected'
   const [collapsed, setCollapsed] = useState(true)
   const [autoScroll, setAutoScroll] = useState(true)
   const [paused, setPaused] = useState(false)
@@ -23,38 +45,85 @@ export function LogViewer({ onExpandChange }: { onExpandChange?: (expanded: bool
   const wsRef = useRef<WebSocket | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
+  // Engine whose container is streamed: the selected tab's engine when one is
+  // active and still present, otherwise the first Docker engine (the backend
+  // applies the same default when no ?engine= is passed).
+  const targetEndpoint = useMemo(() => {
+    if (selectedEndpoint && engines.some((e) => e.endpoint === selectedEndpoint)) {
+      return selectedEndpoint
+    }
+    return engines.find((e) => e.deployment_mode === 'Docker')?.endpoint ?? null
+  }, [engines, selectedEndpoint])
+
+  const targetEngine = engines.find((e) => e.endpoint === targetEndpoint)
+  const engineLabel = targetEngine
+    ? (targetEngine.model?.name ?? targetEngine.endpoint)
+    : null
+
   useEffect(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const wsUrl = `${protocol}//${window.location.host}/ws/logs`
-    const ws = new WebSocket(wsUrl)
-    wsRef.current = ws
+    // Lazy connect: no socket (and no backend Docker stream) until the console
+    // is first expanded. Collapsing tears the socket down again, which also
+    // lets the backend stop the container stream once its last viewer leaves.
+    if (collapsed) return
 
-    ws.onopen = () => {
-      setConnected(true)
+    let disposed = false
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
+    let everOpened = false
+    // Connecting fresh or to a different container: drop the previous lines.
+    setLogs([])
+    setConnState('connecting')
+
+    const connect = () => {
+      if (disposed) return
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+      const query = targetEndpoint ? `?engine=${encodeURIComponent(targetEndpoint)}` : ''
+      const ws = new WebSocket(`${protocol}//${window.location.host}/ws/logs${query}`)
+      wsRef.current = ws
+
+      ws.onopen = () => {
+        everOpened = true
+        setConnState('connected')
+      }
+
+      ws.onmessage = (event) => {
+        const text = event.data as string
+        setLogs((prev) => {
+          const next = [...prev, text]
+          return next.length > 1000 ? next.slice(-1000) : next
+        })
+      }
+
+      ws.onclose = () => {
+        wsRef.current = null
+        if (disposed) return
+        if (!everOpened) {
+          // Handshake never succeeded: /ws/logs is not registered (backend
+          // without --enable-log-viewer) or the server is unreachable. Don't
+          // retry a doomed endpoint; the next expand or engine switch retries.
+          setConnState('unavailable')
+          return
+        }
+        // Live connection dropped (backend restart, network): retry with a
+        // delay, like the metrics socket does.
+        setConnState('reconnecting')
+        retryTimer = setTimeout(connect, 2000)
+      }
+
+      ws.onerror = () => {
+        ws.close()
+      }
     }
 
-    ws.onmessage = (event) => {
-      const text = event.data as string
-      setLogs((prev) => {
-        const next = [...prev, text]
-        return next.length > 1000 ? next.slice(-1000) : next
-      })
-    }
-
-    ws.onclose = () => {
-      setConnected(false)
-      wsRef.current = null
-    }
-
-    ws.onerror = () => {
-      ws.close()
-    }
+    connect()
 
     return () => {
-      ws.close()
+      disposed = true
+      if (retryTimer) clearTimeout(retryTimer)
+      wsRef.current?.close()
       wsRef.current = null
+      setConnState('idle')
     }
-  }, [])
+  }, [collapsed, targetEndpoint])
 
   // Auto-scroll when new logs arrive (only if not paused)
   useEffect(() => {
@@ -109,11 +178,13 @@ export function LogViewer({ onExpandChange }: { onExpandChange?: (expanded: bool
                      bg-[#111115] rounded-md border border-white/[0.04] hover:border-zinc-700 
                      transition-colors duration-200"
         >
-          <span className={`inline-block w-1.5 h-1.5 rounded-full ${connected ? 'bg-[#76B900]' : 'bg-zinc-500'}`} />
-          Console Logs
-          <span className="text-zinc-600 ml-auto">
-            {connected ? '● Live' : '○ Disconnected'}
-          </span>
+          ▶ Console Logs
+          {engineLabel && (
+            <span className="text-[10px] text-zinc-600 truncate max-w-[240px]">
+              {engineLabel}
+            </span>
+          )}
+          <span className="text-zinc-600 ml-auto">click to stream</span>
         </button>
       </div>
     )
@@ -131,7 +202,23 @@ export function LogViewer({ onExpandChange }: { onExpandChange?: (expanded: bool
         </button>
 
         {/* Connection indicator */}
-        <span className={`inline-block w-1.5 h-1.5 rounded-full ${connected ? 'bg-[#76B900]' : 'bg-zinc-500'}`} />
+        <span
+          className={`inline-block w-1.5 h-1.5 rounded-full ${
+            connected
+              ? 'bg-[#76B900]'
+              : connState === 'reconnecting'
+                ? 'bg-yellow-400'
+                : 'bg-zinc-500'
+          }`}
+          title={connState}
+        />
+
+        {/* Which engine's container is being streamed */}
+        {engineLabel && (
+          <span className="text-[10px] text-zinc-600 truncate max-w-[240px] shrink-0">
+            {engineLabel}
+          </span>
+        )}
 
         {/* Pause/Resume button */}
         <button
@@ -211,7 +298,11 @@ export function LogViewer({ onExpandChange }: { onExpandChange?: (expanded: bool
       >
         {logs.length === 0 && (
           <div className="text-zinc-600 italic text-center pt-8">
-            {connected ? 'Waiting for log output...' : 'Connecting...'}
+            {connState === 'connected' && 'Waiting for log output...'}
+            {(connState === 'connecting' || connState === 'idle') && 'Connecting...'}
+            {connState === 'reconnecting' && 'Connection lost — reconnecting…'}
+            {connState === 'unavailable' &&
+              'Log viewer not enabled on this server — start the dashboard with --enable-log-viewer (or SPARK_DASHBOARD_ENABLE_LOG_VIEWER=1).'}
           </div>
         )}
 
