@@ -106,7 +106,7 @@ export function Dashboard({
   const activeGpuIndex = gpuIndexOf(activeGpu)
   // Single-GPU hosts keep the legacy un-prefixed history keys so the
   // pre-multi-GPU rendering stays identical; multi-GPU hosts read the
-  // `gpu:<index>:<metric>` series (same scheme as DetailedView).
+  // `gpu:<index>:<metric>` series written by useMetricsHistory.
   const gpuMetricKey = (metric: string) => (multiGpu ? `gpu:${activeGpuIndex}:${metric}` : metric)
   const gpuName = activeGpu.name ?? undefined
   const gpuSubtitle = multiGpu ? `GPU ${activeGpuIndex}${gpuName ? ` · ${gpuName}` : ''}` : gpuName
