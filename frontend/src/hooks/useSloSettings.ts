@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { DEFAULT_SLO, type SloThresholds } from '@/lib/slo'
 
 const STORAGE_PREFIX = 'spark-dashboard:slo'
@@ -81,12 +81,16 @@ export function useSloSettings(engineKey: string, modelName: string | null): {
   })
 
   // When the engine/model identity changes (e.g. user switches tabs to a
-  // different served model in the same browser session), reload the value
-  // for that key. Without this effect, the hook would stick to whatever
-  // was loaded on first mount.
-  useEffect(() => {
+  // different served model in the same browser session), reload the value for
+  // that key. Without this the hook would stick to whatever was loaded on
+  // first mount. Done during render rather than in an effect: the thresholds
+  // are derived from `key`, and re-deriving in an effect would render one
+  // frame of the previous model's thresholds before correcting itself.
+  const [prevKey, setPrevKey] = useState(key)
+  if (prevKey !== key) {
+    setPrevKey(key)
     setThresholdsState(readFromStorage(key) ?? DEFAULT_SLO)
-  }, [key])
+  }
 
   const setThresholds = useCallback(
     (next: SloThresholds) => {

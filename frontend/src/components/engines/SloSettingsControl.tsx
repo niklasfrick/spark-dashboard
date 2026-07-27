@@ -52,11 +52,15 @@ export function SloSettingsControl({
   const [draft, setDraft] = useState<FieldDraft>(() => toDraft(thresholds))
   const containerRef = useRef<HTMLDivElement | null>(null)
 
-  // Sync the local draft when external thresholds change (e.g. user
-  // switches model and the hook reloads stored values).
-  useEffect(() => {
+  // Sync the local draft when external thresholds change (e.g. user switches
+  // model and the hook reloads stored values). The draft is derived from the
+  // prop, so it is adjusted during render rather than from an effect, which
+  // would show the previous model's numbers for one frame.
+  const [prevThresholds, setPrevThresholds] = useState(thresholds)
+  if (prevThresholds !== thresholds) {
+    setPrevThresholds(thresholds)
     setDraft(toDraft(thresholds))
-  }, [thresholds])
+  }
 
   // Click-outside + Escape close the popover.
   useEffect(() => {

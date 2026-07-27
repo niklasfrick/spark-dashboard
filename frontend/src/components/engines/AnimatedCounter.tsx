@@ -39,6 +39,32 @@ export function AnimatedCounter({
   const [display, setDisplay] = useState<number | null>(value)
   const displayRef = useRef<number | null>(value)
   const rafRef = useRef<number | null>(null)
+  const [prevValue, setPrevValue] = useState<number | null>(value)
+
+  // A target we snap to rather than animate towards is derived state, so it is
+  // applied during render. Doing it from the effect below would commit one
+  // frame of the stale number before correcting it.
+  //
+  // `display` is read here instead of `displayRef` — during render the state
+  // itself is the committed value the ref mirrors, and refs must not be read
+  // while rendering. The effect syncing `display` into `displayRef` is
+  // declared first, so the animation effect below still sees the snapped
+  // value without the ref being written during render.
+  if (prevValue !== value) {
+    setPrevValue(value)
+    const from = display
+    // No previous numeric value, reduced motion, or a counter reset
+    // (target below current) -> snap, never animate downward.
+    if (
+      value === null ||
+      from === null ||
+      from === value ||
+      prefersReducedMotion() ||
+      value < from
+    ) {
+      setDisplay(value)
+    }
+  }
 
   useEffect(() => {
     displayRef.current = display
@@ -54,16 +80,13 @@ export function AnimatedCounter({
 
     if (value === null) {
       cancel()
-      setDisplay(null)
       return
     }
 
     const from = displayRef.current
-    // No previous numeric value, reduced motion, or a counter reset
-    // (target below current) -> snap, never animate downward.
+    // Snapped during render — nothing left to animate.
     if (from === null || from === value || prefersReducedMotion() || value < from) {
       cancel()
-      setDisplay(value)
       return
     }
 

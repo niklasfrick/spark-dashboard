@@ -60,6 +60,23 @@ export function LogViewer({ engines = [], selectedEndpoint = null, onExpandChang
     ? (targetEngine.model?.name ?? targetEngine.endpoint)
     : null
 
+  // Identity of the connection the buffer belongs to: null while collapsed (no
+  // socket at all), otherwise the container being streamed.
+  const connectionKey = collapsed ? null : (targetEndpoint ?? '')
+  const [prevConnectionKey, setPrevConnectionKey] = useState<string | null>(null)
+
+  // Connecting fresh or to a different container: drop the previous lines. The
+  // buffer is derived from the connection identity, so it is reset during
+  // render — resetting it synchronously inside the socket effect below would
+  // paint one frame of the previous container's logs under the new label.
+  if (prevConnectionKey !== connectionKey) {
+    setPrevConnectionKey(connectionKey)
+    if (connectionKey !== null) {
+      setLogs([])
+      setConnState('connecting')
+    }
+  }
+
   useEffect(() => {
     // Lazy connect: no socket (and no backend Docker stream) until the console
     // is first expanded. Collapsing tears the socket down again, which also
@@ -69,9 +86,6 @@ export function LogViewer({ engines = [], selectedEndpoint = null, onExpandChang
     let disposed = false
     let retryTimer: ReturnType<typeof setTimeout> | null = null
     let everOpened = false
-    // Connecting fresh or to a different container: drop the previous lines.
-    setLogs([])
-    setConnState('connecting')
 
     const connect = () => {
       if (disposed) return

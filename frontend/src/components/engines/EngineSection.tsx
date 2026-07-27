@@ -260,13 +260,6 @@ export function EngineSection({
       : undefined
     onActiveEngineGpuChange(gpuIndexes)
   }, [activeEngineGpuIndexesKey, isGlobal, onActiveEngineGpuChange])
-  useEffect(() => {
-    if (showGlobalControls || engines.length === 0) return
-    const onlyEngineKey = `${engines[0].engine_type}-${engines[0].endpoint}`
-    if (activeTab !== onlyEngineKey) {
-      setActiveTab(onlyEngineKey)
-    }
-  }, [showGlobalControls, activeTab, engines])
 
   const tabOrder = useMemo(
     () => [
@@ -276,17 +269,38 @@ export function EngineSection({
     [engines, showGlobalControls],
   )
 
+  // `activeTab` can fall out of step with the engines actually present: it is
+  // restored from localStorage before any metrics arrive, and engines come and
+  // go at runtime. Both corrections are applied during render rather than from
+  // an effect — React discards this render pass and re-runs it, so a tab that
+  // does not exist is never committed. Done in an effect it would paint one
+  // frame of an empty or wrong tab first.
+  if (!showGlobalControls && engines.length > 0) {
+    // Single running engine: there is no global tab to sit on.
+    const onlyEngineKey = `${engines[0].engine_type}-${engines[0].endpoint}`
+    if (activeTab !== onlyEngineKey) setActiveTab(onlyEngineKey)
+  } else if (
+    engines.length > 0 &&
+    activeTab !== GLOBAL_TAB_VALUE &&
+    !tabOrder.includes(activeTab)
+  ) {
+    // The selected engine is gone — fall back to the aggregate tab.
+    setActiveTab(GLOBAL_TAB_VALUE)
+  }
+
+  // Clearing the persisted tab is a write to an external store, so it stays in
+  // an effect. Runs after the correction above has settled.
   useEffect(() => {
     if (engines.length === 0) return
-    if (activeTab === GLOBAL_TAB_VALUE) return
-    if (tabOrder.includes(activeTab)) return
-    setActiveTab(GLOBAL_TAB_VALUE)
-    if (typeof window !== 'undefined') {
-      try {
+    if (activeTab !== GLOBAL_TAB_VALUE) return
+    if (typeof window === 'undefined') return
+    try {
+      const stored = window.localStorage.getItem(ACTIVE_TAB_STORAGE_KEY)
+      if (stored !== null && stored !== GLOBAL_TAB_VALUE && !tabOrder.includes(stored)) {
         window.localStorage.removeItem(ACTIVE_TAB_STORAGE_KEY)
-      } catch {
-        // ignore storage errors
       }
+    } catch {
+      // ignore storage errors
     }
   }, [engines.length, activeTab, tabOrder])
 

@@ -51,10 +51,21 @@ export function useTabRotation({
 
   const active = enabled && intervalMs > 0 && order.length > 1
 
+  // A new rotation cycle starts whenever any input to the timer changes. That
+  // makes `cycle` derived state, so it is adjusted during render rather than
+  // from an effect — calling setState synchronously inside the timer effect
+  // below would schedule a second render pass on every cycle.
+  const cycleKey = `${active}|${intervalMs}|${activeTab}|${orderKey}`
+  const [prevCycleKey, setPrevCycleKey] = useState<string | null>(null)
+  if (prevCycleKey !== cycleKey) {
+    setPrevCycleKey(cycleKey)
+    // Deactivating ends the current cycle without starting a new one, so the
+    // countdown bar is not restarted just to be hidden.
+    if (active) setCycle((c) => c + 1)
+  }
+
   useEffect(() => {
     if (!active) return
-
-    setCycle((c) => c + 1)
 
     const id = window.setTimeout(() => {
       const currentOrder = orderRef.current
