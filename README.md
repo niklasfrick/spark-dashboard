@@ -33,6 +33,7 @@ Prefer containers? Run the published multi-arch image (needs the
 ```bash
 docker run --rm --gpus all --pid=host -p 3000:3000 \
   -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  -v spark-dashboard-state:/var/lib/spark-dashboard \
   --group-add "$(getent group docker | cut -d: -f3)" \
   ghcr.io/niklasfrick/spark-dashboard:latest
 ```
@@ -40,7 +41,8 @@ docker run --rm --gpus all --pid=host -p 3000:3000 \
 `--group-add` puts the container in the host's `docker` group so it can read the
 mounted socket and discover vLLM **containers**. Skip it (or get the GID wrong)
 and engine discovery silently falls back to host processes only — containerized
-engines won't appear.
+engines won't appear. The named volume keeps saved dashboards across container
+replacement; without it they die with the container.
 
 Or with Compose (host networking + GPU + socket mount preconfigured):
 
@@ -223,8 +225,11 @@ binary, and starts it again, preserving `/etc/spark-dashboard/config.env`.
 
 ```bash
 sudo spark-dashboard service uninstall         # keep /etc/spark-dashboard
-sudo spark-dashboard service uninstall --purge # remove everything
+sudo spark-dashboard service uninstall --purge # also remove /etc/spark-dashboard
 ```
+
+Neither form touches `/var/lib/spark-dashboard`, so saved dashboards survive an
+uninstall/reinstall cycle. Remove that directory by hand to start clean.
 
 ### CLI options
 
@@ -267,6 +272,19 @@ The dashboard configuration is a single document shared by everyone who opens
 the instance, stored at `<state-dir>/dashboards.json`. The server keeps it as
 opaque bytes — it never parses or validates the contents, and enforces only a
 1 MiB size cap. Writes are atomic, and last write wins.
+
+Both deployments arrange for `<state-dir>` to be `/var/lib/spark-dashboard`, the
+binary's default:
+
+| Deployment | Where it lives                    | Provided by                                        |
+| ---------- | --------------------------------- | -------------------------------------------------- |
+| systemd    | `/var/lib/spark-dashboard`        | the unit's `StateDirectory=` grant, created and chowned to the service user on start |
+| Docker     | the `spark-dashboard-state` volume | the Compose named volume; survives everything short of `down -v` |
+
+The document therefore outlives restarts, upgrades and container replacement.
+Override the location with `--state-dir` / `SPARK_DASHBOARD_STATE_DIR` — under
+systemd that also needs a unit override, since `ProtectSystem=strict` leaves the
+granted state directory the only writable path.
 
 ```
 GET    /api/dashboard   the document, or 204 when none is stored

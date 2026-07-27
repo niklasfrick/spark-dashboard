@@ -79,6 +79,57 @@ services. **Tradeoff:** engines bound only to the host network are no longer
 auto-discovered. Container-based discovery over the Docker socket still works
 (`pid:host` is inherited).
 
+## Saved dashboards (persistent state)
+
+The dashboard layout an operator saves in the UI is stored server-side as a
+single document, `dashboards.json`, under the container's
+`/var/lib/spark-dashboard` — the value of `SPARK_DASHBOARD_STATE_DIR`. Compose
+backs that path with a named volume, `spark-dashboard-state`, so the
+configuration outlives container replacement:
+
+```yaml
+volumes:
+  - spark-dashboard-state:/var/lib/spark-dashboard
+```
+
+`docker compose down && docker compose up -d`, an image upgrade, or a
+`docker compose pull` all keep the saved dashboards. **`docker compose down -v`
+deletes them** — that is the reset button. Inspect or back up the document
+without a shell in the container (there isn't one):
+
+```bash
+docker volume inspect spark-dashboard-state         # where it lives on the host
+docker run --rm -v spark-dashboard-state:/state -w /state \
+  busybox cat dashboards.json > dashboards.backup.json
+```
+
+With plain `docker run`, pass the volume yourself — otherwise the configuration
+lives on the container's writable layer and dies with the container:
+
+```bash
+-v spark-dashboard-state:/var/lib/spark-dashboard
+```
+
+**Why the mount point already exists in the image:** Docker creates a mount
+target the image lacks as a *root-owned* directory, and the container runs as
+uid 65532 with no shell and no entrypoint script to `chown` from — a distroless
+image has neither. The image therefore ships `/var/lib/spark-dashboard`
+pre-created and owned by 65532, and Docker seeds the fresh named volume from it,
+ownership included.
+
+That is why `SPARK_DASHBOARD_STATE_DIR` is worth leaving alone. Compose feeds it
+to both the mount point and the app, so the two cannot drift — but only the
+default path is pre-created in the image, so any other value gives you a
+root-owned volume the app cannot write. It then serves reads, refuses writes
+with `503`, and marks every response `x-spark-dashboard-read-only: true`. To
+relocate the state anyway, use a bind mount you have chowned to `65532:65532`
+yourself. The startup log line naming the state directory is the first place to
+look:
+
+```bash
+docker compose logs spark-dashboard | grep 'state directory'
+```
+
 ## GPU passthrough
 
 GPU metrics come from **NVML**, not device-file mounts — so no `/dev/nvidia*`
@@ -110,6 +161,7 @@ All are optional; defaults match the binary. Set them in `.env`.
 | `SPARK_DASHBOARD_PORT`              | `3000`      | Listen port.                                         |
 | `SPARK_DASHBOARD_BIND`              | `0.0.0.0`   | Bind address.                                        |
 | `SPARK_DASHBOARD_POLL_INTERVAL`     | `1000`      | Metrics polling interval (ms).                       |
+| `SPARK_DASHBOARD_STATE_DIR`         | `/var/lib/spark-dashboard` | Where saved dashboards live; move the volume mount with it. |
 | `SPARK_DASHBOARD_GPU_INDEX`         | _(unset)_   | Optional NVML GPU index; unset monitors all GPUs.    |
 | `SPARK_DASHBOARD_SIMULATE_GPUS`     | `0`         | Dev aid: append N fictive GPUs with simulated data.  |
 | `SPARK_DASHBOARD_PROVIDER_API_KEY`  | _(unset)_   | Fallback API key for auth-gated engines.             |
