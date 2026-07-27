@@ -9,6 +9,8 @@ use tower_http::cors::CorsLayer;
 struct FrontendAssets;
 
 pub fn create_router(tx: broadcast::Sender<String>) -> Router {
+    // `mut` is only exercised by the Linux-gated log-viewer block below.
+    #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
     let mut router = Router::new()
         .route("/ws", get(crate::ws::ws_handler))
         // Liveness probe for container HEALTHCHECK / orchestrators. Intentionally

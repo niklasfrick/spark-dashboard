@@ -274,9 +274,13 @@ Docker API (no `docker` CLI or shell required — works in distroless images).
   a reverse proxy with auth, bind to `127.0.0.1`/`--bind 127.0.0.1`, or
   restrict the port with a firewall. Do not enable on a public-facing host.
 
-The stream is shared: one background Docker log stream fans out to all
-connected clients (same pattern as metrics). stdout and stderr are line-buffered
-so split frames don't produce partial lines.
+The stream follows the engine selected in the dashboard: the frontend passes
+the engine's endpoint as `/ws/logs?engine=<endpoint>`, which is validated
+against the tracked engine state — only containers the dashboard knows as
+engines can be streamed. Per container, one background Docker log stream fans
+out to all clients watching it (same pattern as metrics) and stops when the
+last viewer disconnects. stdout and stderr are line-buffered so split frames
+don't produce partial lines.
 
 ## Development
 

@@ -6,29 +6,38 @@
 //!
 //! Stream characteristics:
 //! - stdout/stderr are multiplexed in real-time (not drained sequentially).
-//! - One Docker log stream is shared across all connected WebSocket clients
-//!   (same fan-out pattern as the metrics broadcast in `ws.rs`): a single
-//!   background task owns the Docker stream and publishes line-buffered log
-//!   lines over a `broadcast` channel; each WS handler subscribes to it.
+//! - One Docker log stream per container is shared across all WebSocket
+//!   clients watching that container (same fan-out pattern as the metrics
+//!   broadcast in `ws.rs`): a background task per container owns the Docker
+//!   stream and publishes line-buffered log lines over a `broadcast` channel;
+//!   each WS handler subscribes to the channel for its container.
+//! - Clients select an engine with `/ws/logs?engine=<endpoint>`. The endpoint
+//!   is matched against the shared engine state populated by
+//!   `engine_collector_loop`, so only containers the dashboard tracks as
+//!   engines can be streamed — a client can never request an arbitrary
+//!   container. Without the parameter the first tracked engine container is
+//!   used (single-engine hosts don't need to select anything).
 //! - Both stdout and stderr are buffered by lines — bollard frames can split a
-//!   log line mid-way, so partial frames are accumulated until a newline arrives
-//!   before being forwarded. The trailing partial line is flushed when the
-//!   Docker stream ends.
-//! - The container to stream is read from the shared engine state populated by
-//!   `engine_collector_loop`, so the dashboard streams the exact container it is
-//!   showing metrics for rather than re-scanning and potentially picking a
-//!   different one.
+//!   log line mid-way, so partial frames are accumulated until a newline
+//!   arrives before being forwarded. The trailing partial line is flushed when
+//!   the Docker stream ends.
+//! - When a container's stream ends (container stopped, Docker error, or the
+//!   last viewer disconnected), its registry entry is removed, so the next
+//!   client connect starts a fresh stream instead of subscribing to a dead
+//!   channel. Streams therefore only run while someone is actually watching.
 
 #![cfg(target_os = "linux")]
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::Query;
 use axum::response::IntoResponse;
 use bollard::container::LogOutput;
 use bollard::query_parameters::LogsOptionsBuilder;
 use bollard::Docker;
 use futures_util::StreamExt;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use tokio::sync::{broadcast, RwLock};
 use tracing::{debug, warn};
 
@@ -38,26 +47,24 @@ use crate::engines::EngineSnapshot;
 /// Read by `server.rs` to decide whether to register the `/ws/logs` route.
 static LOG_VIEWER_ENABLED: AtomicBool = AtomicBool::new(false);
 
-/// Broadcast channel carrying line-buffered log lines to all connected WS
-/// clients. Lazily initialized by [`start_log_stream`] the first time a client
-/// connects. Mirrors the `broadcast::Sender<String>` used for metrics in
-/// [`crate::metrics`] / [`crate::ws`]: one producer (the background stream
-/// task) fans out to N subscribers (the WS handlers).
-static LOG_TX: OnceLock<broadcast::Sender<String>> = OnceLock::new();
-
 /// Shared engine state, set at startup when the log viewer is enabled.
-/// The background stream task reads the tracked container id from here so it
-/// streams the same container the dashboard is reporting metrics for.
+/// WS handlers resolve engine endpoints to container ids against it, so the
+/// stream always follows the engine the dashboard is showing.
 static ENGINE_STATE: OnceLock<Arc<RwLock<Vec<EngineSnapshot>>>> = OnceLock::new();
 
-/// Capacity of the log broadcast channel. Sized so a slow WS client can fall a
-/// few seconds behind (log lines are small) without being dropped; lagged
+/// One shared log stream per container: container id → broadcast sender.
+/// An entry exists while the container's background stream task is alive; the
+/// task removes its own entry on exit so a later connect restarts the stream.
+static STREAMS: OnceLock<Mutex<HashMap<String, broadcast::Sender<String>>>> = OnceLock::new();
+
+/// Capacity of each log broadcast channel. Sized so a slow WS client can fall
+/// a few seconds behind (log lines are small) without being dropped; lagged
 /// clients simply skip missed lines (see [`handle_logs_socket`]).
 const LOG_CHANNEL_CAPACITY: usize = 256;
 
 /// Enable the log viewer feature. Called from `main.rs` when
-/// `--enable-log-viewer` is set. Captures the shared engine state so the
-/// background stream can resolve the tracked container id.
+/// `--enable-log-viewer` is set. Captures the shared engine state so WS
+/// handlers can resolve engine endpoints to container ids.
 pub fn enable_log_viewer(engine_state: Arc<RwLock<Vec<EngineSnapshot>>>) {
     // Setting the engine state first avoids a race where a client connects and
     // the stream task starts before the state pointer is available.
@@ -70,20 +77,43 @@ pub fn is_log_viewer_enabled() -> bool {
     LOG_VIEWER_ENABLED.load(Ordering::Relaxed)
 }
 
-/// WebSocket upgrade handler for `/ws/logs`.
-///
-/// The Docker log stream is started only when the first client actually
-/// connects (lazy connect -- no background resource consumption while
-/// collapsed). Subsequent clients subscribe to the same broadcast.
-pub async fn ws_logs_handler(ws: WebSocketUpgrade) -> impl IntoResponse {
-    ws.on_upgrade(handle_logs_socket)
+/// Query parameters for `/ws/logs`.
+#[derive(serde::Deserialize)]
+pub struct LogsQuery {
+    /// Engine endpoint (as serialized in `EngineSnapshot.endpoint`) selecting
+    /// which engine's container to stream. Absent → first tracked container.
+    engine: Option<String>,
 }
 
-async fn handle_logs_socket(mut socket: WebSocket) {
-    debug!("Logs WebSocket client connected");
+/// WebSocket upgrade handler for `/ws/logs`.
+///
+/// A container's Docker log stream is started only when the first client for
+/// that container connects (lazy connect — no background resource consumption
+/// while the viewer is unused). Subsequent clients subscribe to the same
+/// broadcast.
+pub async fn ws_logs_handler(
+    Query(query): Query<LogsQuery>,
+    ws: WebSocketUpgrade,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_logs_socket(socket, query.engine))
+}
 
-    let tx = start_log_stream().await;
-    let mut rx = tx.subscribe();
+async fn handle_logs_socket(mut socket: WebSocket, engine: Option<String>) {
+    debug!("Logs WebSocket client connected (engine: {engine:?})");
+
+    let container_id = match resolve_container_id(engine.as_deref()).await {
+        Some(id) => id,
+        None => {
+            let msg = match engine {
+                Some(e) => format!("ERR:No container found for engine {e}"),
+                None => "ERR:No engine container found".to_string(),
+            };
+            let _ = socket.send(Message::Text(msg.into())).await;
+            return;
+        }
+    };
+
+    let mut rx = subscribe_container(&container_id);
 
     // Replay a marker so the client knows streaming has begun.
     if socket
@@ -132,46 +162,47 @@ async fn handle_logs_socket(mut socket: WebSocket) {
     }
 }
 
-/// Lazily start the shared Docker log stream (if not already running) and
-/// return a clone of the broadcast sender. Idempotent: the first caller to
-/// populate `LOG_TX` wins; `STREAM_TASK_STARTED` then ensures the background
-/// task is spawned exactly once. Later callers just subscribe.
-async fn start_log_stream() -> broadcast::Sender<String> {
-    let tx = LOG_TX
-        .get_or_init(|| broadcast::channel::<String>(LOG_CHANNEL_CAPACITY).0)
-        .clone();
-
-    // Only one caller wins this CAS; it spawns the single stream task.
-    if STREAM_TASK_STARTED
-        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-        .is_ok()
-    {
-        tokio::spawn(log_stream_task(tx.clone()));
+/// Subscribe to `container_id`'s log stream, lazily spawning the container's
+/// background stream task if it isn't running. The registry lock serializes
+/// concurrent first-connects so exactly one task is spawned per container, and
+/// the receiver is created before the task starts so the stream never observes
+/// zero subscribers while its first client is still attaching.
+fn subscribe_container(container_id: &str) -> broadcast::Receiver<String> {
+    let streams = STREAMS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut map = streams.lock().expect("log stream registry poisoned");
+    if let Some(tx) = map.get(container_id) {
+        return tx.subscribe();
     }
-
-    tx
+    let (tx, rx) = broadcast::channel::<String>(LOG_CHANNEL_CAPACITY);
+    map.insert(container_id.to_string(), tx.clone());
+    tokio::spawn(log_stream_task(container_id.to_string(), tx));
+    rx
 }
 
-/// Guarantees the background Docker-stream task is spawned exactly once.
-static STREAM_TASK_STARTED: AtomicBool = AtomicBool::new(false);
+/// Remove a finished stream's registry entry so the next client connect starts
+/// a fresh Docker stream instead of subscribing to a dead channel.
+fn remove_stream(container_id: &str) {
+    if let Some(streams) = STREAMS.get() {
+        streams
+            .lock()
+            .expect("log stream registry poisoned")
+            .remove(container_id);
+    }
+}
 
-/// Background task that owns the single Docker log stream and publishes
-/// line-buffered log lines to all WS clients via the broadcast channel.
-async fn log_stream_task(tx: broadcast::Sender<String>) {
+/// Background task that owns the Docker log stream for one container and
+/// publishes line-buffered log lines to its subscribers. Deregisters itself on
+/// every exit path so the stream can be restarted by a later connect.
+async fn log_stream_task(container_id: String, tx: broadcast::Sender<String>) {
+    stream_container_logs(&container_id, &tx).await;
+    remove_stream(&container_id);
+}
+
+async fn stream_container_logs(container_id: &str, tx: &broadcast::Sender<String>) {
     let docker = match Docker::connect_with_local_defaults() {
         Ok(d) => d,
         Err(e) => {
             let _ = tx.send(format!("ERR:Could not connect to Docker daemon: {e}"));
-            return;
-        }
-    };
-
-    // Resolve the tracked container id from shared engine state. Poll briefly
-    // in case detection hasn't completed yet at first connect.
-    let container_id = match resolve_container_id().await {
-        Some(id) => id,
-        None => {
-            let _ = tx.send("ERR:No engine container found".to_string());
             return;
         }
     };
@@ -185,7 +216,7 @@ async fn log_stream_task(tx: broadcast::Sender<String>) {
         .tail("100")
         .build();
 
-    let mut stream = docker.logs(&container_id, Some(options));
+    let mut stream = docker.logs(container_id, Some(options));
     let mut stdout_buf = String::with_capacity(1024);
     let mut stderr_buf = String::with_capacity(1024);
 
@@ -193,21 +224,32 @@ async fn log_stream_task(tx: broadcast::Sender<String>) {
         match stream.next().await {
             Some(Ok(LogOutput::StdOut { message })) => {
                 for line in buffer_lines(&mut stdout_buf, &message, None) {
-                    // No subscribers is fine — a client may reconnect; keep streaming.
-                    let _ = tx.send(line);
+                    // Err means no live subscribers: the last viewer left, so
+                    // stop the Docker stream — a later connect restarts it
+                    // through the registry.
+                    if tx.send(line).is_err() {
+                        debug!("No log subscribers left for {container_id}; stopping stream");
+                        return;
+                    }
                 }
             }
             Some(Ok(LogOutput::StdErr { message })) => {
                 // Stderr is buffered by lines the same way stdout is: frames
                 // can split a line mid-way, so accumulate until a newline.
                 for line in buffer_lines(&mut stderr_buf, &message, Some("[stderr] ")) {
-                    let _ = tx.send(line);
+                    if tx.send(line).is_err() {
+                        debug!("No log subscribers left for {container_id}; stopping stream");
+                        return;
+                    }
                 }
             }
             Some(Ok(LogOutput::Console { message })) => {
                 // Console frames are whole lines from the Docker daemon itself.
                 let text = String::from_utf8_lossy(&message).to_string();
-                let _ = tx.send(text);
+                if tx.send(text).is_err() {
+                    debug!("No log subscribers left for {container_id}; stopping stream");
+                    return;
+                }
             }
             Some(Ok(LogOutput::StdIn { .. })) => {
                 // We don't write to stdin, so ignore.
@@ -219,8 +261,8 @@ async fn log_stream_task(tx: broadcast::Sender<String>) {
             None => {
                 // Stream ended (container stopped). Flush any trailing partial
                 // lines that never received a newline.
-                flush_trailing(&mut stdout_buf, None, &tx);
-                flush_trailing(&mut stderr_buf, Some("[stderr] "), &tx);
+                flush_trailing(&mut stdout_buf, None, tx);
+                flush_trailing(&mut stderr_buf, Some("[stderr] "), tx);
                 let _ = tx.send("LOG:Stream ended - container stopped".to_string());
                 return;
             }
@@ -228,24 +270,38 @@ async fn log_stream_task(tx: broadcast::Sender<String>) {
     }
 }
 
-/// Read the tracked container id from shared engine state. Waits up to ~10s for
-/// detection to populate a container id, since the log viewer may be connected
-/// before the first detection sweep completes.
-async fn resolve_container_id() -> Option<String> {
+/// Resolve an engine selection to a container id against the shared engine
+/// state. Waits up to ~10s for detection to populate container ids, since the
+/// log viewer may connect before the first detection sweep completes.
+async fn resolve_container_id(engine: Option<&str>) -> Option<String> {
     let state = ENGINE_STATE.get()?;
     for _ in 0..100 {
         {
             let lock = state.read().await;
-            for snap in lock.iter() {
-                if let Some(id) = &snap.container_id {
-                    return Some(id.clone());
-                }
+            if let Some(id) = find_container(&lock, engine) {
+                return Some(id);
             }
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
-    warn!("Log viewer could not resolve a container id from engine state after 10s");
+    warn!(
+        "Log viewer could not resolve a container id from engine state after 10s (engine: {engine:?})"
+    );
     None
+}
+
+/// Pick the container id for an engine selection from a snapshot list.
+/// With `engine` given, only that endpoint's container matches — an unknown
+/// endpoint yields `None` rather than falling back to a different engine's
+/// logs. Without it, the first snapshot with a container id wins.
+fn find_container(snapshots: &[EngineSnapshot], engine: Option<&str>) -> Option<String> {
+    match engine {
+        Some(endpoint) => snapshots
+            .iter()
+            .find(|s| s.endpoint == endpoint)
+            .and_then(|s| s.container_id.clone()),
+        None => snapshots.iter().find_map(|s| s.container_id.clone()),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -295,6 +351,107 @@ fn flush_trailing(buffer: &mut String, prefix: Option<&str>, tx: &broadcast::Sen
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engines::{DeploymentMode, EngineStatus, EngineType};
+
+    fn snapshot(endpoint: &str, container_id: Option<&str>) -> EngineSnapshot {
+        EngineSnapshot {
+            engine_type: EngineType::Vllm,
+            endpoint: endpoint.to_string(),
+            status: EngineStatus::Running,
+            model: None,
+            metrics: None,
+            recent_requests: Vec::new(),
+            deployment_mode: match container_id {
+                Some(_) => DeploymentMode::Docker,
+                None => DeploymentMode::Native,
+            },
+            gpu_indexes: Vec::new(),
+            pids: Vec::new(),
+            container_id: container_id.map(str::to_string),
+        }
+    }
+
+    /// With an engine endpoint given, only that engine's container matches.
+    #[test]
+    fn find_container_matches_selected_endpoint() {
+        let snaps = vec![
+            snapshot("http://localhost:8000", Some("aaa")),
+            snapshot("http://localhost:8100", Some("bbb")),
+        ];
+        assert_eq!(
+            find_container(&snaps, Some("http://localhost:8100")),
+            Some("bbb".to_string())
+        );
+    }
+
+    /// An unknown endpoint yields None — never another engine's logs.
+    #[test]
+    fn find_container_unknown_endpoint_yields_none() {
+        let snaps = vec![snapshot("http://localhost:8000", Some("aaa"))];
+        assert_eq!(find_container(&snaps, Some("http://localhost:9999")), None);
+    }
+
+    /// A selected engine without a container (native deployment) yields None
+    /// rather than falling back to a different container.
+    #[test]
+    fn find_container_selected_native_engine_yields_none() {
+        let snaps = vec![
+            snapshot("http://localhost:8000", None),
+            snapshot("http://localhost:8100", Some("bbb")),
+        ];
+        assert_eq!(find_container(&snaps, Some("http://localhost:8000")), None);
+    }
+
+    /// Without a selection, the first snapshot with a container id wins —
+    /// native engines (no container) are skipped.
+    #[test]
+    fn find_container_default_picks_first_with_container() {
+        let snaps = vec![
+            snapshot("http://localhost:8000", None),
+            snapshot("http://localhost:8100", Some("bbb")),
+            snapshot("http://localhost:8200", Some("ccc")),
+        ];
+        assert_eq!(find_container(&snaps, None), Some("bbb".to_string()));
+    }
+
+    /// No containers at all → None.
+    #[test]
+    fn find_container_empty_state_yields_none() {
+        assert_eq!(find_container(&[], None), None);
+        assert_eq!(
+            find_container(&[snapshot("http://localhost:8000", None)], None),
+            None
+        );
+    }
+
+    /// A finished stream deregisters itself, so a later connect gets a fresh
+    /// channel instead of the dead one (restart-on-reconnect).
+    #[tokio::test]
+    async fn finished_stream_is_removed_from_registry() {
+        // Bogus container id: the task fails fast (no such container / no
+        // daemon), which is exactly the "stream died" path we want to observe.
+        let mut rx = subscribe_container("test-nonexistent-container");
+        // First message is an ERR from either the daemon connect or the log
+        // stream; after that the task deregisters.
+        let msg = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            .await
+            .expect("stream task should emit an error quickly")
+            .expect("channel closed before error message");
+        assert!(msg.starts_with("ERR:"), "expected error line, got: {msg}");
+        // Poll until the registry entry is gone (deregistration runs after the
+        // error send, so give it a moment).
+        for _ in 0..50 {
+            let gone = STREAMS
+                .get()
+                .map(|s| !s.lock().unwrap().contains_key("test-nonexistent-container"))
+                .unwrap_or(false);
+            if gone {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("finished stream task did not deregister itself");
+    }
 
     /// A complete line arriving in one frame is emitted immediately, and the
     /// buffer is left empty (no partial line retained).

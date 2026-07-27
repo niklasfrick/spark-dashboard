@@ -115,7 +115,12 @@ struct RunArgs {
     #[arg(
         long,
         env = "SPARK_DASHBOARD_ENABLE_LOG_VIEWER",
-        default_value_t = false
+        // BoolishValueParser accepts 1/0, yes/no, on/off besides true/false,
+        // matching the =1 convention of the other SPARK_DASHBOARD_* env vars.
+        value_parser = clap::builder::BoolishValueParser::new(),
+        num_args = 0..=1,
+        default_value_t = false,
+        default_missing_value = "true"
     )]
     enable_log_viewer: bool,
 }
