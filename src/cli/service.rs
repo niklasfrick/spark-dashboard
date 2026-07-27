@@ -278,3 +278,35 @@ mod linux {
         std::process::exit(status.code().unwrap_or(1));
     }
 }
+
+/// Tests over the unit file as *text*, so they run on any host: the file is
+/// embedded into the binary above and shipped verbatim by `service install`,
+/// which makes its contents part of this module's behaviour rather than a
+/// deployment detail. They are deliberately outside the Linux-only module.
+#[cfg(test)]
+mod tests {
+    use crate::deploy_files::{directive, UNIT};
+
+    #[test]
+    fn the_state_directory_is_not_world_readable() {
+        // The document is instance-wide configuration, not a secret, but the
+        // directory belongs to the service user alone — nothing else on the host
+        // has a reason to read it.
+        assert_eq!(directive(UNIT, "StateDirectoryMode"), Some("0750"));
+    }
+
+    #[test]
+    fn the_state_directory_grant_replaces_rather_than_relaxes_the_sandbox() {
+        // The whole point of StateDirectory= is that one directory becomes
+        // writable without weakening the sandbox around it. These two are what a
+        // future "the dashboard can't save" report would tempt someone to
+        // loosen; the rest of the hardening block is not this change's business.
+        assert_eq!(directive(UNIT, "ProtectSystem"), Some("strict"));
+        assert_eq!(directive(UNIT, "ProtectHome"), Some("true"));
+
+        // ReadWritePaths= would be the other tempting shortcut. It is not
+        // needed, and it would hand the service a path systemd neither creates
+        // nor owns.
+        assert_eq!(directive(UNIT, "ReadWritePaths"), None);
+    }
+}

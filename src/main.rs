@@ -1,5 +1,8 @@
 mod cli;
 mod config_store;
+/// Test-only: asserts the deployment files agree with [`DEFAULT_STATE_DIR`].
+#[cfg(test)]
+mod deploy_files;
 mod engines;
 mod metrics;
 mod server;
@@ -14,6 +17,16 @@ use engines::{ApiKeyResolver, EngineOverride, EngineType};
 use std::process::ExitCode;
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
+
+/// Default directory for mutable state.
+///
+/// Both deployments are arranged to hand the service exactly this path, so the
+/// binary needs no deployment-specific default: the systemd unit's
+/// `StateDirectory=spark-dashboard` grant resolves here, and the container image
+/// creates it owned by its non-root user for a named volume to be mounted over.
+/// `src/deploy_files.rs` holds the tests that keep those files and this constant
+/// in agreement.
+const DEFAULT_STATE_DIR: &str = "/var/lib/spark-dashboard";
 
 /// Spark Dashboard — Real-time hardware and LLM monitoring for Linux hosts with NVIDIA GPUs.
 #[derive(Parser, Debug)]
@@ -75,15 +88,15 @@ struct RunArgs {
     poll_interval: u64,
 
     /// Directory holding mutable state, currently the dashboard configuration
-    /// document (`<state-dir>/dashboards.json`). The default is the path a
-    /// systemd StateDirectory grant yields; until the unit grants one, and in
-    /// containers, point this somewhere writable explicitly.
+    /// document (`<state-dir>/dashboards.json`). The default is the path the
+    /// unit's `StateDirectory=` grant yields; the container image points it at
+    /// the same path, backed by a named volume.
     /// An unwritable directory is not fatal — the dashboard runs read-only.
     #[arg(
         long,
         value_name = "DIR",
         env = "SPARK_DASHBOARD_STATE_DIR",
-        default_value = "/var/lib/spark-dashboard"
+        default_value = DEFAULT_STATE_DIR
     )]
     state_dir: String,
 

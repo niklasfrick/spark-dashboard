@@ -11,6 +11,15 @@ Group=spark-dashboard
 SupplementaryGroups=video render docker
 EnvironmentFile=-/etc/spark-dashboard/config.env
 ExecStart=/usr/local/bin/spark-dashboard
+
+# Mutable state: the dashboard configuration document. systemd creates
+# /var/lib/spark-dashboard, chowns it to the service user and punches it through
+# ProtectSystem=strict — which is why the hardening below needs no exception and
+# no ReadWritePaths=. The directory survives restarts, upgrades and
+# `systemctl disable`; the service user has no home, so there is no XDG fallback
+# if this grant is removed. The binary defaults to this exact path.
+StateDirectory=spark-dashboard
+StateDirectoryMode=0750
 Restart=on-failure
 RestartSec=3
 StandardOutput=journal
