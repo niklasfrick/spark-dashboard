@@ -150,3 +150,14 @@ export function engineDisplayName(engineType: EngineType): string {
   }
   return names[engineType]
 }
+
+/** Apply a formatter to a nullable metric, rendering '--' when absent.
+ *  The engine tiles' universal "no data yet" placeholder. */
+export function fmtVal(v: number | null, fmt: (n: number) => string): string {
+  return v === null ? '--' : fmt(v)
+}
+
+/** Render a nullable metric as a rounded integer, '--' when absent. */
+export function fmtInt(v: number | null): string {
+  return v === null ? '--' : String(Math.round(v))
+}

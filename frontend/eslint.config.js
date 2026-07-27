@@ -20,4 +20,15 @@ export default defineConfig([
       globals: globals.browser,
     },
   },
+  {
+    // Vendored shadcn/ui primitives. These are generated files that export a
+    // component next to its `cva` variants by design, which trips
+    // react-refresh/only-export-components. We don't hand-edit generated
+    // output, and fast refresh across a design-system primitive is not worth
+    // forking them for — scope the rule off here instead.
+    files: ['src/components/ui/**'],
+    rules: {
+      'react-refresh/only-export-components': 'off',
+    },
+  },
 ])

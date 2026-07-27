@@ -1,22 +1,18 @@
 import { TimeSeriesChart, type ChartSeries } from '@/components/charts/TimeSeriesChart'
-import { formatTps, formatTtft, formatDurationMs, formatCompactTokens } from '@/lib/format'
+import { formatTps, formatTtft, formatDurationMs, formatCompactTokens, fmtVal, fmtInt } from '@/lib/format'
 import type { EngineSnapshot } from '@/types/metrics'
 import type { InferenceRequest } from '@/types/events'
 import {
-  type ChartDataPoint,
-  type Trend,
   MetricTile,
   LiveWithTotal,
   KvBar,
   TrendArrow,
   GoodputTile,
   SpecDecodeSection,
-  computeTrend,
-  fmtVal,
-  fmtInt,
 } from './EngineCardPrimitives'
+import { type ChartDataPoint, type Trend, computeTrend } from '@/lib/engineStats'
 import { AnimatedCounter } from './AnimatedCounter'
-import { type LatencyMode, latencyModeLabel, pickLatencyValue } from './LatencyModeControl'
+import { type LatencyMode, latencyModeLabel, pickLatencyValue } from '@/lib/latencyMode'
 import { combinedGoodput, recomputeGoodputPct } from '@/lib/slo'
 import { useSloSettings } from '@/hooks/useSloSettings'
 import { SloSettingsControl } from './SloSettingsControl'

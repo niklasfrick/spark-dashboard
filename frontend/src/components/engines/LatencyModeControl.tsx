@@ -1,12 +1,11 @@
 /**
- * Global selector for which latency value the dashboard surfaces in TTFT,
- * E2E, and ITL tiles. "avg" matches the historical default; p50/p95/p99
- * pull from the histogram-derived percentiles exposed by the backend.
+ * Dropdown for the global latency statistic (avg / p50 / p95 / p99).
+ *
+ * The mode's type and its pure helpers live in `@/lib/latencyMode` so this
+ * file exports only its component.
  */
 
-export type LatencyMode = 'avg' | 'p50' | 'p95' | 'p99'
-
-const DEFAULT_MODE: LatencyMode = 'avg'
+import { isLatencyMode, type LatencyMode } from '@/lib/latencyMode'
 
 const OPTIONS: { value: LatencyMode; label: string }[] = [
   { value: 'avg', label: 'Avg' },
@@ -14,19 +13,6 @@ const OPTIONS: { value: LatencyMode; label: string }[] = [
   { value: 'p95', label: 'p95' },
   { value: 'p99', label: 'p99' },
 ]
-
-function isLatencyMode(v: string): v is LatencyMode {
-  return v === 'avg' || v === 'p50' || v === 'p95' || v === 'p99'
-}
-
-export function parseLatencyMode(raw: string | null | undefined): LatencyMode {
-  if (raw && isLatencyMode(raw)) return raw
-  return DEFAULT_MODE
-}
-
-export function serializeLatencyMode(mode: LatencyMode): string {
-  return mode
-}
 
 interface LatencyModeControlProps {
   mode: LatencyMode
@@ -64,29 +50,4 @@ export function LatencyModeControl({ mode, onModeChange }: LatencyModeControlPro
       </div>
     </div>
   )
-}
-
-/**
- * Resolve the millisecond value to display for a given latency dimension.
- * Returns null when the requested mode has no data (e.g. percentiles not
- * yet observed) so consumers render a dash.
- */
-import type { LatencyPercentiles } from '@/types/metrics'
-
-export function pickLatencyValue(
-  mode: LatencyMode,
-  avgMs: number | null,
-  percentiles: LatencyPercentiles | null,
-): number | null {
-  if (mode === 'avg') return avgMs
-  if (!percentiles) return null
-  if (mode === 'p50') return percentiles.p50_ms
-  if (mode === 'p95') return percentiles.p95_ms
-  return percentiles.p99_ms
-}
-
-/** Title-friendly label for the active mode. */
-export function latencyModeLabel(mode: LatencyMode): string {
-  if (mode === 'avg') return 'avg'
-  return mode
 }

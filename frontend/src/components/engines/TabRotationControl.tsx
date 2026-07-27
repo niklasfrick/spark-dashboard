@@ -1,9 +1,15 @@
-export type RotationInterval = 3000 | 5000 | 10000 | 20000
+/**
+ * Toggle plus interval dropdown for engine tab auto-rotation.
+ *
+ * The rotation state's types and pure helpers live in `@/lib/rotation` so
+ * this file exports only its component.
+ */
 
-export interface RotationState {
-  enabled: boolean
-  interval: RotationInterval
-}
+import {
+  parseInterval,
+  serializeInterval,
+  type RotationInterval,
+} from '@/lib/rotation'
 
 interface TabRotationControlProps {
   enabled: boolean
@@ -18,32 +24,6 @@ const OPTIONS: { value: RotationInterval; label: string }[] = [
   { value: 10000, label: '10s' },
   { value: 20000, label: '20s' },
 ]
-
-const DEFAULT_INTERVAL: RotationInterval = 10000
-
-function isRotationInterval(n: number): n is RotationInterval {
-  return n === 3000 || n === 5000 || n === 10000 || n === 20000
-}
-
-export function serializeRotationState(state: RotationState): string {
-  return state.enabled ? String(state.interval) : 'off'
-}
-
-export function parseRotationState(raw: string | null | undefined): RotationState {
-  if (raw === 'off') return { enabled: false, interval: DEFAULT_INTERVAL }
-  const n = Number(raw)
-  if (isRotationInterval(n)) return { enabled: true, interval: n }
-  return { enabled: true, interval: DEFAULT_INTERVAL }
-}
-
-function serializeInterval(value: RotationInterval): string {
-  return String(value)
-}
-
-function parseInterval(raw: string): RotationInterval {
-  const n = Number(raw)
-  return isRotationInterval(n) ? n : DEFAULT_INTERVAL
-}
 
 export function TabRotationControl({
   enabled,

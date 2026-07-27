@@ -5,18 +5,18 @@ import { EngineTab } from './EngineTab'
 import { EngineCard } from './EngineCard'
 import { GlobalEngineTab, GLOBAL_TAB_VALUE } from './GlobalEngineTab'
 import { GlobalEngineCard } from './GlobalEngineCard'
+import { TabRotationControl } from './TabRotationControl'
+import { LatencyModeControl } from './LatencyModeControl'
 import {
-  TabRotationControl,
   parseRotationState,
   serializeRotationState,
   type RotationInterval,
-} from './TabRotationControl'
+} from '@/lib/rotation'
 import {
-  LatencyModeControl,
   parseLatencyMode,
   serializeLatencyMode,
   type LatencyMode,
-} from './LatencyModeControl'
+} from '@/lib/latencyMode'
 import { aggregateEngines, groupRunningByProvider } from '@/lib/engineAggregate'
 import { engineDisplayName, formatGpuIndexes } from '@/lib/format'
 import { getProviderLogo } from '@/lib/providerLogo'

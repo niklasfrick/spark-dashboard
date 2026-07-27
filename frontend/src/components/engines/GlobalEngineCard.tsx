@@ -1,8 +1,8 @@
-import { formatTps, formatTtft, formatDurationMs, formatCompactTokens } from '@/lib/format'
+import { formatTps, formatTtft, formatDurationMs, formatCompactTokens, fmtVal, fmtInt } from '@/lib/format'
 import type { AggregateSnapshot } from '@/lib/engineAggregate'
-import { MetricTile, LiveWithTotal, KvBar, GoodputTile, SpecDecodeSection, fmtVal, fmtInt } from './EngineCardPrimitives'
+import { MetricTile, LiveWithTotal, KvBar, GoodputTile, SpecDecodeSection } from './EngineCardPrimitives'
 import { AnimatedCounter } from './AnimatedCounter'
-import { type LatencyMode, latencyModeLabel, pickLatencyValue } from './LatencyModeControl'
+import { type LatencyMode, latencyModeLabel, pickLatencyValue } from '@/lib/latencyMode'
 import { SLO, combinedGoodput } from '@/lib/slo'
 
 interface GlobalEngineCardProps {
