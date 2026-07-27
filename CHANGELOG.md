@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.13.0](https://github.com/niklasfrick/spark-dashboard/compare/spark-dashboard-v0.12.0...spark-dashboard-v0.13.0) (2026-07-27)
+
+
+### Features
+
+* **config:** support explicit engine env vars ([05de286](https://github.com/niklasfrick/spark-dashboard/commit/05de28679c285d2b1266a706f528b44e1f950cb3))
+* **dashboard:** sync GPU selection with active engine ([34387d2](https://github.com/niklasfrick/spark-dashboard/commit/34387d250a2bfabd03add9ae56213ab5c2437776))
+* **docker:** pass the log-viewer flag through the compose deployment ([01ca470](https://github.com/niklasfrick/spark-dashboard/commit/01ca47044090f94e37f536728c5d3435ae564078))
+* **frontend:** add collapsible log viewer with WebSocket streaming ([63bba8a](https://github.com/niklasfrick/spark-dashboard/commit/63bba8a716b176ba65668154af35dc1d295ffc67))
+* **frontend:** sync log viewer with the selected engine tab ([1632394](https://github.com/niklasfrick/spark-dashboard/commit/1632394d74cbfece0abd140b6b249a6c2fd9cd4a))
+* **logs:** container log streaming via bollard Docker API ([c4b2ada](https://github.com/niklasfrick/spark-dashboard/commit/c4b2ada523c0f162ed69503f9272037b112600ee))
+* **logs:** engine-selected per-container log streams ([6f4cef1](https://github.com/niklasfrick/spark-dashboard/commit/6f4cef1c41781ad1ea0a7af78313b04dde4ad3e2))
+
+
+### Bug Fixes
+
+* **deps:** refresh Cargo.lock to latest compatible crate versions ([e2daca5](https://github.com/niklasfrick/spark-dashboard/commit/e2daca5b86cb591a32c0a3c390644dd72ed9a4f0))
+* **frontend:** stop the auto-scroll indicator flickering on new log lines ([aeb52a7](https://github.com/niklasfrick/spark-dashboard/commit/aeb52a775488d6a6322429dffcac5d51eb0f2108))
+* **logs:** address maintainer feedback on log streaming ([400b7f9](https://github.com/niklasfrick/spark-dashboard/commit/400b7f9b894f7a7426e1e355bb79d0e8931dba07))
+
+
+### Dependencies & Chores
+
+* **deps:** align @types/node with the Node 24 LTS toolchain ([9dca215](https://github.com/niklasfrick/spark-dashboard/commit/9dca21573fad9674f0e0ea349fe42564a66b3579))
+* **deps:** bump Docker builder image to rust:1.97-slim ([bb97a34](https://github.com/niklasfrick/spark-dashboard/commit/bb97a3494c410ea7864925b9f8f41f514ba91c3c))
+* **deps:** refresh npm lockfile to latest in-range versions ([2e1bf67](https://github.com/niklasfrick/spark-dashboard/commit/2e1bf67646e690ccfba814a9f5ede627e1ddfc51))
+
 ## [0.12.0](https://github.com/niklasfrick/spark-dashboard/compare/spark-dashboard-v0.11.0...spark-dashboard-v0.12.0) (2026-07-21)
 
 
