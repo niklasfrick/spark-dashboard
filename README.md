@@ -238,16 +238,19 @@ spark-dashboard service status
       --poll-interval <MS>    Polling interval ms [default: 1000] [env: SPARK_DASHBOARD_POLL_INTERVAL]
       --gpu-index <IDX>       Optional NVML GPU index to monitor [env: SPARK_DASHBOARD_GPU_INDEX]
       --simulate-gpus <N>     Append N fictive GPUs with simulated data (dev aid) [env: SPARK_DASHBOARD_SIMULATE_GPUS]
-      --engine <TYPE>         Manual engine type (e.g. vllm)
-      --engine-url <URL>      Manual engine endpoint (requires --engine)
-      --engine-api-key <KEY>  API key for an endpoint, paired by index with --engine-url
+      --engine <TYPE>         Manual engine type (e.g. vllm) [env: SPARK_DASHBOARD_ENGINE]
+      --engine-url <URL>      Manual engine endpoint (requires --engine) [env: SPARK_DASHBOARD_ENGINE_URL]
+      --engine-api-key <KEY>  API key for an endpoint, paired by index with --engine-url [env: SPARK_DASHBOARD_ENGINE_API_KEY]
       --provider-api-key <KEY> Fallback API key for any endpoint [env: SPARK_DASHBOARD_PROVIDER_API_KEY]
 ```
 
 On multi-GPU hosts, Spark Dashboard monitors all available NVIDIA GPUs by
 default. Use `--gpu-index` to focus on one device. Engines are auto-detected via
 process scan and Docker API. Use `--engine` and `--engine-url` to override when
-auto-detection doesn't work.
+auto-detection doesn't work. For a host-systemd installation, put the same
+values in `/etc/spark-dashboard/config.env` as `SPARK_DASHBOARD_ENGINE` and
+`SPARK_DASHBOARD_ENGINE_URL`; comma-separated engine and URL values are paired
+by position.
 
 For auth-gated deployments (e.g. vLLM started with `--api-key`), pass
 `--engine-api-key` (index-paired with `--engine-url`) or set

@@ -87,17 +87,32 @@ struct RunArgs {
     simulate_gpus: u32,
 
     /// Manually specify engine type (use with --engine-url)
-    #[arg(long, value_name = "TYPE")]
+    #[arg(
+        long,
+        value_name = "TYPE",
+        env = "SPARK_DASHBOARD_ENGINE",
+        value_delimiter = ','
+    )]
     engine: Vec<String>,
 
     /// Manually specify engine endpoint URL (use with --engine)
-    #[arg(long, value_name = "URL")]
+    #[arg(
+        long,
+        value_name = "URL",
+        env = "SPARK_DASHBOARD_ENGINE_URL",
+        value_delimiter = ','
+    )]
     engine_url: Vec<String>,
 
     /// API key for an engine endpoint, paired by index with --engine-url.
     /// For auth-gated deployments (e.g. vLLM started with --api-key) this
     /// lets the initial /v1/models lookup succeed instead of 401-spamming.
-    #[arg(long, value_name = "KEY")]
+    #[arg(
+        long,
+        value_name = "KEY",
+        env = "SPARK_DASHBOARD_ENGINE_API_KEY",
+        value_delimiter = ','
+    )]
     engine_api_key: Vec<String>,
 
     /// Fallback API key applied to any engine endpoint without an explicit
@@ -231,4 +246,121 @@ async fn run_server_inner(args: RunArgs) -> Result<(), Box<dyn std::error::Error
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    /// Clap reads the environment on every parse, so any test in this module
+    /// could observe the SPARK_DASHBOARD_ENGINE* variables another test set.
+    /// Every test takes this lock; env-setting tests clean up before releasing.
+    static ENGINE_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn parse(args: &[&str]) -> RunArgs {
+        Cli::try_parse_from(std::iter::once("spark-dashboard").chain(args.iter().copied()))
+            .expect("args should parse")
+            .run
+    }
+
+    fn with_env_vars(vars: &[(&str, &str)], f: impl FnOnce()) {
+        let _guard = ENGINE_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved: Vec<_> = vars
+            .iter()
+            .map(|(key, value)| {
+                let prior = std::env::var_os(key);
+                std::env::set_var(key, value);
+                (*key, prior)
+            })
+            .collect();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+        for (key, prior) in saved {
+            match prior {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+        if let Err(panic) = result {
+            std::panic::resume_unwind(panic);
+        }
+    }
+
+    #[test]
+    fn engine_flags_split_on_commas_and_pair_by_position() {
+        let _guard = ENGINE_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let args = parse(&[
+            "--engine",
+            "vllm,vllm",
+            "--engine-url",
+            "http://127.0.0.1:8000,http://127.0.0.1:8001",
+            "--engine-api-key",
+            "key-a,key-b",
+        ]);
+        assert_eq!(args.engine, vec!["vllm", "vllm"]);
+        assert_eq!(
+            args.engine_url,
+            vec!["http://127.0.0.1:8000", "http://127.0.0.1:8001"]
+        );
+        assert_eq!(args.engine_api_key, vec!["key-a", "key-b"]);
+    }
+
+    #[test]
+    fn repeated_engine_flags_accumulate_in_order() {
+        let _guard = ENGINE_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let args = parse(&[
+            "--engine",
+            "vllm",
+            "--engine-url",
+            "http://127.0.0.1:8000",
+            "--engine",
+            "vllm",
+            "--engine-url",
+            "http://127.0.0.1:8001",
+        ]);
+        assert_eq!(args.engine, vec!["vllm", "vllm"]);
+        assert_eq!(
+            args.engine_url,
+            vec!["http://127.0.0.1:8000", "http://127.0.0.1:8001"]
+        );
+        assert!(args.engine_api_key.is_empty());
+    }
+
+    #[test]
+    fn engine_env_vars_split_on_commas_and_pair_by_position() {
+        with_env_vars(
+            &[
+                ("SPARK_DASHBOARD_ENGINE", "vllm,vllm"),
+                (
+                    "SPARK_DASHBOARD_ENGINE_URL",
+                    "http://127.0.0.1:8000,http://127.0.0.1:8001",
+                ),
+                ("SPARK_DASHBOARD_ENGINE_API_KEY", "key-a,key-b"),
+            ],
+            || {
+                let args = parse(&[]);
+                assert_eq!(args.engine, vec!["vllm", "vllm"]);
+                assert_eq!(
+                    args.engine_url,
+                    vec!["http://127.0.0.1:8000", "http://127.0.0.1:8001"]
+                );
+                assert_eq!(args.engine_api_key, vec!["key-a", "key-b"]);
+            },
+        );
+    }
+
+    #[test]
+    fn engine_flags_take_precedence_over_env_vars() {
+        with_env_vars(
+            &[
+                ("SPARK_DASHBOARD_ENGINE", "vllm"),
+                ("SPARK_DASHBOARD_ENGINE_URL", "http://127.0.0.1:8000"),
+            ],
+            || {
+                let args = parse(&["--engine-url", "http://127.0.0.1:9000"]);
+                assert_eq!(args.engine, vec!["vllm"]);
+                assert_eq!(args.engine_url, vec!["http://127.0.0.1:9000"]);
+            },
+        );
+    }
 }
