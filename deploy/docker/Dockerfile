@@ -46,6 +46,11 @@ COPY deploy/host/systemd ./deploy/host/systemd
 COPY deploy/host/config.env.example ./deploy/host/config.env.example
 COPY --from=frontend /app/frontend/dist ./frontend/dist/
 RUN cargo build --release --locked
+# Skeleton for the runtime's state directory. It has to be built here because
+# the runtime stage is distroless — no shell, so no `RUN mkdir` there — and an
+# empty directory cannot be COPY'd from the build context either (git does not
+# track empty directories). See the runtime stage for why it must pre-exist.
+RUN mkdir -p /state
 
 # ---------- stage: runtime ----------
 # Distroless: glibc + CA certs and nothing else — no shell, no package manager,
@@ -67,6 +72,15 @@ LABEL org.opencontainers.image.source="https://github.com/niklasfrick/spark-dash
     org.opencontainers.image.version="${VERSION}"
 
 COPY --from=builder /app/target/release/spark-dashboard /usr/local/bin/spark-dashboard
+
+# State directory for the dashboard configuration document, matching the
+# binary's default --state-dir. It must exist *in the image*, owned by the
+# runtime user: Docker seeds a fresh named volume from whatever the image has at
+# the mount point, ownership included, and creates the path root-owned when the
+# image lacks it — unwritable for uid 65532, with no shell here to chown it
+# after the fact. See docker.md, "Saved dashboards". Numeric uid:gid so the copy
+# does not depend on the base image's /etc/passwd.
+COPY --from=builder --chown=65532:65532 --chmod=750 /state /var/lib/spark-dashboard
 
 # Already uid 65532 via the :nonroot tag; stated explicitly for clarity. NVML,
 # /proc, and the docker socket all work non-root given the device/group access

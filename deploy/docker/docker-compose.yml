@@ -43,8 +43,14 @@ services:
     # Read-only Docker socket so the dashboard can list vLLM containers. The
     # added group must match the host's docker GID — set DOCKER_GID in .env
     # (find it with: getent group docker | cut -d: -f3). Defaults to 999.
+
+    # Saved dashboards, on a named volume so they outlive the container. Mount
+    # point and SPARK_DASHBOARD_STATE_DIR below read the same variable so they
+    # cannot drift apart. See docker.md, "Saved dashboards", for why the image
+    # has to pre-create the directory.
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      - spark-dashboard-state:${SPARK_DASHBOARD_STATE_DIR:-/var/lib/spark-dashboard}
     group_add:
       - "${DOCKER_GID:-999}"
 
@@ -52,6 +58,7 @@ services:
       - SPARK_DASHBOARD_PORT=${SPARK_DASHBOARD_PORT:-3000}
       - SPARK_DASHBOARD_BIND=${SPARK_DASHBOARD_BIND:-0.0.0.0}
       - SPARK_DASHBOARD_POLL_INTERVAL=${SPARK_DASHBOARD_POLL_INTERVAL:-1000}
+      - SPARK_DASHBOARD_STATE_DIR=${SPARK_DASHBOARD_STATE_DIR:-/var/lib/spark-dashboard}
       - SPARK_DASHBOARD_GPU_INDEX
       - SPARK_DASHBOARD_SIMULATE_GPUS=${SPARK_DASHBOARD_SIMULATE_GPUS:-0}
       - SPARK_DASHBOARD_PROVIDER_API_KEY=${SPARK_DASHBOARD_PROVIDER_API_KEY:-}
@@ -62,3 +69,11 @@ services:
       - RUST_LOG=${RUST_LOG:-info}
 
     restart: unless-stopped
+
+volumes:
+  # Removed only by an explicit `docker compose down -v` — a plain `down` keeps
+  # the saved dashboards. `name:` pins the volume as-written: without it Compose
+  # prefixes the project name (`docker_spark-dashboard-state`, after this file's
+  # directory), which every documented `docker volume` command would then miss.
+  spark-dashboard-state:
+    name: spark-dashboard-state
