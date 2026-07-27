@@ -55,6 +55,10 @@ services:
       - SPARK_DASHBOARD_GPU_INDEX
       - SPARK_DASHBOARD_SIMULATE_GPUS=${SPARK_DASHBOARD_SIMULATE_GPUS:-0}
       - SPARK_DASHBOARD_PROVIDER_API_KEY=${SPARK_DASHBOARD_PROVIDER_API_KEY:-}
+      # Opt-in log viewer (/ws/logs). Off by default: the endpoint is
+      # unauthenticated and engine logs can contain prompts — see the README's
+      # "Log viewer" section before enabling.
+      - SPARK_DASHBOARD_ENABLE_LOG_VIEWER=${SPARK_DASHBOARD_ENABLE_LOG_VIEWER:-0}
       - RUST_LOG=${RUST_LOG:-info}
 
     restart: unless-stopped
