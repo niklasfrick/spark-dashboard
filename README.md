@@ -202,7 +202,8 @@ sudo spark-dashboard service status       # same as `systemctl status`
 
 Optional overrides live in `/etc/spark-dashboard/config.env` — set
 `SPARK_DASHBOARD_PORT`, `SPARK_DASHBOARD_BIND`, `SPARK_DASHBOARD_POLL_INTERVAL`,
-`SPARK_DASHBOARD_GPU_INDEX`, `SPARK_DASHBOARD_PROVIDER_API_KEY`, or `RUST_LOG`, then
+`SPARK_DASHBOARD_GPU_INDEX`, `SPARK_DASHBOARD_STATE_DIR`,
+`SPARK_DASHBOARD_PROVIDER_API_KEY`, or `RUST_LOG`, then
 `sudo systemctl restart spark-dashboard`.
 
 ### Upgrade
@@ -236,6 +237,7 @@ spark-dashboard service status
   -p, --port <PORT>           Listen port [default: 3000] [env: SPARK_DASHBOARD_PORT]
   -b, --bind <BIND>           Bind address [default: 0.0.0.0] [env: SPARK_DASHBOARD_BIND]
       --poll-interval <MS>    Polling interval ms [default: 1000] [env: SPARK_DASHBOARD_POLL_INTERVAL]
+      --state-dir <DIR>       Directory for saved state [default: /var/lib/spark-dashboard] [env: SPARK_DASHBOARD_STATE_DIR]
       --gpu-index <IDX>       Optional NVML GPU index to monitor [env: SPARK_DASHBOARD_GPU_INDEX]
       --simulate-gpus <N>     Append N fictive GPUs with simulated data (dev aid) [env: SPARK_DASHBOARD_SIMULATE_GPUS]
       --engine <TYPE>         Manual engine type (e.g. vllm) [env: SPARK_DASHBOARD_ENGINE]
@@ -258,6 +260,38 @@ For auth-gated deployments (e.g. vLLM started with `--api-key`), pass
 engines too. Model info is resolved from `/v1/models` once and cached —
 re-resolved only on engine restart or every 10 minutes — so an auth-gated
 engine is no longer hit on every poll tick.
+
+### Dashboard configuration API
+
+The dashboard configuration is a single document shared by everyone who opens
+the instance, stored at `<state-dir>/dashboards.json`. The server keeps it as
+opaque bytes — it never parses or validates the contents, and enforces only a
+1 MiB size cap. Writes are atomic, and last write wins.
+
+```
+GET    /api/dashboard   the document, or 204 when none is stored
+PUT    /api/dashboard   replaces it wholesale (204 on success)
+DELETE /api/dashboard   removes it, resetting to the default preset (204)
+```
+
+`204` on read means "nothing saved" rather than an error — a fresh install and
+a reset look identical, and the dashboard renders its default preset for both.
+A write over the cap is rejected with `413`, leaving the stored document
+untouched.
+
+Every response carries `x-spark-dashboard-read-only`. It is `true` when the
+state directory was not writable at startup, in which case reads still work,
+writes are refused with `503`, and the dashboard shows a read-only banner
+instead of pretending a save succeeded. A write that fails for some other
+reason — a full disk, say — returns `500` and leaves the header `false`.
+
+```bash
+curl -i localhost:3000/api/dashboard                       # read
+curl -X PUT localhost:3000/api/dashboard -d '{"pages":[]}' # save
+curl -X DELETE localhost:3000/api/dashboard                # reset
+```
+
+Unmatched paths under `/api` return `404` rather than the app shell.
 
 ### Log viewer (`--enable-log-viewer`, Linux only, opt-in)
 
