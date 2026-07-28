@@ -12,6 +12,10 @@ dist
 dist-ssr
 *.local
 
+# Vitest browser-mode failure artifacts
+__screenshots__
+.vitest-attachments
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
