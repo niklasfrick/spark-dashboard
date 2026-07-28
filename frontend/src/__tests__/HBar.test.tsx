@@ -6,26 +6,25 @@ import type { GaugeSegment } from '../components/gauges/ArcGauge'
 describe('HBar', () => {
   it('renders a single value with label and unit', () => {
     render(<HBar value={42} label="GPU Util" unit="%" />)
-    expect(screen.getByText('GPU Util')).toBeTruthy()
-    expect(screen.getByText('42')).toBeTruthy()
-    expect(screen.getByText('%')).toBeTruthy()
+    expect(screen.getByText('GPU Util')).toBeInTheDocument()
+    expect(screen.getByText('42')).toBeInTheDocument()
+    expect(screen.getByText('%')).toBeInTheDocument()
   })
 
   it('fills the bar proportionally to value/max', () => {
     render(<HBar value={30} max={120} label="X" unit="W" />)
-    const fill = screen.getByTestId('hbar-fill') as HTMLElement
     // 30/120 = 25%
-    expect(fill.style.width).toBe('25%')
+    expect(screen.getByTestId('hbar-fill')).toHaveStyle({ width: '25%' })
   })
 
   it('clamps the fill width to [0, 100]%', () => {
     render(<HBar value={500} max={100} label="X" unit="%" />)
-    expect((screen.getByTestId('hbar-fill') as HTMLElement).style.width).toBe('100%')
+    expect(screen.getByTestId('hbar-fill')).toHaveStyle({ width: '100%' })
   })
 
   it('prefers displayValue over value for the readout', () => {
     render(<HBar value={75} displayValue={150} label="GPU Power" unit="W" />)
-    expect(screen.getByText('150')).toBeTruthy()
+    expect(screen.getByText('150')).toBeInTheDocument()
   })
 
   it('renders stacked segments with a legend and no single-value fill', () => {
@@ -38,11 +37,11 @@ describe('HBar', () => {
     ]
     render(<HBar value={50} label="" unit="%" segments={segments} />)
     // No single-value fill is rendered in segment mode.
-    expect(screen.queryByTestId('hbar-fill')).toBeNull()
+    expect(screen.queryByTestId('hbar-fill')).not.toBeInTheDocument()
     // Legend labels present.
-    expect(screen.getByText('GPU: 25')).toBeTruthy()
-    expect(screen.getByText('Free: 50')).toBeTruthy()
+    expect(screen.getByText('GPU: 25')).toBeInTheDocument()
+    expect(screen.getByText('Free: 50')).toBeInTheDocument()
     // Readout uses the explicit value (used %), matching ArcGauge precedence.
-    expect(screen.getByText('50')).toBeTruthy()
+    expect(screen.getByText('50')).toBeInTheDocument()
   })
 })
