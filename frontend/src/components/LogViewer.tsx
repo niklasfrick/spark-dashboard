@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
+import { findEngineByEndpoint } from '../lib/identity'
 import type { EngineSnapshot } from '../types/metrics'
 
 /**
@@ -49,13 +50,13 @@ export function LogViewer({ engines = [], selectedEndpoint = null, onExpandChang
   // active and still present, otherwise the first Docker engine (the backend
   // applies the same default when no ?engine= is passed).
   const targetEndpoint = useMemo(() => {
-    if (selectedEndpoint && engines.some((e) => e.endpoint === selectedEndpoint)) {
+    if (selectedEndpoint && findEngineByEndpoint(engines, selectedEndpoint)) {
       return selectedEndpoint
     }
     return engines.find((e) => e.deployment_mode === 'Docker')?.endpoint ?? null
   }, [engines, selectedEndpoint])
 
-  const targetEngine = engines.find((e) => e.endpoint === targetEndpoint)
+  const targetEngine = findEngineByEndpoint(engines, targetEndpoint)
   const engineLabel = targetEngine
     ? (targetEngine.model?.name ?? targetEngine.endpoint)
     : null

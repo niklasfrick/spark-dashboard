@@ -1,5 +1,6 @@
 import { useRef, useState, useCallback, useEffect } from 'react'
 import { CircularBuffer } from '../lib/circular-buffer'
+import { engineKey, gpuIndexOf, snapshotGpus } from '../lib/identity'
 import type { MetricsSnapshot, GpuEventData, InferenceRequestData } from '../types/metrics'
 
 interface DataPoint {
@@ -118,9 +119,8 @@ export function useMetricsHistory(
       }
     }
 
-    const gpus = metrics.gpus && metrics.gpus.length > 0 ? metrics.gpus : [metrics.gpu]
-    for (const gpu of gpus) {
-      const gpuKey = String(gpu.index ?? 0)
+    for (const gpu of snapshotGpus(metrics)) {
+      const gpuKey = String(gpuIndexOf(gpu))
       if (!gpuBuffersRef.current[gpuKey]) {
         gpuBuffersRef.current[gpuKey] = createBuffers()
       }
@@ -135,9 +135,9 @@ export function useMetricsHistory(
 
     // Engine-specific metrics
     for (const engine of metrics.engines) {
-      const engineKey = `${engine.engine_type}-${engine.endpoint}`
-      if (!engineBuffersRef.current[engineKey]) {
-        engineBuffersRef.current[engineKey] = {
+      const key = engineKey(engine)
+      if (!engineBuffersRef.current[key]) {
+        engineBuffersRef.current[key] = {
           tps: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
           avgTps: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
           perReqTps: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
@@ -169,7 +169,7 @@ export function useMetricsHistory(
           totalRequests: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
         }
       }
-      const eb = engineBuffersRef.current[engineKey]
+      const eb = engineBuffersRef.current[key]
       if (engine.metrics) {
         if (engine.metrics.tokens_per_sec !== null) {
           eb.tps.push({ timestamp: ts, value: engine.metrics.tokens_per_sec })
@@ -256,12 +256,12 @@ export function useMetricsHistory(
 
       // Accumulate per-engine inference requests
       if (engine.recent_requests && engine.recent_requests.length > 0) {
-        if (!requestBuffersRef.current[engineKey]) {
-          requestBuffersRef.current[engineKey] =
+        if (!requestBuffersRef.current[key]) {
+          requestBuffersRef.current[key] =
             new CircularBuffer<InferenceRequestData>(REQUEST_BUFFER_CAPACITY)
         }
         for (const req of engine.recent_requests) {
-          requestBuffersRef.current[engineKey].push(req)
+          requestBuffersRef.current[key].push(req)
         }
       }
     }
@@ -308,9 +308,9 @@ export function useMetricsHistory(
       // Check engine metrics (format: "engineKey:metricName")
       const colonIndex = metric.lastIndexOf(':')
       if (colonIndex > 0) {
-        const engineKey = metric.substring(0, colonIndex)
+        const key = metric.substring(0, colonIndex)
         const metricName = metric.substring(colonIndex + 1)
-        const eb = engineBuffersRef.current[engineKey]
+        const eb = engineBuffersRef.current[key]
         if (eb && eb[metricName]) {
           return eb[metricName]
             .toArray()
@@ -344,9 +344,9 @@ export function useMetricsHistory(
 
       const colonIndex = metric.lastIndexOf(':')
       if (colonIndex > 0) {
-        const engineKey = metric.substring(0, colonIndex)
+        const key = metric.substring(0, colonIndex)
         const metricName = metric.substring(colonIndex + 1)
-        const eb = engineBuffersRef.current[engineKey]
+        const eb = engineBuffersRef.current[key]
         if (eb && eb[metricName]) {
           return eb[metricName].last(count).map((dp) => dp.value)
         }
@@ -370,15 +370,15 @@ export function useMetricsHistory(
   }, [version])
 
   const getRequests = useCallback(
-    (engineKey?: string): InferenceRequestData[] => {
+    (key?: string): InferenceRequestData[] => {
       void version
 
       const windowMs = DEFAULT_WINDOW_SECONDS * 1000
       const now = lastTimestampRef.current
       const cutoff = now - windowMs
 
-      if (engineKey) {
-        const buf = requestBuffersRef.current[engineKey]
+      if (key) {
+        const buf = requestBuffersRef.current[key]
         if (!buf) return []
         return buf.toArray().filter((r) => r.end_ms >= cutoff)
       }

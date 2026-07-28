@@ -8,6 +8,7 @@ import { useElementSize } from '@/hooks/useElementSize'
 import { THRESHOLDS } from '@/lib/theme'
 import { formatBytes, formatGiB, formatMhz, formatRate } from '@/lib/format'
 import { computePowerScale, powerPeak } from '@/lib/gpuPower'
+import { findGpuByIndex, gpuIndexOf, snapshotGpus } from '@/lib/identity'
 import type { MetricsSnapshot } from '@/types/metrics'
 import type { GpuEvent, InferenceRequest } from '@/types/events'
 
@@ -98,11 +99,10 @@ export function Dashboard({
 
   if (!metrics) return null
 
-  const gpus = metrics.gpus && metrics.gpus.length > 0 ? metrics.gpus : [metrics.gpu]
+  const gpus = snapshotGpus(metrics)
   const multiGpu = gpus.length > 1
-  const gpuIndexOf = (gpu: MetricsSnapshot['gpu']) => gpu.index ?? 0
   // Fall back to the primary GPU if the selected index vanishes from the feed.
-  const activeGpu = gpus.find((g) => gpuIndexOf(g) === selectedGpuIndex) ?? gpus[0]
+  const activeGpu = findGpuByIndex(gpus, selectedGpuIndex) ?? gpus[0]
   const activeGpuIndex = gpuIndexOf(activeGpu)
   // Single-GPU hosts keep the legacy un-prefixed history keys so the
   // pre-multi-GPU rendering stays identical; multi-GPU hosts read the

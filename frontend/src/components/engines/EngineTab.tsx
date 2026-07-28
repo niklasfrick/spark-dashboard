@@ -1,5 +1,6 @@
 import { TabsTrigger } from '@/components/ui/tabs'
 import { engineDisplayName } from '@/lib/format'
+import { engineKey } from '@/lib/identity'
 import { getProviderLogo } from '@/lib/providerLogo'
 import type { EngineSnapshot } from '@/types/metrics'
 
@@ -52,7 +53,7 @@ export function EngineTab({ engine, cycle, intervalMs, showCountdown }: EngineTa
 
   return (
     <TabsTrigger
-      value={`${engine.engine_type}-${engine.endpoint}`}
+      value={engineKey(engine)}
       className={`relative flex items-center gap-2.5 px-6 py-4 leading-none rounded-md transition-colors duration-200 min-w-0 !flex-initial hover:bg-white/[0.03] data-[active]:bg-white/[0.05] ${
         isStopped ? 'opacity-40' : ''
       } data-[active]:border-b-2 data-[active]:border-[#76B900]`}

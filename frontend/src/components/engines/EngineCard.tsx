@@ -1,5 +1,6 @@
 import { TimeSeriesChart, type ChartSeries } from '@/components/charts/TimeSeriesChart'
 import { formatTps, formatTtft, formatDurationMs, formatCompactTokens, fmtVal, fmtInt } from '@/lib/format'
+import { engineKey } from '@/lib/identity'
 import type { EngineSnapshot } from '@/types/metrics'
 import type { InferenceRequest } from '@/types/events'
 import {
@@ -144,10 +145,9 @@ export function EngineCard({
   // sits at 0 on a freshly-started idle engine — gating on >0 keeps the card
   // from showing an all-dashes section until the metrics carry real values.
   const hasSpecDecode = specDraftTokens !== null && specDraftTokens > 0
-  const engineKey = `${engine.engine_type}-${engine.endpoint}`
   const modelName = engine.model?.name ?? null
   const { thresholds: slo, setThresholds: setSlo, reset: resetSlo, isCustomized: sloCustomized } =
-    useSloSettings(engineKey, modelName)
+    useSloSettings(engineKey(engine), modelName)
 
   // Recompute goodput from histogram buckets so user-customized SLO
   // thresholds actually move the displayed percentages. Falls back to the

@@ -19,6 +19,7 @@ import {
 } from '@/lib/latencyMode'
 import { aggregateEngines, groupRunningByProvider } from '@/lib/engineAggregate'
 import { engineDisplayName, formatGpuIndexes } from '@/lib/format'
+import { engineKey, findEngineByKey } from '@/lib/identity'
 import { getProviderLogo } from '@/lib/providerLogo'
 import { useTabRotation } from '@/hooks/useTabRotation'
 import type { EngineSnapshot, EngineType, DeploymentMode } from '@/types/metrics'
@@ -243,9 +244,7 @@ export function EngineSection({
   const showGlobalControls = aggregate.running_count > 1
 
   const isGlobal = activeTab === GLOBAL_TAB_VALUE
-  const activeEngine = engines.find(
-    (e) => `${e.engine_type}-${e.endpoint}` === activeTab,
-  )
+  const activeEngine = findEngineByKey(engines, activeTab)
   const activeEngineGpuIndexesKey = activeEngine?.gpu_indexes?.join(',') ?? ''
 
   const activeEngineEndpoint = isGlobal ? undefined : activeEngine?.endpoint
@@ -264,7 +263,7 @@ export function EngineSection({
   const tabOrder = useMemo(
     () => [
       ...(showGlobalControls ? [GLOBAL_TAB_VALUE] : []),
-      ...engines.map((e) => `${e.engine_type}-${e.endpoint}`),
+      ...engines.map(engineKey),
     ],
     [engines, showGlobalControls],
   )
@@ -277,7 +276,7 @@ export function EngineSection({
   // frame of an empty or wrong tab first.
   if (!showGlobalControls && engines.length > 0) {
     // Single running engine: there is no global tab to sit on.
-    const onlyEngineKey = `${engines[0].engine_type}-${engines[0].endpoint}`
+    const onlyEngineKey = engineKey(engines[0])
     if (activeTab !== onlyEngineKey) setActiveTab(onlyEngineKey)
   } else if (
     engines.length > 0 &&
@@ -437,11 +436,11 @@ export function EngineSection({
                 </>
               )}
               {engines.map((engine) => {
-                const engineKey = `${engine.engine_type}-${engine.endpoint}`
-                const isActive = engineKey === activeTab
+                const key = engineKey(engine)
+                const isActive = key === activeTab
                 return (
                   <EngineTab
-                    key={engineKey}
+                    key={key}
                     engine={engine}
                     cycle={cycle}
                     intervalMs={activeIntervalMs}
@@ -477,46 +476,46 @@ export function EngineSection({
           </TabsContent>
 
           {engines.map((engine) => {
-            const engineKey = `${engine.engine_type}-${engine.endpoint}`
+            const key = engineKey(engine)
 
             const chartDataForEngine: EngineChartData | undefined = getChartData
               ? {
-                  tps: getChartData(`${engineKey}:tps`),
-                  avgTps: getChartData(`${engineKey}:avgTps`),
-                  perReqTps: getChartData(`${engineKey}:perReqTps`),
-                  ttft: getChartData(`${engineKey}:ttft`),
-                  kv: getChartData(`${engineKey}:kvCache`),
-                  prefixCacheHit: getChartData(`${engineKey}:prefixCacheHit`),
-                  e2eLatency: getChartData(`${engineKey}:e2eLatency`),
-                  promptTps: getChartData(`${engineKey}:promptTps`),
-                  avgPromptTps: getChartData(`${engineKey}:avgPromptTps`),
-                  perReqPromptTps: getChartData(`${engineKey}:perReqPromptTps`),
-                  queueTime: getChartData(`${engineKey}:queueTime`),
-                  interTokenLatency: getChartData(`${engineKey}:interTokenLatency`),
-                  batchSize: getChartData(`${engineKey}:batchSize`),
-                  ttftP50: getChartData(`${engineKey}:ttftP50`),
-                  ttftP95: getChartData(`${engineKey}:ttftP95`),
-                  ttftP99: getChartData(`${engineKey}:ttftP99`),
-                  itlP50: getChartData(`${engineKey}:itlP50`),
-                  itlP95: getChartData(`${engineKey}:itlP95`),
-                  itlP99: getChartData(`${engineKey}:itlP99`),
-                  e2eP50: getChartData(`${engineKey}:e2eP50`),
-                  e2eP95: getChartData(`${engineKey}:e2eP95`),
-                  e2eP99: getChartData(`${engineKey}:e2eP99`),
-                  tpot: getChartData(`${engineKey}:tpot`),
-                  tpotP50: getChartData(`${engineKey}:tpotP50`),
-                  tpotP95: getChartData(`${engineKey}:tpotP95`),
-                  tpotP99: getChartData(`${engineKey}:tpotP99`),
-                  activeRequests: getChartData(`${engineKey}:activeRequests`),
-                  queuedRequests: getChartData(`${engineKey}:queuedRequests`),
-                  totalRequests: getChartData(`${engineKey}:totalRequests`),
+                  tps: getChartData(`${key}:tps`),
+                  avgTps: getChartData(`${key}:avgTps`),
+                  perReqTps: getChartData(`${key}:perReqTps`),
+                  ttft: getChartData(`${key}:ttft`),
+                  kv: getChartData(`${key}:kvCache`),
+                  prefixCacheHit: getChartData(`${key}:prefixCacheHit`),
+                  e2eLatency: getChartData(`${key}:e2eLatency`),
+                  promptTps: getChartData(`${key}:promptTps`),
+                  avgPromptTps: getChartData(`${key}:avgPromptTps`),
+                  perReqPromptTps: getChartData(`${key}:perReqPromptTps`),
+                  queueTime: getChartData(`${key}:queueTime`),
+                  interTokenLatency: getChartData(`${key}:interTokenLatency`),
+                  batchSize: getChartData(`${key}:batchSize`),
+                  ttftP50: getChartData(`${key}:ttftP50`),
+                  ttftP95: getChartData(`${key}:ttftP95`),
+                  ttftP99: getChartData(`${key}:ttftP99`),
+                  itlP50: getChartData(`${key}:itlP50`),
+                  itlP95: getChartData(`${key}:itlP95`),
+                  itlP99: getChartData(`${key}:itlP99`),
+                  e2eP50: getChartData(`${key}:e2eP50`),
+                  e2eP95: getChartData(`${key}:e2eP95`),
+                  e2eP99: getChartData(`${key}:e2eP99`),
+                  tpot: getChartData(`${key}:tpot`),
+                  tpotP50: getChartData(`${key}:tpotP50`),
+                  tpotP95: getChartData(`${key}:tpotP95`),
+                  tpotP99: getChartData(`${key}:tpotP99`),
+                  activeRequests: getChartData(`${key}:activeRequests`),
+                  queuedRequests: getChartData(`${key}:queuedRequests`),
+                  totalRequests: getChartData(`${key}:totalRequests`),
                 }
               : undefined
 
             return (
               <TabsContent
-                key={engineKey}
-                value={engineKey}
+                key={key}
+                value={key}
                 className="data-[state=active]:flex flex-col"
               >
                 <EngineCard
