@@ -1,0 +1,105 @@
+/**
+ * Every panel the dashboard can put on a page, and what each one binds to.
+ *
+ * The granularity is deliberate: one panel per metric rather than a handful of
+ * fixed composite cards, so an operator watching a training run can give GPU
+ * temperature and power the whole screen and drop the network and disk panels
+ * entirely. It is the reason the configuration is a versioned schema with a
+ * migration obligation — a closed panel set with opaque geometry was considered
+ * and rejected.
+ *
+ * **The ids are persisted.** They appear verbatim in saved documents, so
+ * renaming one is a breaking change that needs a migration, not a refactor.
+ * Adding one is additive and needs none.
+ */
+
+/** What a panel needs pointed at it before it can show anything. */
+export type PanelBindingKind =
+  /** One GPU, identified by its integer index. */
+  | 'gpu'
+  /** One inference engine, identified by its endpoint. */
+  | 'engine'
+  /** Nothing — the panel covers the whole host, or every engine at once. */
+  | 'none'
+
+/** What the dashboard knows about a panel type before any document is read. */
+export interface PanelTypeSpec {
+  /** What has to be bound for the panel to render data. */
+  binds: PanelBindingKind
+  /** Title shown when the operator has not renamed the panel. */
+  title: string
+}
+
+/**
+ * The vocabulary. Declaration order is palette order, so related panels sit
+ * together where an operator goes looking for them.
+ */
+export const PANEL_TYPES = {
+  // ── Per-GPU hardware ────────────────────────────────────────────────────
+  'gpu-utilization': { binds: 'gpu', title: 'GPU Utilization' },
+  'gpu-temperature': { binds: 'gpu', title: 'GPU Temp' },
+  'gpu-power': { binds: 'gpu', title: 'GPU Power' },
+  'gpu-clock': { binds: 'gpu', title: 'GPU Clock' },
+  'gpu-memory': { binds: 'gpu', title: 'GPU Memory' },
+  'gpu-fan': { binds: 'gpu', title: 'GPU Fan' },
+  'gpu-events': { binds: 'gpu', title: 'GPU Events' },
+
+  // ── Host-wide hardware ──────────────────────────────────────────────────
+  'cpu-utilization': { binds: 'none', title: 'CPU' },
+  'cpu-cores': { binds: 'none', title: 'CPU Cores' },
+  // Unified-memory hosts report one pool shared with the GPU, so this is a
+  // host-wide panel rather than a per-GPU one.
+  memory: { binds: 'none', title: 'Memory' },
+  'disk-io': { binds: 'none', title: 'Disk I/O' },
+  'network-io': { binds: 'none', title: 'Network' },
+
+  // ── Engines ─────────────────────────────────────────────────────────────
+  'engines-overview': { binds: 'none', title: 'All Engines' },
+  'engine-status': { binds: 'engine', title: 'Engine' },
+  'engine-prefill-throughput': { binds: 'engine', title: 'Prefill Throughput' },
+  'engine-decode-throughput': { binds: 'engine', title: 'Decode Throughput' },
+  'engine-latency': { binds: 'engine', title: 'Latency' },
+  'engine-slo-goodput': { binds: 'engine', title: 'SLO Goodput' },
+  'engine-requests': { binds: 'engine', title: 'Requests' },
+  'engine-cache': { binds: 'engine', title: 'Cache' },
+  'engine-spec-decode': { binds: 'engine', title: 'Speculative Decoding' },
+  'inference-timeline': { binds: 'engine', title: 'Inference Requests' },
+  // The log socket addresses an engine by endpoint, so logs bind like any
+  // other engine panel instead of being a fixed drawer.
+  logs: { binds: 'engine', title: 'Logs' },
+} as const satisfies Record<string, PanelTypeSpec>
+
+/** A panel type this build implements. */
+export type PanelType = keyof typeof PANEL_TYPES
+
+/** Every panel type, in palette order. */
+export const PANEL_TYPE_IDS = Object.keys(PANEL_TYPES) as PanelType[]
+
+/**
+ * Whether this build implements the panel type.
+ *
+ * A saved document can name a type this build has never heard of — a newer
+ * version added one, and the dashboard was rolled back. That panel keeps its
+ * slot and renders as an unsupported-panel placeholder, because dropping it
+ * would silently reflow an arrangement the operator authored.
+ */
+export function isKnownPanelType(type: string): type is PanelType {
+  return Object.hasOwn(PANEL_TYPES, type)
+}
+
+/**
+ * What the panel binds to. An unimplemented type binds to nothing: there is no
+ * data to point at something that cannot be rendered.
+ */
+export function panelBindingKind(type: string): PanelBindingKind {
+  return isKnownPanelType(type) ? PANEL_TYPES[type].binds : 'none'
+}
+
+/**
+ * The title to show when the operator has not renamed the panel. An
+ * unimplemented type falls back to its raw id so the placeholder can name what
+ * it could not render.
+ */
+export function defaultPanelTitle(type: string): string {
+  return isKnownPanelType(type) ? PANEL_TYPES[type].title : type
+}
