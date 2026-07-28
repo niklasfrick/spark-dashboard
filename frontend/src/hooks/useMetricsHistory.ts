@@ -369,6 +369,8 @@ export function useMetricsHistory(
       .filter((e) => e.timestamp_ms >= cutoff)
   }, [version])
 
+  /** Recent requests, optionally narrowed to one engine. `key` is an engine
+   *  key as produced by `engineKey()`; omit it for every engine's requests. */
   const getRequests = useCallback(
     (key?: string): InferenceRequestData[] => {
       void version

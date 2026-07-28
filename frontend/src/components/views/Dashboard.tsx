@@ -195,7 +195,7 @@ export function Dashboard({
               const isActive = gpuIndexOf(gpu) === activeGpuIndex
               return (
                 <button
-                  key={gpu.index ?? 'primary'}
+                  key={gpuIndexOf(gpu)}
                   type="button"
                   onClick={() => setSelectedGpuIndex(gpuIndexOf(gpu))}
                   aria-pressed={isActive}
@@ -206,6 +206,9 @@ export function Dashboard({
                   }`}
                 >
                   <div className="flex items-baseline justify-between gap-2 min-w-0">
+                    {/* The label deliberately does not normalize: a GPU the
+                        backend gave no index is shown as plain "GPU", not as
+                        "GPU 0" it may not be. */}
                     <span className="text-[10px] lg:text-[11px] font-semibold text-zinc-200 truncate">
                       {gpu.index !== null && gpu.index !== undefined ? `GPU ${gpu.index}` : 'GPU'}
                     </span>
