@@ -404,8 +404,11 @@ the latest stable version; see [CHANGELOG.md](./CHANGELOG.md) for release notes.
 ## Testing
 
 ```bash
-# Frontend
+# Frontend (jsdom)
 cd frontend && npm test
+
+# Frontend layout-dependent specs (headless chromium)
+cd frontend && npx playwright install chromium && npm run test:browser
 
 # Backend (on Linux)
 cargo test

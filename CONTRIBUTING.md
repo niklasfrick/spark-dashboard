@@ -25,6 +25,15 @@ cd frontend && npm test
 cargo test
 ```
 
+`npm test` is the jsdom suite. Specs named `*.browser.test.tsx` run in a real
+headless chromium instead — jsdom has no layout engine, so anything that
+measures an element belongs there:
+
+```bash
+cd frontend && npx playwright install chromium   # one-time, ~150 MB
+npm run test:browser
+```
+
 If you change the `deploy/docker/Dockerfile` or `deploy/docker/docker-compose*.yml`,
 also smoke-test the image build before pushing (see [`deploy/docker/docker.md`](./deploy/docker/docker.md)):
 

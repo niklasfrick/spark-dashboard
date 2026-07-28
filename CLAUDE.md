@@ -7,7 +7,7 @@ Project-specific. Global rules in `~/.claude/rules/` still apply.
 - `main` is protected. No direct pushes. Every change goes through a PR.
 - Branch name: `<type>/<slug>` (`feat/...`, `fix/...`, `docs/...`).
 - **Rebase-merge** PRs (never squash) so every commit lands individually on `main` and appears in the release notes. **Every commit** must be a valid Conventional Commit, not just the PR title.
-- All `ci.yml` jobs (rust, frontend, installer) must pass before merge.
+- All `ci.yml` jobs (rust, frontend, frontend-browser, installer) must pass before merge.
 
 ## Commits drive releases
 
@@ -40,9 +40,14 @@ Frontend changes (`frontend/`):
 
 ```bash
 cd frontend && npm run lint && npm run build && npm test -- --run
+
+# only when a *.browser.test.tsx changed (one-time: npx playwright install chromium)
+cd frontend && npm run test:browser
 ```
 
 `npm run lint` is enforced by the `frontend` CI job and the baseline is clean — a new error fails the build, so don't let one land.
+
+Vitest runs two projects, so `npm test` alone does not cover both. `npm test` is `unit` (jsdom); specs named `*.browser.test.tsx` belong to `browser`, run in headless chromium, and are enforced by the `frontend-browser` CI job. Put a spec there only when it depends on real layout or CSS — jsdom measures every box as 0×0 — and keep that project small, since it costs a browser download.
 
 If both stacks changed, run both blocks. If embedded assets changed, build the frontend first (`rust-embed` needs `frontend/dist/`).
 
