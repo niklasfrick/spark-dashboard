@@ -101,6 +101,28 @@ jobs:
       - run: npm run build
       - run: npm test -- --run
 
+  frontend-browser:
+    name: Frontend (browser mode)
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      # Its own job so the chromium download is paid here and nowhere else —
+      # the jsdom suite in `frontend` runs without any browser binary.
+      - name: Install chromium
+        run: npx playwright install --with-deps chromium
+      - run: npm run test:browser
+
   installer:
     name: Installer lint
     needs: changes
