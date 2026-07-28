@@ -1,6 +1,8 @@
 import { useCallback, useMemo, useState } from 'react'
+import { useDashboardConfiguration } from './hooks/useDashboardConfiguration'
 import { useMetrics } from './hooks/useMetrics'
 import { useMetricsHistory } from './hooks/useMetricsHistory'
+import { ConfigurationNotices } from './components/ConfigurationNotices'
 import { ConnectionBadge } from './components/ConnectionBadge'
 import { Dashboard } from './components/views/Dashboard'
 import { LogViewer } from './components/LogViewer'
@@ -8,6 +10,11 @@ import type { GpuEvent, InferenceRequest } from './types/events'
 
 function App() {
   const { metrics, connectionStatus, isStale } = useMetrics()
+  // The configuration is loaded and saved from here, at the root, because it is
+  // one document for the whole dashboard. Nothing renders from it yet — the
+  // panel grid that will is #79 — but the operator is told now when it could not
+  // be loaded or cannot be saved, rather than after a layout silently reverts.
+  const { notices: configurationNotices } = useDashboardConfiguration()
   const [consoleExpanded, setConsoleExpanded] = useState(false)
   // Endpoint of the engine tab selected in the engine section (null = Global
   // tab). The log viewer follows it so logs stay in sync with the selection.
@@ -49,6 +56,8 @@ function App() {
         </h1>
         <ConnectionBadge status={connectionStatus} isStale={isStale} />
       </header>
+
+      <ConfigurationNotices notices={configurationNotices} />
 
       <main className={`flex-1 min-h-0 flex flex-col p-3 lg:p-4 2xl:p-5 min-[1920px]:p-6 ${isStale ? 'opacity-50' : ''}`}>
         {!metrics && connectionStatus !== 'connected' && (
