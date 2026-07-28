@@ -20,7 +20,6 @@ export interface InferenceRequest {
 }
 
 export type TimeWindow = '5m' | '10m' | '15m'
-export type ViewMode = 'glanceable' | 'detailed'
 
 export const TIME_WINDOW_SECONDS: Record<TimeWindow, number> = {
   '5m': 300,
