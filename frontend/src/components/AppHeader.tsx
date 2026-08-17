@@ -10,15 +10,20 @@ import type { ConnectionStatus } from '@/hooks/useMetrics'
  * which tool they are looking at, and the rework preserves it. `pages` is a slot
  * rather than a prop the header renders itself, so the masthead stays free of
  * the configuration — it draws the same on the frame that has no document yet.
+ *
+ * `trailing` holds extra indicators beside the connection badge (the Splunk
+ * HEC status dot and the settings entry point), so the badge stays hard right.
  */
 export function AppHeader({
   status,
   isStale,
   pages,
+  trailing,
 }: {
   status: ConnectionStatus
   isStale: boolean
   pages?: ReactNode
+  trailing?: ReactNode
 }) {
   return (
     <header className="shrink-0 border-b border-white/[0.04] px-4 py-1.5 flex items-center gap-3">
@@ -38,7 +43,8 @@ export function AppHeader({
 
       {/* `ml-auto` rather than `justify-between`, so the badge stays hard right
           whether or not there are pages between it and the title. */}
-      <div className="ml-auto shrink-0">
+      <div className="ml-auto shrink-0 flex items-center gap-2">
+        {trailing}
         <ConnectionBadge status={status} isStale={isStale} />
       </div>
     </header>
