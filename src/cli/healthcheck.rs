@@ -50,6 +50,11 @@ mod tests {
         let app = crate::server::create_router(crate::server::AppState {
             metrics_tx: tx,
             config: std::sync::Arc::new(crate::config_store::ConfigStore::new(dir.path()).await),
+            hec_config: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+            export_status: std::sync::Arc::new(tokio::sync::Mutex::new(
+                crate::hec::ExportStatus::disabled(),
+            )),
+            hostname: "test-host".into(),
         });
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
