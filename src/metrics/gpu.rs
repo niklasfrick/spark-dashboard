@@ -6,7 +6,7 @@ use nvml_wrapper::error::NvmlError;
 use tracing::warn;
 
 /// A GPU event detected from NVML throttle reasons.
-#[derive(Clone, serde::Serialize, Debug)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, Debug)]
 pub struct GpuEvent {
     pub timestamp_ms: u64,
     pub gpu_index: Option<u32>,

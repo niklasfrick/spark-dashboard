@@ -4,6 +4,7 @@ mod config_store;
 #[cfg(test)]
 mod deploy_files;
 mod engines;
+mod hec;
 mod metrics;
 mod server;
 mod ws;
@@ -16,7 +17,7 @@ use cli::service::ServiceCommand;
 use engines::{ApiKeyResolver, EngineOverride, EngineType};
 use std::process::ExitCode;
 use std::sync::Arc;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, Mutex, RwLock};
 
 /// Default directory for mutable state.
 ///
@@ -273,9 +274,40 @@ async fn run_server_inner(args: RunArgs) -> Result<(), Box<dyn std::error::Error
         args.state_dir
     );
 
+    // Splunk HEC export: the exporter subscribes to the metrics broadcast as a
+    // second consumer and sends whatever the document's `export.hec` section
+    // tells it to. Absent section = disabled; nothing is sent, nothing is
+    // polled. The UI broadcast keeps running at full rate regardless (ADR 0001).
+    let hec_config: hec::SharedHecConfig = Arc::new(RwLock::new(
+        config
+            .load()
+            .await
+            .ok()
+            .flatten()
+            .as_deref()
+            .and_then(hec::hec_target_from_document),
+    ));
+    if hec_config.read().await.is_some() {
+        tracing::info!("Splunk HEC export enabled from the stored dashboard document");
+    }
+    let export_status: hec::SharedExportStatus =
+        Arc::new(Mutex::new(hec::ExportStatus::disabled()));
+    let hec_rx = tx.subscribe();
+    let hostname = sysinfo::System::host_name().unwrap_or_else(|| "unknown".to_string());
+    tokio::spawn(hec::run_exporter(
+        hec_rx,
+        hec_config.clone(),
+        export_status.clone(),
+        hostname.clone(),
+        hec::PROBE_INTERVAL,
+    ));
+
     let app = server::create_router(server::AppState {
         metrics_tx: tx,
         config,
+        hec_config,
+        export_status,
+        hostname,
     });
 
     let addr = format!("{}:{}", args.bind, args.port);
