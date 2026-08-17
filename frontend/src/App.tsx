@@ -1,9 +1,12 @@
 import { useCallback, useMemo, useState } from 'react'
+import { Settings } from 'lucide-react'
 import { useDashboardConfiguration } from './hooks/useDashboardConfiguration'
 import { useMetrics } from './hooks/useMetrics'
 import { useMetricsHistory } from './hooks/useMetricsHistory'
 import { ConfigurationNotices } from './components/ConfigurationNotices'
 import { ConnectionBadge } from './components/ConnectionBadge'
+import { ExportSettingsDialog } from './components/ExportSettingsDialog'
+import { HecStatusDot } from './components/HecStatusDot'
 import { Dashboard } from './components/views/Dashboard'
 import { LogViewer } from './components/LogViewer'
 import type { GpuEvent, InferenceRequest } from './types/events'
@@ -14,8 +17,9 @@ function App() {
   // one document for the whole dashboard. Nothing renders from it yet — the
   // panel grid that will is #79 — but the operator is told now when it could not
   // be loaded or cannot be saved, rather than after a layout silently reverts.
-  const { notices: configurationNotices } = useDashboardConfiguration()
+  const { document, notices: configurationNotices, readOnly, save } = useDashboardConfiguration()
   const [consoleExpanded, setConsoleExpanded] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   // Endpoint of the engine tab selected in the engine section (null = Global
   // tab). The log viewer follows it so logs stay in sync with the selection.
   const [selectedEngineEndpoint, setSelectedEngineEndpoint] = useState<string | null>(null)
@@ -54,8 +58,28 @@ function App() {
           <span className="text-[#76B900]">Spark</span>{' '}
           <span className="text-zinc-500 font-normal">Dashboard</span>
         </h1>
-        <ConnectionBadge status={connectionStatus} isStale={isStale} />
+        <div className="flex items-center gap-2">
+          <HecStatusDot />
+          <ConnectionBadge status={connectionStatus} isStale={isStale} />
+          <button
+            type="button"
+            aria-label="Settings"
+            title="Settings"
+            onClick={() => setSettingsOpen(true)}
+            className="rounded-md p-1.5 text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-200"
+          >
+            <Settings size={16} />
+          </button>
+        </div>
       </header>
+
+      <ExportSettingsDialog
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        document={document}
+        readOnly={readOnly}
+        save={save}
+      />
 
       <ConfigurationNotices notices={configurationNotices} />
 
