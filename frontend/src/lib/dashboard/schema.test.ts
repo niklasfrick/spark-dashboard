@@ -313,3 +313,89 @@ describe('panelTitle', () => {
     expect(panelTitle({ type: 'gpu-utilization' })).toBe('GPU Utilization')
   })
 })
+
+describe('the export.hec section', () => {
+  it('parses a document with the section, keeping the masked token as received', () => {
+    const document = parseDashboardDocument({
+      ...rawDocument(),
+      export: {
+        hec: {
+          url: 'https://splunk.example.com:8088/services/collector',
+          token: '…-abc',
+          index: 'metrics',
+          events_index: 'main',
+        },
+      },
+    })
+
+    expect(document).not.toBeNull()
+    expect(document?.export).toEqual({
+      url: 'https://splunk.example.com:8088/services/collector',
+      token: '…-abc',
+      index: 'metrics',
+      events_index: 'main',
+    })
+  })
+
+  it('fills the index defaults when the section omits them', () => {
+    const document = parseDashboardDocument({
+      ...rawDocument(),
+      export: { hec: { url: 'https://splunk.example.com', token: 't' } },
+    })
+
+    expect(document?.export).toEqual({
+      url: 'https://splunk.example.com',
+      token: 't',
+      index: 'metrics',
+      events_index: 'main',
+    })
+  })
+
+  it('leaves the section absent on legacy documents, which is the disabled state', () => {
+    const document = parseDashboardDocument(rawDocument())
+    expect(document?.export).toBeUndefined()
+  })
+
+  it('ignores a section that is not a record or has no string url', () => {
+    expect(parseDashboardDocument({ ...rawDocument(), export: 'nope' })?.export).toBeUndefined()
+    expect(parseDashboardDocument({ ...rawDocument(), export: { hec: 'nope' } })?.export).toBeUndefined()
+    expect(parseDashboardDocument({ ...rawDocument(), export: { hec: { token: 't' } } })?.export).toBeUndefined()
+  })
+
+  it('writes the section back when present, and omits it when absent', () => {
+    const withSection = parseDashboardDocument({
+      ...rawDocument(),
+      export: { hec: { url: 'https://splunk.example.com', token: 'fresh-token', index: 'm2', events_index: 'ev2' } },
+    })
+    expect(withSection).not.toBeNull()
+    const written = JSON.parse(serializeDashboardDocument(withSection!))
+    expect(written.export).toEqual({
+      hec: { url: 'https://splunk.example.com', token: 'fresh-token', index: 'm2', events_index: 'ev2' },
+    })
+
+    const without = parseDashboardDocument(rawDocument())
+    expect(without).not.toBeNull()
+    expect(JSON.parse(serializeDashboardDocument(without!)).export).toBeUndefined()
+  })
+
+  it('reverts a masked token to the empty keep-the-stored-token encoding on save', () => {
+    const document = parseDashboardDocument({
+      ...rawDocument(),
+      export: { hec: { url: 'https://splunk.example.com', token: '…-abc' } },
+    })
+    expect(document).not.toBeNull()
+
+    const written = JSON.parse(serializeDashboardDocument(document!))
+    expect(written.export.hec.token).toBe('')
+  })
+
+  it('round-trips: parse then serialize then parse is stable for a fresh token', () => {
+    const first = parseDashboardDocument({
+      ...rawDocument(),
+      export: { hec: { url: 'https://splunk.example.com', token: 'fresh-token', index: 'm', events_index: 'e' } },
+    })
+    expect(first).not.toBeNull()
+    const second = parseDashboardDocument(JSON.parse(serializeDashboardDocument(first!)))
+    expect(second).toEqual(first)
+  })
+})

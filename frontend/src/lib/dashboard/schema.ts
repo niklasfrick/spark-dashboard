@@ -36,14 +36,45 @@ import { TIME_WINDOW_SECONDS, type TimeWindow } from '@/types/events'
  */
 export const DASHBOARD_SCHEMA_VERSION = 1
 
+/** Defaults the exporter uses when the operator has not chosen an index. */
+export const DASHBOARD_DEFAULTS = {
+  hecIndex: 'metrics',
+  hecEventsIndex: 'main',
+} as const
+
 /** Time window a panel's chart covers when the operator has not chosen one. */
 export const DEFAULT_TIME_WINDOW: TimeWindow = '5m'
 
-/** The whole configuration: a versioned list of pages. */
+/** The whole configuration: a versioned list of pages, plus the optional
+ * global export section. The export section is global (host-scoped) rather
+ * than per page, which is why it lives beside `pages` instead of inside one. */
 export interface DashboardDocument {
   version: number
   pages: DashboardPage[]
+  /** Absent until the operator configures Splunk HEC export. Presence = enabled. */
+  export?: HecExportConfig
 }
+
+/**
+ * The `export.hec` section of the document, mirroring the server's view.
+ * The token is write-only: the server answers reads with it masked
+ * (`…abcd`), and a save that sends an empty token keeps the stored one.
+ */
+export interface HecExportConfig {
+  url: string
+  /**
+   * What the server last returned: the stored token masked (`…abcd`), or a
+   * value the operator typed. Empty means "keep the stored token" on save.
+   */
+  token: string
+  /** Metrics-type index the metric events land in. Default `metrics`. */
+  index: string
+  /** Conventional index GPU events land in. Default `main`. */
+  events_index: string
+}
+
+/** The mask the server applies to stored tokens on read. */
+export const HEC_TOKEN_MASK_PREFIX = '…'
 
 /** One named arrangement of panels, addressable by its own URL. */
 export interface DashboardPage {
@@ -91,7 +122,11 @@ export function parseDashboardDocument(raw: unknown): DashboardDocument | null {
   // operator who had simply deleted their last one.
   if (pages.length === 0 && raw.pages.length > 0) return null
 
-  return { version: DASHBOARD_SCHEMA_VERSION, pages: withUniqueIds(pages, 'page') }
+  const document: DashboardDocument = { version: DASHBOARD_SCHEMA_VERSION, pages: withUniqueIds(pages, 'page') }
+  const hecExport = readHecExport(raw.export)
+  if (hecExport) document.export = hecExport
+
+  return document
 }
 
 /**
@@ -124,7 +159,51 @@ export function serializeDashboardDocument(document: DashboardDocument): string 
         window: panel.window,
       })),
     })),
+    // Absence is what disables the export; a save never writes an empty
+    // section into existence.
+    ...(document.export === undefined
+      ? {}
+      : {
+          export: {
+            hec: {
+              url: document.export.url,
+              token: tokenForSave(document.export.token),
+              index: document.export.index,
+              events_index: document.export.events_index,
+            },
+          },
+        }),
   })
+}
+
+/**
+ * The server stores the operator's real token; a masked value is the server's
+ * display copy, not data. On save a masked token reverts to empty, which is
+ * the server's "keep the stored token" encoding.
+ *
+ * ponytail: a token the operator literally typed starting with `…` is lost on
+ * save; the server's own mask prefix is not a plausible token character.
+ */
+function tokenForSave(token: string): string {
+  return token.startsWith(HEC_TOKEN_MASK_PREFIX) ? '' : token
+}
+
+/**
+ * Reads the `export.hec` section tolerantly. Absent (or not a record with a
+ * string url) means "not configured" — the exporter's off state, which is a
+ * normal configuration, not a fault.
+ */
+function readHecExport(raw: unknown): HecExportConfig | undefined {
+  if (!isRecord(raw) || !isRecord(raw.hec)) return undefined
+  const hec = raw.hec
+  if (typeof hec.url !== 'string') return undefined
+
+  return {
+    url: hec.url,
+    token: typeof hec.token === 'string' ? hec.token : '',
+    index: typeof hec.index === 'string' && hec.index.length > 0 ? hec.index : 'metrics',
+    events_index: typeof hec.events_index === 'string' && hec.events_index.length > 0 ? hec.events_index : 'main',
+  }
 }
 
 /** What the panel's header reads: the operator's title, or the type's default. */
