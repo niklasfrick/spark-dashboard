@@ -1448,7 +1448,9 @@ pub async fn run_test(client: &reqwest::Client, target: &HecTarget, host: &str) 
                 TestOutcome::Ok
             } else if status == 429 {
                 TestOutcome::QueueFull
-            } else if status == 403 {
+            } else if status == 403 || status == 401 {
+                // 403 and 401 are both the endpoint rejecting the token;
+                // which one a given deployment answers with varies.
                 TestOutcome::InvalidToken
             } else if status >= 500 {
                 TestOutcome::ServerError
