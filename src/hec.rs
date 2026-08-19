@@ -324,6 +324,63 @@ pub fn build_metric_event(snapshot: &MetricsSnapshot, host: &str, index: &str) -
             &format!("{prefix}inter_token_latency_ms"),
             metrics.inter_token_latency_ms,
         );
+        // Requests card: cumulative and scheduling counters.
+        push_opt(
+            &mut fields,
+            &format!("{prefix}total_requests"),
+            metrics.total_requests.map(|v| v as f64),
+        );
+        push_opt(
+            &mut fields,
+            &format!("{prefix}swapped_requests"),
+            metrics.swapped_requests.map(|v| v as f64),
+        );
+        push_opt(
+            &mut fields,
+            &format!("{prefix}preemptions_total"),
+            metrics.preemptions_total.map(|v| v as f64),
+        );
+        // Cache & Speculative Decoding card.
+        push_opt(
+            &mut fields,
+            &format!("{prefix}kv_cache_percent"),
+            metrics.kv_cache_percent,
+        );
+        push_opt(
+            &mut fields,
+            &format!("{prefix}prefix_cache_hit_rate"),
+            metrics.prefix_cache_hit_rate,
+        );
+        push_opt(
+            &mut fields,
+            &format!("{prefix}prefix_cache_queries_total"),
+            metrics.prefix_cache_queries_total.map(|v| v as f64),
+        );
+        push_opt(
+            &mut fields,
+            &format!("{prefix}spec_decode_acceptance_rate"),
+            metrics.spec_decode_acceptance_rate,
+        );
+        push_opt(
+            &mut fields,
+            &format!("{prefix}spec_decode_acceptance_rate_live"),
+            metrics.spec_decode_acceptance_rate_live,
+        );
+        push_opt(
+            &mut fields,
+            &format!("{prefix}spec_decode_mean_acceptance_length"),
+            metrics.spec_decode_mean_acceptance_length,
+        );
+        push_opt(
+            &mut fields,
+            &format!("{prefix}spec_decode_accepted_tokens_total"),
+            metrics.spec_decode_accepted_tokens_total.map(|v| v as f64),
+        );
+        push_opt(
+            &mut fields,
+            &format!("{prefix}spec_decode_draft_tokens_total"),
+            metrics.spec_decode_draft_tokens_total.map(|v| v as f64),
+        );
     }
 
     json!({
@@ -1095,6 +1152,93 @@ mod tests {
         assert_eq!(inner["metric_name:engine.vllm.req_waiting"], 0.0);
         assert_eq!(inner["metric_name:engine.vllm.tokens_per_sec"], 120.0);
         assert_eq!(inner["metric_name:engine.vllm.e2e_latency_ms"], 900.0);
+    }
+
+    /// The Requests and Cache & Speculative Decoding cards are now part of
+    /// the exported surface: every field they display must be present in the
+    /// metric event when the engine reports it.
+    #[test]
+    fn requests_and_cache_spec_decode_fields_are_exported() {
+        let snap = snapshot(|s| {
+            s.engines = vec![EngineSnapshot {
+                metrics: Some(EngineMetrics {
+                    total_requests: Some(412),
+                    swapped_requests: Some(0),
+                    preemptions_total: Some(3),
+                    kv_cache_percent: Some(72.5),
+                    prefix_cache_hit_rate: Some(58.0),
+                    prefix_cache_queries_total: Some(900),
+                    spec_decode_acceptance_rate: Some(74.0),
+                    spec_decode_acceptance_rate_live: Some(81.0),
+                    spec_decode_mean_acceptance_length: Some(1.9),
+                    spec_decode_accepted_tokens_total: Some(1500),
+                    spec_decode_draft_tokens_total: Some(2000),
+                    ..EngineMetrics::default()
+                }),
+                ..engine_with(Some(4), Some(0))
+            }];
+        });
+
+        let event = build_metric_event(&snap, "dgx-01", "metrics");
+        let inner = &event["fields"];
+        assert_eq!(inner["metric_name:engine.vllm.total_requests"], 412.0);
+        assert_eq!(inner["metric_name:engine.vllm.swapped_requests"], 0.0);
+        assert_eq!(inner["metric_name:engine.vllm.preemptions_total"], 3.0);
+        assert_eq!(inner["metric_name:engine.vllm.kv_cache_percent"], 72.5);
+        assert_eq!(inner["metric_name:engine.vllm.prefix_cache_hit_rate"], 58.0);
+        assert_eq!(
+            inner["metric_name:engine.vllm.prefix_cache_queries_total"],
+            900.0
+        );
+        assert_eq!(
+            inner["metric_name:engine.vllm.spec_decode_acceptance_rate"],
+            74.0
+        );
+        assert_eq!(
+            inner["metric_name:engine.vllm.spec_decode_acceptance_rate_live"],
+            81.0
+        );
+        assert_eq!(
+            inner["metric_name:engine.vllm.spec_decode_mean_acceptance_length"],
+            1.9
+        );
+        assert_eq!(
+            inner["metric_name:engine.vllm.spec_decode_accepted_tokens_total"],
+            1500.0
+        );
+        assert_eq!(
+            inner["metric_name:engine.vllm.spec_decode_draft_tokens_total"],
+            2000.0
+        );
+    }
+
+    /// vLLM only emits `vllm:spec_decode_*` counters when speculative decoding
+    /// is configured; the exporter must omit those fields (not send zeros) so
+    /// a spec-decode-less engine does not fabricate data in the index.
+    #[test]
+    fn spec_decode_fields_are_omitted_when_the_engine_has_no_spec_decode() {
+        let snap = snapshot(|s| {
+            s.engines = vec![engine_with(Some(1), Some(0))];
+        });
+
+        let event = build_metric_event(&snap, "dgx-01", "metrics");
+        let inner = &event["fields"];
+        for key in [
+            "spec_decode_acceptance_rate",
+            "spec_decode_acceptance_rate_live",
+            "spec_decode_mean_acceptance_length",
+            "spec_decode_accepted_tokens_total",
+            "spec_decode_draft_tokens_total",
+        ] {
+            assert!(
+                inner
+                    .as_object()
+                    .unwrap()
+                    .get(&format!("metric_name:engine.vllm.{key}"))
+                    .is_none(),
+                "{key} must be absent when the engine has no spec decode"
+            );
+        }
     }
 
     #[test]
