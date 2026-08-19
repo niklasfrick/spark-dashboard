@@ -74,6 +74,32 @@ afterEach(() => {
 })
 
 describe('ExportSettingsDialog', () => {
+  // Regression: the dialog mounts at app boot with document=null and stays
+  // mounted; opening it after the stored document arrives must show the
+  // stored values, not the boot-time defaults the useState seeds captured.
+  it('re-seeds the stored values on open when the document loads after mount', () => {
+    serveExport(exportingStatus)
+    const props = { onOpenChange: vi.fn(), readOnly: false, save: vi.fn().mockResolvedValue('saved' as const) }
+    const { rerender } = render(
+      <ExportSettingsDialog open={false} document={null} {...props} />,
+    )
+
+    // The stored document arrives while the dialog is closed.
+    rerender(
+      <ExportSettingsDialog
+        open={false}
+        document={{ ...documentWithExport, export: { ...documentWithExport.export!, index: 'ai-perf' } }}
+        {...props}
+      />,
+    )
+
+    // Open: the fields must show what is stored, not the defaults.
+    rerender(<ExportSettingsDialog open document={{ ...documentWithExport, export: { ...documentWithExport.export!, index: 'ai-perf' } }} {...props} />)
+
+    expect(screen.getByLabelText(/HEC URL/i)).toHaveValue(documentWithExport.export?.url)
+    expect(screen.getByLabelText(/Metrics index/i)).toHaveValue('ai-perf')
+    expect(screen.getByLabelText(/HEC token/i)).toHaveValue(documentWithExport.export?.token)
+  })
   it('shows the masked token with the keep-the-stored-token note', () => {
     serveExport(exportingStatus)
     renderDialog()
