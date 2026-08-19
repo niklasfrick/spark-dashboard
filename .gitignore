@@ -25,3 +25,6 @@ Thumbs.db
 
 # Splunk stuff
 SplunkHEC-spec.md
+
+# Local tooling
+deploy-local.sh
