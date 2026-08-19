@@ -681,12 +681,28 @@ pub async fn run_exporter(
             if let Some(target) = target {
                 match post_events(&client, &target, &[]).await {
                     SendOutcome::Unreachable => {} // still down
-                    _ => {
+                    SendOutcome::Ok => {
                         exporter.state = ExportState::Exporting;
                         exporter.reachable = true;
                         exporter.last_error = None;
                         exporter.last_ok_ms = Some(now_ms());
                         flush_events(&client, &target, &mut exporter, probe_interval).await;
+                    }
+                    // The endpoint answered, so it is reachable and no
+                    // longer Down — but a 401/403/400-7/429/5xx is not a
+                    // success. Recording it as one (the old blanket `_` arm
+                    // here) cleared last_error and stamped last_ok_ms on a
+                    // rejected probe, so the status surface reported healthy
+                    // while every real ingest kept failing the same way.
+                    SendOutcome::Retry => {
+                        exporter.state = ExportState::Exporting;
+                        exporter.reachable = true;
+                        exporter.last_error = Some("hec-429-or-5xx".to_string());
+                    }
+                    SendOutcome::Misconfigured(reason) => {
+                        exporter.state = ExportState::Exporting;
+                        exporter.reachable = true;
+                        exporter.last_error = Some(reason);
                     }
                 }
             } else {
@@ -1427,6 +1443,59 @@ mod tests {
             .iter()
             .all(|e| e["sourcetype"] == "spark_dashboard_gpu_event"));
         assert_eq!(events.len(), 2, "both GPU events survived the outage");
+        drop(task);
+    }
+
+    #[tokio::test]
+    async fn a_probe_rejected_with_403_reports_misconfigured_not_healthy() {
+        // Regression test: the probe branch used to treat any non-network-
+        // failure response (including a rejected token) as a success,
+        // clearing last_error and stamping last_ok_ms. That masked a live
+        // "bad token" outage as a healthy exporter.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+
+        let mut target = target();
+        target.url = format!("http://{addr}/collector");
+        let (tx, rx) = broadcast::channel::<String>(16);
+        let config = SharedHecConfig::new(RwLock::new(Some(target)));
+        let status = SharedExportStatus::new(Mutex::new(ExportStatus::disabled()));
+        let task = tokio::spawn(run_exporter(
+            rx,
+            config,
+            status.clone(),
+            "test-host".into(),
+            Duration::from_millis(100),
+        ));
+
+        // Tick 1: refused connection puts the exporter Down.
+        tx.send(active_json()).unwrap();
+        let st = wait_status(&status, Duration::from_secs(2), |s| {
+            s.state == ExportState::Down
+        })
+        .await;
+        assert_eq!(st.state, ExportState::Down);
+
+        // The endpoint comes back, but rejects the token (403) on every
+        // request — the same shape as a stale/wrong HEC token.
+        let _mock = start_mock(Some(addr), 1).await;
+
+        let st = wait_status(&status, Duration::from_secs(3), |s| {
+            s.state == ExportState::Exporting
+        })
+        .await;
+        assert_eq!(st.state, ExportState::Exporting);
+        assert!(st.reachable, "the endpoint answered, so it is reachable");
+        assert_eq!(
+            st.last_error.as_deref(),
+            Some("hec-403"),
+            "a rejected probe must surface the rejection, not clear it"
+        );
+        assert!(
+            st.last_ok_ms.is_none(),
+            "a 403 is not a success and must not stamp last_ok_ms"
+        );
         drop(task);
     }
 }
