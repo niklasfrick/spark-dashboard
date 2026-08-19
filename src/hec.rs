@@ -138,6 +138,51 @@ pub fn retain_token_in_document(new_document: &[u8], stored_token: &str) -> Opti
     serde_json::to_vec(&value).ok()
 }
 
+/// Body of `POST /api/export/test`: overrides for an in-progress edit session
+/// in the settings dialog that has not been saved yet. A field left `None` (or
+/// empty, or the `…`-masked token placeholder) falls back to the stored
+/// target — same "cannot see it, cannot re-send it" contract as a save (see
+/// [`retain_token_in_document`]), so testing an unsaved edit never requires
+/// re-typing a token the dialog cannot display.
+#[derive(Debug, Default, Deserialize)]
+pub struct TestOverride {
+    pub url: Option<String>,
+    pub token: Option<String>,
+    pub index: Option<String>,
+}
+
+/// Merges a test override over the stored target. `None` when there is
+/// neither an override URL nor a stored one to fall back to — the caller
+/// reports that as "misconfigured".
+pub fn resolve_test_target(
+    override_: TestOverride,
+    stored: Option<&HecTarget>,
+) -> Option<HecTarget> {
+    let url = override_
+        .url
+        .filter(|u| !u.trim().is_empty())
+        .or_else(|| stored.map(|t| t.url.clone()))?;
+    let token = override_
+        .token
+        .filter(|t| !t.is_empty() && !t.starts_with('…'))
+        .or_else(|| stored.map(|t| t.token.clone()))
+        .unwrap_or_default();
+    let index = override_
+        .index
+        .filter(|i| !i.trim().is_empty())
+        .or_else(|| stored.map(|t| t.index.clone()))
+        .unwrap_or_else(default_index);
+    let events_index = stored
+        .map(|t| t.events_index.clone())
+        .unwrap_or_else(default_events_index);
+    Some(HecTarget {
+        url,
+        token,
+        index,
+        events_index,
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Export status
 // ---------------------------------------------------------------------------
@@ -926,6 +971,66 @@ mod tests {
             retain_token_in_document(b"{\"version\":1}", "stored-token"),
             None
         );
+    }
+
+    // -- test-connection override merging ------------------------------------
+
+    #[test]
+    fn resolve_test_target_prefers_the_override_over_the_stored_target() {
+        let stored = target();
+        let override_ = TestOverride {
+            url: Some("https://new-host:8088/services/collector".into()),
+            token: Some("fresh-token".into()),
+            index: Some("new-index".into()),
+        };
+        let resolved = resolve_test_target(override_, Some(&stored)).unwrap();
+        assert_eq!(resolved.url, "https://new-host:8088/services/collector");
+        assert_eq!(resolved.token, "fresh-token");
+        assert_eq!(resolved.index, "new-index");
+        // events_index has no dialog field to override; it always tracks storage.
+        assert_eq!(resolved.events_index, stored.events_index);
+    }
+
+    #[test]
+    fn resolve_test_target_falls_back_to_the_stored_token_when_masked_or_empty() {
+        let stored = target();
+        let masked = TestOverride {
+            url: Some("https://new-host:8088/services/collector".into()),
+            token: Some("…oken".into()),
+            index: None,
+        };
+        assert_eq!(
+            resolve_test_target(masked, Some(&stored)).unwrap().token,
+            stored.token
+        );
+
+        let empty = TestOverride {
+            url: Some("https://new-host:8088/services/collector".into()),
+            token: Some(String::new()),
+            index: None,
+        };
+        assert_eq!(
+            resolve_test_target(empty, Some(&stored)).unwrap().token,
+            stored.token
+        );
+    }
+
+    #[test]
+    fn resolve_test_target_is_misconfigured_without_any_url() {
+        assert_eq!(resolve_test_target(TestOverride::default(), None), None);
+    }
+
+    #[test]
+    fn resolve_test_target_uses_the_override_alone_when_nothing_is_stored() {
+        let override_ = TestOverride {
+            url: Some("https://fresh:8088/services/collector".into()),
+            token: Some("t".into()),
+            index: None,
+        };
+        let resolved = resolve_test_target(override_, None).unwrap();
+        assert_eq!(resolved.url, "https://fresh:8088/services/collector");
+        assert_eq!(resolved.token, "t");
+        assert_eq!(resolved.index, "metrics"); // default_index()
     }
 
     // -- serialization -------------------------------------------------------
