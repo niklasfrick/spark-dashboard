@@ -383,9 +383,8 @@ pub fn build_metric_event(snapshot: &MetricsSnapshot, host: &str, index: &str) -
         );
         // Throughput cards: prefill (prompt) and decode (generation) live
         // rates, running averages, per-request averages, and cumulative totals
-        // ("Processed" / "Generated" on the cards). The totals share the UI's
-        // semantics: they count up from the dashboard's attach baseline and
-        // reset when the service or engine restarts.
+        // ("Processed" / "Generated" on the cards). The totals are raw
+        // engine-lifetime counters: they reset only when the engine restarts.
         push_opt(
             &mut fields,
             &format!("{prefix}prompt_tokens_per_sec"),
