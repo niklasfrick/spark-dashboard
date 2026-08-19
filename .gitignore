@@ -22,3 +22,6 @@ Thumbs.db
 # Claude Code workspace
 .claude/
 .gstack/
+
+# Splunk stuff
+SplunkHEC-spec.md
