@@ -289,7 +289,12 @@ pub fn build_metric_event(snapshot: &MetricsSnapshot, host: &str, index: &str) -
         "source": SOURCE,
         "sourcetype": METRICS_SOURCTYPE,
         "index": index,
-        "event": fields,
+        // Splunk's multiple-measurement metrics format: "event" must be the
+        // literal string "metric" and the metric_name:* fields go under
+        // "fields", not "event" — a metrics-type index silently fails to
+        // index anything sent without this marker.
+        "event": "metric",
+        "fields": fields,
     })
 }
 
@@ -337,7 +342,8 @@ pub fn build_test_event(host: &str, index: &str, now_ms: u64) -> Value {
         "source": SOURCE,
         "sourcetype": METRICS_SOURCTYPE,
         "index": index,
-        "event": { "metric_name:spark_dashboard.connectivity.test": 1 },
+        "event": "metric",
+        "fields": { "metric_name:spark_dashboard.connectivity.test": 1 },
     })
 }
 
@@ -425,7 +431,7 @@ pub async fn post_events(
 ) -> SendOutcome {
     let response = client
         .post(&target.url)
-        .header("Authorization", format!("Bearer {}", target.token))
+        .header("Authorization", format!("Splunk {}", target.token))
         .header("Content-Type", "application/json")
         .body(serde_json::to_string(&events).expect("events serialize"))
         .send()
@@ -921,13 +927,17 @@ mod tests {
         });
 
         let event = build_metric_event(&snap, "dgx-01", "metrics");
-        let inner = &event["event"];
+        let inner = &event["fields"];
 
         assert_eq!(event["time"], 1_723_800_000);
         assert_eq!(event["host"], "dgx-01");
         assert_eq!(event["source"], "spark-dashboard");
         assert_eq!(event["sourcetype"], "spark_dashboard");
         assert_eq!(event["index"], "metrics");
+        // Splunk's multiple-measurement metrics format: "event" must be the
+        // literal string "metric", not the fields payload — a metrics-type
+        // index silently drops anything sent without this exact marker.
+        assert_eq!(event["event"], "metric");
         assert_eq!(inner["metric_name:gpu0.utilization_pct"], 87.0);
         assert_eq!(inner["metric_name:gpu0.power_watts"], 142.5);
         assert_eq!(inner["metric_name:gpu1.utilization_pct"], 12.0);
@@ -959,7 +969,7 @@ mod tests {
         });
 
         let event = build_metric_event(&snap, "dgx-01", "metrics");
-        let inner = &event["event"];
+        let inner = &event["fields"];
         assert_eq!(inner["metric_name:engine.vllm.req_running"], 4.0);
         assert_eq!(inner["metric_name:engine.vllm.req_waiting"], 0.0);
         assert_eq!(inner["metric_name:engine.vllm.tokens_per_sec"], 120.0);
@@ -1076,8 +1086,23 @@ mod tests {
     /// 0 = always 200, 1 = always 403, 2 = 429 on the first call, then 200.
     async fn mock_handler(
         axum::extract::State(st): axum::extract::State<MockState>,
+        headers: axum::http::HeaderMap,
         body: axum::body::Bytes,
     ) -> (axum::http::StatusCode, &'static str) {
+        // Splunk HEC uses the `Splunk <token>` auth scheme, not `Bearer`; a
+        // real HEC endpoint answers a `Bearer` header with 401 regardless of
+        // token validity. Assert it here so a regression fails loudly instead
+        // of silently passing every other test in this module.
+        let auth = headers
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default();
+        if !auth.starts_with("Splunk ") {
+            return (
+                axum::http::StatusCode::UNAUTHORIZED,
+                r#"{"text":"Invalid authorization","code":3}"#,
+            );
+        }
         st.posts
             .lock()
             .unwrap()
@@ -1220,7 +1245,8 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0]["sourcetype"], "spark_dashboard");
         assert_eq!(events[0]["index"], "metrics");
-        assert!(events[0]["event"]
+        assert_eq!(events[0]["event"], "metric");
+        assert!(events[0]["fields"]
             .as_object()
             .unwrap()
             .keys()
@@ -1435,7 +1461,7 @@ pub async fn run_test(client: &reqwest::Client, target: &HecTarget, host: &str) 
     let event = build_test_event(host, &target.index, now_ms());
     let response = client
         .post(&target.url)
-        .header("Authorization", format!("Bearer {}", target.token))
+        .header("Authorization", format!("Splunk {}", target.token))
         .header("Content-Type", "application/json")
         .body(serde_json::to_string(&[event]).expect("test event serializes"))
         .send()
