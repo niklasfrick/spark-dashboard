@@ -221,9 +221,16 @@ async fn get_export_status(State(state): State<AppState>) -> impl IntoResponse {
 /// and reports a fine-grained outcome the settings dialog maps to its
 /// dedicated copy. A misconfigured or absent section is a normal answer, not
 /// an HTTP error — the dialog needs a distinct line for it.
-async fn test_export(State(state): State<AppState>) -> impl IntoResponse {
-    let target = state.hec_config.read().await.clone();
-    let Some(target) = target.filter(|t| t.usable()) else {
+///
+/// The body carries an optional override (`{url, token, index}`) so the
+/// dialog can test an edit before saving it — an empty body (or one that
+/// fails to parse) tests the stored target unchanged, which is also what a
+/// pre-fix client still sends.
+async fn test_export(State(state): State<AppState>, body: Bytes) -> impl IntoResponse {
+    let override_ = serde_json::from_slice(&body).unwrap_or_default();
+    let stored = state.hec_config.read().await.clone();
+    let target = hec::resolve_test_target(override_, stored.as_ref()).filter(|t| t.usable());
+    let Some(target) = target else {
         return axum::Json(serde_json::json!({
             "outcome": "misconfigured",
             "index": null,
@@ -796,6 +803,75 @@ mod tests {
             .unwrap();
         assert_eq!(body["outcome"], "unreachable");
         assert_eq!(body["index"], "metrics");
+    }
+
+    #[tokio::test]
+    async fn the_connectivity_test_uses_an_unsaved_override_instead_of_the_stored_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = spawn(dir.path()).await;
+        let client = reqwest::Client::new();
+
+        // Stored target points at a refused port; the dialog is mid-edit with
+        // a *different* (also refused, but distinguishably so) URL that was
+        // never saved.
+        let doc = r#"{"version":1,"pages":[],"export":{"hec":{"url":"http://127.0.0.1:1/collector","token":"stored-token","index":"metrics","events_index":"main"}}}"#;
+        client
+            .put(format!("{base}/api/dashboard"))
+            .body(doc)
+            .send()
+            .await
+            .unwrap();
+
+        let override_body =
+            r#"{"url":"http://127.0.0.1:2/collector","token":"typed-token","index":"typed-index"}"#;
+        let body: serde_json::Value = client
+            .post(format!("{base}/api/export/test"))
+            .body(override_body)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        // Both ports are refused, so the outcome is the same either way — the
+        // index in the response is what actually proves the override (not the
+        // stored config) was tested.
+        assert_eq!(body["outcome"], "unreachable");
+        assert_eq!(body["index"], "typed-index");
+    }
+
+    #[tokio::test]
+    async fn the_connectivity_test_falls_back_to_the_stored_token_for_a_masked_override() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = spawn(dir.path()).await;
+        let client = reqwest::Client::new();
+
+        let doc = r#"{"version":1,"pages":[],"export":{"hec":{"url":"http://127.0.0.1:1/collector","token":"stored-token","index":"metrics","events_index":"main"}}}"#;
+        client
+            .put(format!("{base}/api/dashboard"))
+            .body(doc)
+            .send()
+            .await
+            .unwrap();
+
+        // The dialog reseeds its token field with the masked value on open;
+        // testing without touching it must not send that placeholder as a
+        // literal token.
+        let override_body = r#"{"url":"http://127.0.0.1:1/collector","token":"…oken"}"#;
+        let body: serde_json::Value = client
+            .post(format!("{base}/api/export/test"))
+            .body(override_body)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(body["outcome"], "unreachable");
+        assert_eq!(
+            body["index"], "metrics",
+            "falls back to the stored index too"
+        );
     }
 
     #[tokio::test]

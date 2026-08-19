@@ -51,10 +51,26 @@ export async function fetchExportStatus(): Promise<ExportStatus | null> {
   }
 }
 
-/** Fires the connectivity test event. Never throws. */
-export async function testExportConnection(): Promise<TestResult> {
+/** An in-progress edit in the settings dialog, not yet saved. */
+export interface TestOverride {
+  url?: string
+  token?: string
+  index?: string
+}
+
+/**
+ * Fires the connectivity test event against `override_` — the dialog's
+ * current field values — so testing an edit never requires saving it first.
+ * A field left out falls back to the stored target on the server (same rule
+ * as a save: an empty or masked token keeps the stored one). Never throws.
+ */
+export async function testExportConnection(override_: TestOverride = {}): Promise<TestResult> {
   try {
-    const response = await fetch(TEST_URL, { method: 'POST' })
+    const response = await fetch(TEST_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(override_),
+    })
     if (!response.ok) return { outcome: 'misconfigured', index: null }
     return (await response.json()) as TestResult
   } catch {
