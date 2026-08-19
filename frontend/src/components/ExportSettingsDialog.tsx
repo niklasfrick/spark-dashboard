@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useExportStatus } from '@/hooks/useExportStatus'
 import {
   lastErrorCopy,
@@ -54,9 +54,12 @@ export function ExportSettingsDialog({
   readOnly,
   save,
 }: ExportSettingsDialogProps) {
-  // Form state, seeded from the document on mount. Base UI unmounts the
-  // popup while the dialog is closed, so each open re-seeds; an in-flight
-  // edit session keeps its own values because the state lives here.
+  // Form state, seeded from the document on mount — but this component stays
+  // mounted for the SPA's lifetime (only the popup unmounts), and it mounts
+  // at app boot while `document` is still null, so the mount seed is almost
+  // always the defaults. The effect below is the real seed: it re-reads the
+  // stored document on every open, so the dialog shows what is actually
+  // stored rather than stale first-render state.
   const [url, setUrl] = useState(document?.export?.url ?? '')
   const [token, setToken] = useState(document?.export?.token ?? '')
   const [index, setIndex] = useState<string>(document?.export?.index ?? DASHBOARD_DEFAULTS.hecIndex)
@@ -67,6 +70,22 @@ export function ExportSettingsDialog({
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<TestResult | null>(null)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle')
+
+  // Re-seed only on the closed→open transition: while the dialog is open,
+  // the operator's in-flight edits and this session's save/test results must
+  // not be clobbered by a document identity change (our own save does one).
+  const wasOpen = useRef(open)
+  useEffect(() => {
+    const opened = open && !wasOpen.current
+    wasOpen.current = open
+    if (!opened) return
+    setUrl(document?.export?.url ?? '')
+    setToken(document?.export?.token ?? '')
+    setIndex(document?.export?.index ?? DASHBOARD_DEFAULTS.hecIndex)
+    setEventsIndex(document?.export?.events_index ?? DASHBOARD_DEFAULTS.hecEventsIndex)
+    setTestResult(null)
+    setSaveState('idle')
+  }, [open, document])
 
   // Poll only while open (ADR 0001): 5 s in the dialog, 10 s for the header dot.
   const status = useExportStatus(5_000, open)
