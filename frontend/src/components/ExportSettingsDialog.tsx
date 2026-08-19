@@ -71,7 +71,11 @@ export function ExportSettingsDialog({
   // Poll only while open (ADR 0001): 5 s in the dialog, 10 s for the header dot.
   const status = useExportStatus(5_000, open)
   const light = statusLight(status)
-  const error = lastErrorCopy(status?.last_error ?? null, url || undefined)
+  // This line reports the *background exporter's* last error, which is
+  // always about the saved document's target — never the unsaved form
+  // fields. Naming the live `url` here would blame today's typing for
+  // yesterday's failure.
+  const error = lastErrorCopy(status?.last_error ?? null, document?.export?.url ?? undefined)
   const configured = document?.export !== undefined
   const urlEmpty = url.trim().length === 0
   const maskedToken = token.startsWith(HEC_TOKEN_MASK_PREFIX)
@@ -105,7 +109,13 @@ export function ExportSettingsDialog({
 
   const handleTest = async () => {
     setTesting(true)
-    const result = await testExportConnection()
+    // Test the dialog's current fields, not the last-saved document — an
+    // operator must be able to try a URL/token/index before committing it.
+    const result = await testExportConnection({
+      url: url.trim(),
+      token,
+      index: index.trim(),
+    })
     setTestResult(result)
     setTesting(false)
   }

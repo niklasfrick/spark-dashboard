@@ -152,6 +152,49 @@ describe('ExportSettingsDialog', () => {
     )
   })
 
+  it('names the saved url in the standing error line, not an unsaved edit', async () => {
+    serveExport({ ...exportingStatus, state: 'down', reachable: false, last_error: 'connection-failed' })
+    renderDialog()
+    const user = userEvent.setup()
+
+    // The background exporter's failure is about the *saved* document's url.
+    // Typing a different, unsaved url must not relabel that failure as if it
+    // were about the new one.
+    await user.clear(screen.getByLabelText(/HEC URL/i))
+    await user.type(screen.getByLabelText(/HEC URL/i), 'https://typed-but-unsaved-host/collector')
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(`Cannot reach ${documentWithExport.export?.url}`),
+      ).toBeInTheDocument(),
+    )
+    expect(screen.queryByText(/typed-but-unsaved-host/)).not.toBeInTheDocument()
+  })
+
+  it('tests the unsaved edit in the fields, not the last-saved document', async () => {
+    const fetchMock = serveExport(exportingStatus, { outcome: 'ok', index: 'typed-index' })
+    renderDialog()
+    const user = userEvent.setup()
+
+    await user.clear(screen.getByLabelText(/HEC URL/i))
+    await user.type(screen.getByLabelText(/HEC URL/i), 'https://typed-host:8088/services/collector')
+    await user.clear(screen.getByLabelText(/Metrics index/i))
+    await user.type(screen.getByLabelText(/Metrics index/i), 'typed-index')
+
+    await user.click(screen.getByRole('button', { name: 'Test connection' }))
+
+    await waitFor(() => {
+      const testCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/api/export/test'))
+      expect(testCall).toBeDefined()
+      const sentBody = JSON.parse(String(testCall?.[1]?.body))
+      expect(sentBody.url).toBe('https://typed-host:8088/services/collector')
+      expect(sentBody.index).toBe('typed-index')
+      // Untouched token field still holds the masked placeholder; it must be
+      // sent as-is, not resolved client-side.
+      expect(sentBody.token).toBe('…-abc')
+    })
+  })
+
   it('lights green while reachable, red while down, gray when disabled', async () => {
     const cases: Array<[Record<string, unknown>, string, string]> = [
       [exportingStatus, 'Exporting', 'bg-green-500'],
