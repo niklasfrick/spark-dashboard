@@ -26,3 +26,7 @@ export const TIME_WINDOW_SECONDS: Record<TimeWindow, number> = {
   '10m': 600,
   '15m': 900,
 }
+
+/** Every window a panel can cover, shortest first — the order they are offered
+ *  in. Derived from the table above so the two cannot drift apart. */
+export const TIME_WINDOWS = Object.keys(TIME_WINDOW_SECONDS) as TimeWindow[]

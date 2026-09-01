@@ -55,6 +55,19 @@ export interface GridEditing {
 }
 
 /**
+ * The per-panel affordances an open session adds to each frame.
+ *
+ * Separate from `GridEditing` on purpose: that object is the grid library's
+ * contract and is held stable for the life of the session, while this one
+ * changes every time the operator opens another panel's settings.
+ */
+export interface PanelChrome {
+  /** The panel whose settings are open, or null while none are. */
+  configuringId: string | null
+  onConfigure: (panelId: string) => void
+}
+
+/**
  * One dashboard page as a grid of panels.
  *
  * Fit-to-viewport is the defining property: the row height is the measured
@@ -67,7 +80,15 @@ export interface GridEditing {
  * every panel interaction — chart tooltips, log filters, engine tabs — working
  * the rest of the time.
  */
-export function GridPage({ page, editing }: { page: DashboardPage; editing?: GridEditing }) {
+export function GridPage({
+  page,
+  editing,
+  chrome,
+}: {
+  page: DashboardPage
+  editing?: GridEditing
+  chrome?: PanelChrome
+}) {
   const [containerRef, { width, height }] = useElementSize<HTMLDivElement>()
   const narrow = isNarrow(width)
   const cellHeight = height > 0 ? Math.floor(height / GRID_MAX_ROWS) : FALLBACK_CELL_HEIGHT
@@ -184,7 +205,12 @@ export function GridPage({ page, editing }: { page: DashboardPage; editing?: Gri
         >
           {page.panels.map((panel) => (
             <GridStackItem key={panel.id} id={panel.id} options={panel.geometry}>
-              <GridPanel panel={panel} editing={Boolean(editing)} />
+              <GridPanel
+                panel={panel}
+                editing={Boolean(editing)}
+                configuring={chrome?.configuringId === panel.id}
+                onConfigure={chrome && (() => chrome.onConfigure(panel.id))}
+              />
             </GridStackItem>
           ))}
         </GridStack>
