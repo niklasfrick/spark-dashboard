@@ -5,11 +5,11 @@ const STORAGE_PREFIX = 'spark-dashboard:slo'
 
 /**
  * Build the localStorage key for an engine+model pair. Returns `null` when
- * no model is loaded — there is nothing to scope per-model settings to in
- * that case, so the hook stays read-only with the defaults.
+ * there is no engine or no model loaded — there is nothing to scope per-model
+ * settings to in that case, so the hook stays read-only with the defaults.
  */
-function storageKey(engineKey: string, modelName: string | null): string | null {
-  if (!modelName) return null
+function storageKey(engineKey: string | null, modelName: string | null): string | null {
+  if (!engineKey || !modelName) return null
   return `${STORAGE_PREFIX}:${engineKey}:${modelName}`
 }
 
@@ -66,10 +66,14 @@ function readFromStorage(key: string | null): SloThresholds | null {
 /**
  * Per-model SLO threshold state. Mirrors the localStorage pattern used by
  * the engine rotation, latency mode, and active tab settings (see
- * `EngineSection.tsx`). When the engine has no loaded model, returns the
- * defaults and a no-op setter — nothing to persist.
+ * `EngineSection.tsx`). When there is no engine, or it has no loaded model,
+ * returns the defaults and a no-op setter — nothing to persist.
+ *
+ * A null engine key is how a panel calls this before it knows whether its
+ * binding resolved: the hook has to run above that early return, so "no engine
+ * yet" needs to be sayable rather than stood in for.
  */
-export function useSloSettings(engineKey: string, modelName: string | null): {
+export function useSloSettings(engineKey: string | null, modelName: string | null): {
   thresholds: SloThresholds
   setThresholds: (next: SloThresholds) => void
   reset: () => void

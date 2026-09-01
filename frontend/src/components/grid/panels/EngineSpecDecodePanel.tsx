@@ -24,12 +24,16 @@ export function EngineSpecDecodePanel({ panel }: PanelContentProps) {
   // sits at zero on an engine that has not drafted anything yet. Gating on a
   // drafted token keeps the panel from showing an all-dashes section that
   // looks like a fault.
+  //
+  // The engine is named on a multi-engine host for the same reason its data
+  // would be: with two engines on a page, "this engine" does not say which.
   if (draftTokens === null || draftTokens === 0) {
+    const subject = engineLabel(resolution) ?? 'This engine'
     return (
       <PanelNotice>
         {draftTokens === null
-          ? 'This engine is not using speculative decoding.'
-          : 'No tokens drafted yet.'}
+          ? `${subject} is not using speculative decoding.`
+          : `${subject} has drafted no tokens yet.`}
       </PanelNotice>
     )
   }

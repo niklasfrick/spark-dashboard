@@ -4,7 +4,9 @@ import {
   formatGiB,
   formatCompactTokens,
   formatAcceptanceLength,
+  formatEndpoint,
   formatGpuIndexes,
+  engineDescription,
 } from '../lib/format'
 
 const GIB = 1_073_741_824
@@ -87,5 +89,35 @@ describe('formatGpuIndexes', () => {
 
   it('renders an empty string when no indexes are known', () => {
     expect(formatGpuIndexes([])).toBe('')
+  })
+})
+
+describe('formatEndpoint', () => {
+  it('keeps the host and port an operator configured', () => {
+    expect(formatEndpoint('http://localhost:8000')).toBe('localhost:8000')
+    expect(formatEndpoint('https://gpu-node-2.internal:8443/v1')).toBe('gpu-node-2.internal:8443')
+  })
+
+  it('keeps a default port that the URL leaves implicit', () => {
+    // Two engines can differ only by scheme, so dropping the host would be
+    // worse than showing no port.
+    expect(formatEndpoint('http://localhost')).toBe('localhost')
+  })
+
+  it('falls back to the endpoint as stored when it is not a URL', () => {
+    // The operator has to be able to match the label against their config,
+    // whatever shape the endpoint came in.
+    expect(formatEndpoint('localhost:8000')).toBe('localhost:8000')
+    expect(formatEndpoint('')).toBe('')
+  })
+})
+
+describe('engineDescription', () => {
+  it('names the provider and the instance', () => {
+    // Both halves are needed: a host can run several engines of one provider,
+    // which is exactly when a panel has to say which one it shows.
+    expect(engineDescription({ engine_type: 'Vllm', endpoint: 'http://localhost:8001' })).toBe(
+      'vLLM localhost:8001',
+    )
   })
 })

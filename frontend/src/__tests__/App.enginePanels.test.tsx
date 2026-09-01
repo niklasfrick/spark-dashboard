@@ -267,6 +267,39 @@ describe('the engine panels on a grid page', () => {
     expect(screen.queryByText('This panel is not available yet.')).not.toBeInTheDocument()
   })
 
+  it('names the engine when it says one is not speculating', async () => {
+    // On a page holding two engines, "this engine" would not say which.
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        {
+          id: 'alpha-spec',
+          type: 'engine-spec-decode',
+          title: 'Alpha speculation',
+          binding: { kind: 'engine', endpoint: ALPHA },
+          geometry: { x: 0, y: 0, w: 6, h: 4 },
+        },
+        {
+          id: 'beta-spec',
+          type: 'engine-spec-decode',
+          title: 'Beta speculation',
+          binding: { kind: 'engine', endpoint: BETA },
+          geometry: { x: 6, y: 0, w: 6, h: 4 },
+        },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, [makeEngine(ALPHA, {}, SPEC_DECODE), makeEngine(BETA)]))
+
+    expect(within(region('Alpha speculation')).getByText('75')).toBeInTheDocument()
+    expect(
+      within(region('Beta speculation')).getByText(
+        'vLLM localhost:8001 is not using speculative decoding.',
+      ),
+    ).toBeInTheDocument()
+  })
+
   it('shows speculative decoding once the engine has drafted tokens', async () => {
     const fetchMock = serveConfiguration({ document: storedDocument(enginePanels()) })
 

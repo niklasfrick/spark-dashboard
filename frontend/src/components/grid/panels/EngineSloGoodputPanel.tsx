@@ -31,7 +31,7 @@ export function EngineSloGoodputPanel({ panel }: PanelContentProps) {
     setThresholds,
     reset,
     isCustomized,
-  } = useSloSettings(engine ? engineKey(engine) : '', engine?.model?.name ?? null)
+  } = useSloSettings(engine && engineKey(engine), engine?.model?.name ?? null)
 
   if (resolution.status !== 'resolved') return <EnginePanelNotice resolution={resolution} />
 
