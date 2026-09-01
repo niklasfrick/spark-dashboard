@@ -14,22 +14,9 @@ import {
 import { type ChartDataPoint, type Trend, computeTrend } from '@/lib/engineStats'
 import { AnimatedCounter } from './AnimatedCounter'
 import { type LatencyMode, latencyModeLabel, pickLatencyValue } from '@/lib/latencyMode'
-import { combinedGoodput, recomputeGoodputPct } from '@/lib/slo'
+import { combinedGoodput, formatSloThreshold, recomputeGoodputPct } from '@/lib/slo'
 import { useSloSettings } from '@/hooks/useSloSettings'
 import { SloSettingsControl } from './SloSettingsControl'
-
-/** Render an E2E threshold in seconds when it's a clean multiple of 1000ms,
- *  otherwise fall through to milliseconds. Keeps the default "5s" label
- *  intact while supporting user-tuned values like 2500ms ("2.5s") or 800ms.
- */
-function formatE2eLabel(e2eMs: number): string {
-  if (e2eMs >= 1000) {
-    const seconds = e2eMs / 1000
-    const formatted = Number.isInteger(seconds) ? seconds.toString() : seconds.toFixed(1)
-    return `${formatted}s`
-  }
-  return `${e2eMs}ms`
-}
 
 function decodeTokenSeries(chartData: {
   tps: ChartDataPoint[]
@@ -279,7 +266,7 @@ export function EngineCard({
                 <GoodputTile label={`TTFT ≤ ${slo.ttftMs}ms`} pct={ttftGoodput} />
                 <GoodputTile label={`ITL ≤ ${slo.itlMs}ms`} pct={itlGoodput} />
                 <GoodputTile label={`TPOT ≤ ${slo.tpotMs}ms`} pct={tpotGoodput} />
-                <GoodputTile label={`E2E ≤ ${formatE2eLabel(slo.e2eMs)}`} pct={e2eGoodput} />
+                <GoodputTile label={`E2E ≤ ${formatSloThreshold(slo.e2eMs)}`} pct={e2eGoodput} />
               </div>
             </div>
 

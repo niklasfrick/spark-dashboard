@@ -16,8 +16,11 @@ import { isKnownPanelType, type PanelType } from '@/lib/dashboard/panels'
 import type { DashboardPanel } from '@/lib/dashboard/schema'
 import { CpuUtilizationPanel } from './panels/CpuUtilizationPanel'
 import { DiskIoPanel } from './panels/DiskIoPanel'
+import { EngineCachePanel } from './panels/EngineCachePanel'
 import { EngineLatencyPanel } from './panels/EngineLatencyPanel'
 import { EngineRequestsPanel } from './panels/EngineRequestsPanel'
+import { EngineSloGoodputPanel } from './panels/EngineSloGoodputPanel'
+import { EngineSpecDecodePanel } from './panels/EngineSpecDecodePanel'
 import {
   EngineDecodeThroughputPanel,
   EnginePrefillThroughputPanel,
@@ -48,6 +51,9 @@ const PANEL_CONTENT: Partial<Record<PanelType, ComponentType<PanelContentProps>>
   'engine-decode-throughput': EngineDecodeThroughputPanel,
   'engine-latency': EngineLatencyPanel,
   'engine-requests': EngineRequestsPanel,
+  'engine-slo-goodput': EngineSloGoodputPanel,
+  'engine-cache': EngineCachePanel,
+  'engine-spec-decode': EngineSpecDecodePanel,
 }
 
 /**

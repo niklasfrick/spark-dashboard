@@ -25,6 +25,17 @@ export interface SloThresholds {
 }
 
 /**
+ * A threshold as it reads on a goodput tile's label. Seconds once the value is
+ * a clean multiple of one, milliseconds below that — so the default "5s" stays
+ * "5s" while a tuned 2500ms reads "2.5s" and an 800ms one stays in ms.
+ */
+export function formatSloThreshold(ms: number): string {
+  if (ms < 1000) return `${ms}ms`
+  const seconds = ms / 1000
+  return `${Number.isInteger(seconds) ? seconds : seconds.toFixed(1)}s`
+}
+
+/**
  * Conservative combined goodput approximation: the worst-performing of the
  * three independently-measured goodput fractions. The true joint
  * "all-three-met" rate would require correlated per-request data, which

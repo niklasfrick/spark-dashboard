@@ -8,7 +8,7 @@ import { useMetricsStore } from '@/hooks/useMetricsStore'
 import { usePageSelection } from '@/hooks/usePageSelection'
 import { FOLLOW } from '@/lib/dashboard/bindings'
 import { DEFAULT_TIME_WINDOW, type DashboardPanel } from '@/lib/dashboard/schema'
-import type { GpuMetrics, MetricsSnapshot } from '@/types/metrics'
+import type { EngineMetrics, EngineSnapshot, GpuMetrics, MetricsSnapshot } from '@/types/metrics'
 
 // The page-level selection (#81): what every `follow` panel on a page defers
 // to. The panels are the real ones, rendered through the real frame; only the
@@ -20,6 +20,9 @@ vi.mock('@/components/charts/TimeSeriesChart', () => ({
     <div data-testid="chart" data-values={props.data?.map((p) => p.value).join(',')} />
   ),
 }))
+
+const ALPHA = 'http://localhost:8000'
+const BETA = 'http://localhost:8001'
 
 function makeGpu(index: number, utilization: number): GpuMetrics {
   return {
@@ -35,6 +38,26 @@ function makeGpu(index: number, utilization: number): GpuMetrics {
     clock_sm_mhz: null,
     clock_memory_mhz: null,
     fan_speed_percent: null,
+  }
+}
+
+function makeEngine(endpoint: string, tokensPerSec: number): EngineSnapshot {
+  return {
+    engine_type: 'Vllm',
+    endpoint,
+    status: { type: 'Running' },
+    model: {
+      name: 'Qwen/Qwen3-8B',
+      parameter_size: null,
+      quantization: null,
+      precision: null,
+      tensor_type: null,
+      model_type: null,
+      pipeline_tag: null,
+    },
+    metrics: { tokens_per_sec: tokensPerSec } as EngineMetrics,
+    recent_requests: [],
+    deployment_mode: 'Native',
   }
 }
 
@@ -57,7 +80,7 @@ function snapshot(): MetricsSnapshot {
     },
     disk: { name: 'disk', read_bytes_per_sec: 1, write_bytes_per_sec: 2 },
     network: { name: 'net', rx_bytes_per_sec: 3, tx_bytes_per_sec: 4 },
-    engines: [],
+    engines: [makeEngine(ALPHA, 120), makeEngine(BETA, 640)],
     gpu_events: [],
   }
 }
@@ -72,12 +95,21 @@ function panel(id: string, type: string): DashboardPanel {
   }
 }
 
-/** Stands in for the selector UI that ships with #84/#85. */
+/** Stand-ins for the selector UI that ships with #84/#85. */
 function SelectGpu({ index }: { index: number | null }) {
   const { selectGpu } = usePageSelection()
   return (
     <button type="button" onClick={() => selectGpu(index)}>
       Select GPU {index ?? 'default'}
+    </button>
+  )
+}
+
+function SelectEngine({ endpoint }: { endpoint: string }) {
+  const { selectEngine } = usePageSelection()
+  return (
+    <button type="button" onClick={() => selectEngine(endpoint)}>
+      Select {endpoint}
     </button>
   )
 }
@@ -97,10 +129,20 @@ function Page() {
       <PageSelectionProvider>
         <SelectGpu index={1} />
         <SelectGpu index={null} />
+        <SelectEngine endpoint={BETA} />
         <GridPanel panel={panel('util', 'gpu-utilization')} />
         <GridPanel panel={panel('temp', 'gpu-temperature')} />
         <GridPanel
           panel={{ ...panel('pinned', 'gpu-utilization'), title: 'Pinned to GPU 0', binding: { kind: 'gpu', index: 0 } }}
+        />
+        <GridPanel panel={panel('decode', 'engine-decode-throughput')} />
+        <GridPanel panel={panel('requests', 'engine-requests')} />
+        <GridPanel
+          panel={{
+            ...panel('pinned-engine', 'engine-decode-throughput'),
+            title: 'Pinned to Alpha',
+            binding: { kind: 'engine', endpoint: ALPHA },
+          }}
         />
       </PageSelectionProvider>
     </MetricsStoreProvider>
@@ -137,5 +179,23 @@ describe('the page-level GPU selection', () => {
 
     click('Select GPU default')
     expect(within(region('GPU Utilization')).getByText('11')).toBeInTheDocument()
+  })
+})
+
+describe('the page-level engine selection', () => {
+  it('starts on the running engine and moves every following panel together', () => {
+    render(<Page />)
+
+    // Nothing chosen: the page follows the first running engine.
+    expect(within(region('Decode Throughput')).getByText('120.0')).toBeInTheDocument()
+    expect(within(region('Pinned to Alpha')).getByText('120.0')).toBeInTheDocument()
+
+    click(`Select ${BETA}`)
+
+    // Both following panels moved to the other engine…
+    expect(within(region('Decode Throughput')).getByText('640.0')).toBeInTheDocument()
+    expect(within(region('Requests')).getByText('vLLM localhost:8001')).toBeInTheDocument()
+    // …and the pinned one stayed on the engine it names.
+    expect(within(region('Pinned to Alpha')).getByText('120.0')).toBeInTheDocument()
   })
 })

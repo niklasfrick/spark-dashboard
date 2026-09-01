@@ -175,14 +175,29 @@ function region(name: string): HTMLElement {
   return screen.getByRole('region', { name })
 }
 
-/** The four metric panels this page shows, tiled inside the 12×8 grid. */
+/** The engine block's six tiles as panels, tiled inside the 12×8 grid. Cache
+ *  and speculative decoding are one tile on the old card and two panels here,
+ *  because a panel is one metric. */
 function enginePanels(): unknown[] {
   return [
     { id: 'prefill', type: 'engine-prefill-throughput', geometry: { x: 0, y: 0, w: 3, h: 4 } },
     { id: 'decode', type: 'engine-decode-throughput', geometry: { x: 3, y: 0, w: 3, h: 4 } },
     { id: 'latency', type: 'engine-latency', geometry: { x: 6, y: 0, w: 3, h: 4 } },
     { id: 'requests', type: 'engine-requests', geometry: { x: 9, y: 0, w: 3, h: 4 } },
+    { id: 'goodput', type: 'engine-slo-goodput', geometry: { x: 0, y: 4, w: 4, h: 4 } },
+    { id: 'cache', type: 'engine-cache', geometry: { x: 4, y: 4, w: 4, h: 4 } },
+    { id: 'spec', type: 'engine-spec-decode', geometry: { x: 8, y: 4, w: 4, h: 4 } },
   ]
+}
+
+/** Speculative decoding, as an engine that has it enabled reports it. */
+const SPEC_DECODE: Partial<EngineMetrics> = {
+  spec_decode_draft_tokens_total: 400_000,
+  spec_decode_accepted_tokens_total: 300_000,
+  spec_decode_drafts_total: 100_000,
+  spec_decode_acceptance_rate: 75,
+  spec_decode_acceptance_rate_live: 71,
+  spec_decode_mean_acceptance_length: 3,
 }
 
 beforeEach(() => {
@@ -224,8 +239,46 @@ describe('the engine panels on a grid page', () => {
     // Swapped and preempted stay hidden while they are zero.
     expect(within(requests).queryByText('Swapped')).not.toBeInTheDocument()
 
+    // Goodput falls back to the backend's percentages while the engine ships
+    // no histogram buckets, and the combined figure is the worst of the three.
+    const goodput = region('SLO Goodput')
+    expect(within(goodput).getByText('Combined')).toBeInTheDocument()
+    // Combined is the worst of the three dimensions, so it reads as E2E's own
+    // figure — the same number twice, deliberately.
+    expect(within(goodput).getAllByText('97.0')).toHaveLength(2)
+    expect(within(goodput).getByText('99.0')).toBeInTheDocument()
+    expect(within(goodput).getByText('TTFT ≤ 500ms')).toBeInTheDocument()
+    expect(within(goodput).getByText('E2E ≤ 5s')).toBeInTheDocument()
+
+    const cache = region('Cache')
+    expect(within(cache).getByText('42')).toBeInTheDocument()
+    expect(within(cache).getByText('55')).toBeInTheDocument()
+    expect(within(cache).getByText('2M')).toBeInTheDocument()
+
+    // This engine is not speculating, so the panel says so rather than
+    // rendering a section of dashes.
+    expect(
+      within(region('Speculative Decoding')).getByText(
+        'This engine is not using speculative decoding.',
+      ),
+    ).toBeInTheDocument()
+
     // Every panel on the page is implemented — no slot-keeping placeholders.
     expect(screen.queryByText('This panel is not available yet.')).not.toBeInTheDocument()
+  })
+
+  it('shows speculative decoding once the engine has drafted tokens', async () => {
+    const fetchMock = serveConfiguration({ document: storedDocument(enginePanels()) })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, [makeEngine(ALPHA, {}, SPEC_DECODE)]))
+
+    const spec = region('Speculative Decoding')
+    expect(within(spec).getByText('75')).toBeInTheDocument()
+    expect(within(spec).getByText('71% live')).toBeInTheDocument()
+    expect(within(spec).getByText('300K')).toBeInTheDocument()
+    expect(within(spec).getByText('400K')).toBeInTheDocument()
   })
 
   it('charts each panel’s own series over the panel’s window', async () => {
@@ -243,6 +296,10 @@ describe('the engine panels on a grid page', () => {
     expect(within(region('Latency')).getByTestId('chart-series-TTFT')).toHaveAttribute(
       'data-values',
       '210,250',
+    )
+    expect(within(region('Cache')).getByTestId('chart-series-KV Cache')).toHaveAttribute(
+      'data-values',
+      '42,42',
     )
   })
 
@@ -324,7 +381,7 @@ describe('the engine panels on a grid page', () => {
 
     // Every panel keeps its slot and says why it is empty; nothing breaks the
     // page, which is what keeps the dashboard useful for hardware alone.
-    expect(screen.getAllByText('No inference engine running.')).toHaveLength(4)
+    expect(screen.getAllByText('No inference engine running.')).toHaveLength(7)
   })
 
   it('tells an engine that is still starting apart from one that is not running', async () => {
@@ -370,7 +427,7 @@ describe('the engine panels on a grid page', () => {
     render(<App />)
     await configurationSettles(fetchMock)
 
-    expect(screen.getAllByText('Waiting for metrics')).toHaveLength(4)
+    expect(screen.getAllByText('Waiting for metrics')).toHaveLength(7)
 
     // The first snapshot must not trip the changed-hook-count trap.
     receive(makeSnapshot(1000, [makeEngine(ALPHA)]))
