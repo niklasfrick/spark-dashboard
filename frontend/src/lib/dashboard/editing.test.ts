@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { FOLLOW } from './bindings'
-import { applyLayoutChanges, judgeDrop, requestedCells, withPagePanels } from './editing'
+import {
+  applyLayoutChanges,
+  judgeDrop,
+  refusedPanelTitle,
+  requestedCells,
+  withPagePanels,
+} from './editing'
 import { GRID_COLUMNS, GRID_MAX_ROWS, type PanelGeometry } from './grid'
 import { DEFAULT_TIME_WINDOW, type DashboardDocument, type DashboardPanel } from './schema'
 
@@ -82,54 +88,48 @@ describe('putting a page’s panels back into the document', () => {
   })
 })
 
-describe('what a drag or resize in progress is asking for', () => {
+describe('what a finished drag or resize was asking for', () => {
   const cell = { width: 50, height: 30 }
-  const grid = { left: 100, top: 200, width: 600, height: 240 }
+  const from = at(3, 2, 4, 2)
 
-  it('reads the element’s pixels as whole cells', () => {
-    const requested = requestedCells(
-      { left: 100 + 3 * 50, top: 200 + 2 * 30, width: 4 * 50, height: 2 * 30 },
-      grid,
-      cell,
-    )
+  it('moves the panel by the cells the pointer crossed', () => {
+    expect(requestedCells('move', from, { dx: 2 * 50, dy: 3 * 30 }, cell)).toEqual(at(5, 5, 4, 2))
+  })
 
-    expect(requested).toEqual(at(3, 2, 4, 2))
+  it('grows the panel by the cells the pointer crossed', () => {
+    expect(requestedCells('resize', from, { dx: 1 * 50, dy: 2 * 30 }, cell)).toEqual(at(3, 2, 5, 4))
   })
 
   it('rounds to the nearest cell, the way a dropped panel snaps', () => {
-    const requested = requestedCells(
-      { left: 100 + 3 * 50 + 12, top: 200 + 2 * 30 - 11, width: 4 * 50, height: 2 * 30 },
-      grid,
-      cell,
+    expect(requestedCells('move', from, { dx: 2 * 50 + 12, dy: 3 * 30 - 11 }, cell)).toEqual(
+      at(5, 5, 4, 2),
     )
-
-    expect(requested).toEqual(at(3, 2, 4, 2))
+    expect(requestedCells('move', from, { dx: 14, dy: -9 }, cell)).toEqual(from)
   })
 
   it('keeps a request that runs past the bottom of the grid, because that is the interesting one', () => {
     // Clamping here would hide exactly what the row cap exists to surface.
-    const requested = requestedCells(
-      { left: 100, top: 200 + 7 * 30, width: 2 * 50, height: 4 * 30 },
-      grid,
-      cell,
-    )
+    const moved = requestedCells('move', from, { dx: 0, dy: 5 * 30 }, cell)!
+    const grown = requestedCells('resize', from, { dx: 0, dy: 5 * 30 }, cell)!
 
-    expect(requested).toEqual(at(0, 7, 2, 4))
-    expect(requested!.y + requested!.h).toBeGreaterThan(GRID_MAX_ROWS)
+    expect(moved.y + moved.h).toBeGreaterThan(GRID_MAX_ROWS)
+    expect(grown.y + grown.h).toBeGreaterThan(GRID_MAX_ROWS)
   })
 
   it('never asks for a negative cell or an empty panel', () => {
-    const requested = requestedCells({ left: 0, top: 0, width: 4, height: 3 }, grid, cell)
-
-    expect(requested).toEqual(at(0, 0, 1, 1))
+    expect(requestedCells('move', from, { dx: -20 * 50, dy: -20 * 30 }, cell)).toEqual(
+      at(0, 0, 4, 2),
+    )
+    expect(requestedCells('resize', from, { dx: -20 * 50, dy: -20 * 30 }, cell)).toEqual(
+      at(3, 2, 1, 1),
+    )
   })
 
   it('knows nothing when the grid has not been measured', () => {
     // jsdom measures every box as 0×0, and so does the first frame before
     // layout. Guessing there would accuse the grid of refusing a drop that
     // never happened.
-    expect(requestedCells({ left: 0, top: 0, width: 0, height: 0 }, grid, { width: 0, height: 0 }))
-      .toBeNull()
+    expect(requestedCells('move', from, { dx: 0, dy: 0 }, { width: 0, height: 0 })).toBeNull()
   })
 })
 
@@ -172,5 +172,21 @@ describe('judging what the grid did with a drop', () => {
 
   it('says nothing when there was no measurable request', () => {
     expect(judgeDrop(from, null, from)).toBe('granted')
+  })
+})
+
+describe('naming the panel a refusal is about', () => {
+  it('uses the title the operator reads, renamed or not', () => {
+    const titled = { ...panel('a', at(0, 0, 6, 4)), title: 'RAM, big' }
+
+    expect(refusedPanelTitle([titled], 'a')).toBe('RAM, big')
+    expect(refusedPanelTitle([panel('a', at(0, 0, 6, 4))], 'a')).toBe('Memory')
+  })
+
+  it('has nothing to say when nothing stands refused', () => {
+    const panels = [panel('a', at(0, 0, 6, 4))]
+
+    expect(refusedPanelTitle(panels, null)).toBeNull()
+    expect(refusedPanelTitle(panels, 'a-panel-since-removed')).toBeNull()
   })
 })

@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { useEffect } from 'react'
 import { GridPanel } from '@/components/grid/GridPanel'
 import { LogStreamProvider } from '@/hooks/LogStreamProvider'
+import { LiveMotionContext } from '@/hooks/useLiveMotion'
 import { MetricsStoreProvider } from '@/hooks/MetricsStoreProvider'
 import { PageSelectionProvider } from '@/hooks/PageSelectionProvider'
 import { useMetricsStore } from '@/hooks/useMetricsStore'
@@ -112,20 +113,25 @@ function SelectEngine({ endpoint }: { endpoint: string }) {
 function Page({
   engines,
   panels,
+  live = true,
 }: {
   engines: EngineSnapshot[]
   panels: DashboardPanel[]
+  /** False stands in for a page being edited, which holds every panel still. */
+  live?: boolean
 }) {
   return (
     <MetricsStoreProvider>
       <LogStreamProvider>
         <Ingest engines={engines} />
-        <PageSelectionProvider>
-          <SelectEngine endpoint={BETA} />
-          {panels.map((panel) => (
-            <GridPanel key={panel.id} panel={panel} />
-          ))}
-        </PageSelectionProvider>
+        <LiveMotionContext.Provider value={live}>
+          <PageSelectionProvider>
+            <SelectEngine endpoint={BETA} />
+            {panels.map((panel) => (
+              <GridPanel key={panel.id} panel={panel} />
+            ))}
+          </PageSelectionProvider>
+        </LiveMotionContext.Provider>
       </LogStreamProvider>
     </MetricsStoreProvider>
   )
@@ -177,6 +183,33 @@ describe('the log panel', () => {
     })
 
     expect(within(region('Engine Logs')).getByText('INFO: alpha is serving')).toBeInTheDocument()
+  })
+
+  it('holds still while the page is being edited, then catches up', () => {
+    // The console scrolling under a panel the operator is dragging is the same
+    // problem as a chart redrawing under it. The socket stays open throughout —
+    // dropping it would lose the output produced while the page was rearranged,
+    // which is the output most worth having.
+    const props = { engines: [makeEngine(ALPHA)], panels: [logPanel('logs', 'Engine Logs')] }
+    const { rerender } = render(<Page {...props} />)
+
+    const socket = socketFor(ALPHA)
+    act(() => {
+      socket.connect()
+      socket.receive('INFO: before the edit')
+    })
+
+    rerender(<Page {...props} live={false} />)
+    act(() => socket.receive('INFO: during the edit'))
+
+    const panel = () => within(region('Engine Logs'))
+    expect(panel().getByText('INFO: before the edit')).toBeInTheDocument()
+    expect(panel().queryByText('INFO: during the edit')).not.toBeInTheDocument()
+    expect(sockets()).toHaveLength(1)
+
+    rerender(<Page {...props} />)
+
+    expect(panel().getByText('INFO: during the edit')).toBeInTheDocument()
   })
 
   it('opens one connection for two panels bound to the same engine', () => {

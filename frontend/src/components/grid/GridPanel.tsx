@@ -9,9 +9,10 @@ import { renderPanelContent } from './panelRegistry'
  * page or silently vanish, because the layout around it is something the
  * operator authored.
  *
- * In edit mode the frame is the handle: it says so, and its contents stop
- * taking the pointer, so a drag that starts on a chart moves the panel instead
- * of chasing a tooltip.
+ * In edit mode the frame says it is draggable, and its contents stop taking the
+ * pointer — the drag would start either way, since the grid listens on the frame
+ * and the event bubbles, but a chart that pops a tooltip under a panel in flight
+ * is noise the operator did not ask for.
  */
 export function GridPanel({
   panel,

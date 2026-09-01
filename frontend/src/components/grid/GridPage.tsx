@@ -9,20 +9,16 @@ import {
 } from 'gridstack/dist/react'
 import { PageSelectionProvider } from '@/hooks/PageSelectionProvider'
 import { useElementSize } from '@/hooks/useElementSize'
-import { judgeDrop, requestedCells, type LayoutChange } from '@/lib/dashboard/editing'
+import {
+  judgeDrop,
+  requestedCells,
+  type Gesture,
+  type LayoutChange,
+} from '@/lib/dashboard/editing'
 import { readGeometry, GRID_COLUMNS, GRID_MAX_ROWS, type PanelGeometry } from '@/lib/dashboard/grid'
 import type { DashboardPage } from '@/lib/dashboard/schema'
+import { isNarrow, SINGLE_COLUMN_BREAKPOINT } from './breakpoint'
 import { GridPanel } from './GridPanel'
-
-/**
- * Container width in px at or below which the grid collapses to one column.
- * The collapse is the engine's own responsive path, driven by the grid
- * element's measured size (`breakpointForWindow` defaults to false): gridstack
- * caches the authored 12-column layout before collapsing and restores it
- * verbatim on the way back, which the #68 spike confirmed is lossless. Never
- * persist what the collapsed grid looks like.
- */
-export const SINGLE_COLUMN_BREAKPOINT = 640
 
 /**
  * Row height until the container has been measured. jsdom never measures, so
@@ -30,6 +26,22 @@ export const SINGLE_COLUMN_BREAKPOINT = 640
  * because fit-to-viewport replaces it on the first ResizeObserver tick.
  */
 const FALLBACK_CELL_HEIGHT = 80
+
+/**
+ * Where the pointer was when the grid raised a gesture event.
+ *
+ * The library hands its own synthetic event to the callback, carrying the
+ * pointer coordinates copied off the mouse event underneath. Null for anything
+ * without them, which is what keeps a missing coordinate from reading as a drag
+ * back to the top-left corner.
+ */
+function pointerAt(event: Event): { x: number; y: number } | null {
+  const { clientX, clientY } = event as MouseEvent
+
+  return typeof clientX === 'number' && typeof clientY === 'number'
+    ? { x: clientX, y: clientY }
+    : null
+}
 
 /** What an edit session wants to hear from the grid. Absent means read-only
  *  viewing, which is what the dashboard is nearly all of the time. */
@@ -57,8 +69,12 @@ export interface GridEditing {
  */
 export function GridPage({ page, editing }: { page: DashboardPage; editing?: GridEditing }) {
   const [containerRef, { width, height }] = useElementSize<HTMLDivElement>()
-  const narrow = width > 0 && width <= SINGLE_COLUMN_BREAKPOINT
+  const narrow = isNarrow(width)
   const cellHeight = height > 0 ? Math.floor(height / GRID_MAX_ROWS) : FALLBACK_CELL_HEIGHT
+  // A session survives the window narrowing, but nothing may be rearranged
+  // while it does: the collapsed column is derived from the layout being
+  // edited, so a drag there would author cells in a grid one column wide.
+  const draggable = Boolean(editing) && !narrow
 
   const options = useMemo(
     (): GridStackOptions => ({
@@ -73,60 +89,68 @@ export function GridPage({ page, editing }: { page: DashboardPage; editing?: Gri
       // and the single-column stack legitimately needs more rows than the cap.
       // Zero, not undefined — `updateOptions` ignores an absent maxRow, so
       // leaving edit mode has to say the cap is gone in as many words.
-      maxRow: editing && !narrow ? GRID_MAX_ROWS : 0,
+      maxRow: draggable ? GRID_MAX_ROWS : 0,
       cellHeight,
       margin: 3,
       // Authored gaps are authored. Without floating, the engine compacts
       // everything upward on load and quietly rewrites the operator's layout.
       float: true,
-      staticGrid: !editing,
+      staticGrid: !draggable,
     }),
-    [cellHeight, editing, narrow],
+    [cellHeight, draggable],
   )
 
-  // The drag or resize under way: where the panel started, and the last thing
-  // the operator asked for before the engine decided whether to grant it.
-  const gesture = useRef<{ before: PanelGeometry; requested: PanelGeometry | null } | null>(null)
-
-  const trackGesture = useCallback((_event: Event, element: GridItemHTMLElement) => {
-    const grid = element.gridstackNode?.grid
-    if (!gesture.current || !grid?.el) return
-    gesture.current.requested = requestedCells(
-      element.getBoundingClientRect(),
-      grid.el.getBoundingClientRect(),
-      { width: grid.cellWidth(), height: grid.getCellHeight(true) },
-    )
-  }, [])
+  // The gesture under way: what it is doing, where the panel started, and where
+  // the pointer was when it began.
+  const gesture = useRef<{
+    kind: Gesture
+    before: PanelGeometry
+    from: { x: number; y: number }
+  } | null>(null)
 
   const beginGesture = useCallback(
-    (event: Event, element: GridItemHTMLElement) => {
-      if (!element.gridstackNode) return
-      gesture.current = { before: readGeometry(element.gridstackNode), requested: null }
+    (kind: Gesture) => (event: Event, element: GridItemHTMLElement) => {
+      const node = element.gridstackNode
+      const from = pointerAt(event)
+      gesture.current = node && from ? { kind, before: readGeometry(node), from } : null
       editing?.onGestureStart()
-      trackGesture(event, element)
     },
-    [editing, trackGesture],
+    [editing],
   )
 
   const endGesture = useCallback(
-    (_event: Event, element: GridItemHTMLElement) => {
+    (event: Event, element: GridItemHTMLElement) => {
       const attempt = gesture.current
       gesture.current = null
 
       const node = element.gridstackNode
-      if (!attempt || !node || node.id === undefined) return
-      if (judgeDrop(attempt.before, attempt.requested, readGeometry(node)) === 'out-of-room') {
+      const to = pointerAt(event)
+      const grid = node?.grid
+      if (!attempt || !to || !grid || node.id === undefined) return
+
+      const requested = requestedCells(
+        attempt.kind,
+        attempt.before,
+        { dx: to.x - attempt.from.x, dy: to.y - attempt.from.y },
+        { width: grid.cellWidth(), height: grid.getCellHeight(true) },
+      )
+
+      if (judgeDrop(attempt.before, requested, readGeometry(node)) === 'out-of-room') {
         editing?.onOutOfRoom(String(node.id))
       }
     },
     [editing],
   )
 
+  const beginMove = useMemo(() => beginGesture('move'), [beginGesture])
+  const beginResize = useMemo(() => beginGesture('resize'), [beginGesture])
+
   const handleChange = useCallback(
     (_event: Event, nodes: GridStackNode[]) => {
-      // A collapsed grid reports one-column coordinates. They are derived, they
-      // are not what the operator authored, and recording them would let a save
-      // overwrite a desktop layout with a phone's.
+      // Belt and braces with the static grid above: a collapsed grid reports
+      // one-column coordinates, which are derived rather than authored, and
+      // recording them would let a save overwrite a desktop layout with a
+      // phone's.
       if (narrow) return
       editing?.onLayoutChange(
         nodes
@@ -152,13 +176,11 @@ export function GridPage({ page, editing }: { page: DashboardPage; editing?: Gri
       <PageSelectionProvider>
         <GridStack
           options={options}
-          onChange={editing ? handleChange : undefined}
-          onDragStart={editing ? beginGesture : undefined}
-          onDrag={editing ? trackGesture : undefined}
-          onDragStop={editing ? endGesture : undefined}
-          onResizeStart={editing ? beginGesture : undefined}
-          onResize={editing ? trackGesture : undefined}
-          onResizeStop={editing ? endGesture : undefined}
+          onChange={draggable ? handleChange : undefined}
+          onDragStart={draggable ? beginMove : undefined}
+          onDragStop={draggable ? endGesture : undefined}
+          onResizeStart={draggable ? beginResize : undefined}
+          onResizeStop={draggable ? endGesture : undefined}
         >
           {page.panels.map((panel) => (
             <GridStackItem key={panel.id} id={panel.id} options={panel.geometry}>

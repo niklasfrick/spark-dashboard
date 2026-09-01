@@ -210,9 +210,7 @@ describe('saving and discarding a rearranged page', () => {
     await openPage(fetchMock)
 
     await userEvent.click(editLayout())
-    act(() =>
-      gridSubstitute.moved([{ id: 'mem', x: 11, y: 7 } as unknown as Parameters<typeof gridSubstitute.moved>[0][0]]),
-    )
+    act(() => gridSubstitute.moved([{ id: 'mem', x: 11, y: 7 }]))
     await userEvent.click(saveLayout())
 
     await waitFor(() => expect(configurationWrites(fetchMock)).toHaveLength(1))

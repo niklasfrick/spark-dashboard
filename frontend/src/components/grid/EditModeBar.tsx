@@ -11,7 +11,8 @@ interface EditModeBarProps {
    * that has nothing to do with the desktop arrangement being edited.
    */
   narrow: boolean
-  /** The panel whose last drop the page had no room for, by title. */
+  /** The panel whose last drop the grid would not take, by the title the
+   *  operator reads. */
   refusedPanel: string | null
   onBegin: () => void
   onSave: () => void
@@ -49,7 +50,11 @@ export function EditModeBar({
             <BarButton onClick={onDiscard} disabled={saving}>
               Discard
             </BarButton>
-            <BarButton primary onClick={onSave} disabled={readOnly || saving}>
+            {/* Narrow suspends the session rather than ending it: the stacked
+                column is not the layout being edited, so there is nothing there
+                worth writing, and the work survives until the window is wide
+                again. */}
+            <BarButton primary onClick={onSave} disabled={readOnly || saving || narrow}>
               {saving ? 'Saving…' : 'Save layout'}
             </BarButton>
           </>
@@ -70,12 +75,17 @@ function Status({
   // The refusal outranks everything else the bar could be saying: it is the
   // answer to what the operator just tried to do. It is an alert rather than a
   // quiet status because the alternative — a panel that slides back with no
-  // explanation — reads as a broken drag rather than as a full page.
+  // explanation — reads as a broken drag rather than as a page with no room.
+  //
+  // It says only what is certain. The grid refuses a drop it cannot fit under
+  // the row cap *and* one the panels around it cannot make way for, and this
+  // side cannot tell which — so the wording covers both and the advice works
+  // for either.
   if (refusedPanel) {
     return (
       <p role="alert" className="text-xs text-amber-300 truncate">
-        No room for “{refusedPanel}” there. This page is {GRID_MAX_ROWS} rows tall and full — make
-        a panel smaller to free up space.
+        No room for “{refusedPanel}” there. The page is {GRID_MAX_ROWS} rows tall and the panels
+        around it cannot make way — try somewhere else, or make one of them smaller.
       </p>
     )
   }

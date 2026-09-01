@@ -33,6 +33,20 @@ function easeOut(t: number): number {
   return 1 - Math.pow(1 - t, 3)
 }
 
+/**
+ * Whether to jump straight to the target instead of tweening: nothing to count,
+ * a counter that reset, or a dashboard that is not supposed to be moving at all.
+ * A null `from` — nothing to count *from* — always snaps and is the caller's to
+ * check, so that both callers keep the narrowing they need afterwards.
+ *
+ * One predicate, asked twice — once during render to place the value, once in
+ * the effect to decide whether to start a tween — and the two must never
+ * disagree, or the counter animates from a number it already snapped past.
+ */
+function shouldSnap(from: number, value: number, live: boolean): boolean {
+  return from === value || !live || prefersReducedMotion() || value < from
+}
+
 export function AnimatedCounter({
   value,
   format,
@@ -65,18 +79,7 @@ export function AnimatedCounter({
   if (prevValue !== value) {
     setPrevValue(value)
     const from = display
-    // No previous numeric value, reduced motion, or a counter reset
-    // (target below current) -> snap, never animate downward.
-    if (
-      value === null ||
-      from === null ||
-      from === value ||
-      !live ||
-      prefersReducedMotion() ||
-      value < from
-    ) {
-      setDisplay(value)
-    }
+    if (value === null || from === null || shouldSnap(from, value, live)) setDisplay(value)
   }
 
   useEffect(() => {
@@ -98,7 +101,7 @@ export function AnimatedCounter({
 
     const from = displayRef.current
     // Snapped during render — nothing left to animate.
-    if (from === null || from === value || !live || prefersReducedMotion() || value < from) {
+    if (from === null || shouldSnap(from, value, live)) {
       cancel()
       return
     }

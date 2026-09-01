@@ -10,7 +10,7 @@
  */
 
 import { readGeometry, GRID_COLUMNS, type PanelGeometry } from './grid'
-import type { DashboardDocument, DashboardPanel } from './schema'
+import { panelTitle, type DashboardDocument, type DashboardPanel } from './schema'
 
 /** Where the grid says a panel now sits. */
 export interface LayoutChange {
@@ -62,47 +62,54 @@ export function withPagePanels(
   }
 }
 
-/** A rectangle in pixels — an element's box, or the grid's own. */
-export interface PixelRect {
-  left: number
-  top: number
-  width: number
-  height: number
-}
-
 /** One grid cell in pixels. */
 export interface CellSize {
   width: number
   height: number
 }
 
+/** How far a pointer travelled over the course of a gesture, in pixels. */
+export interface Travel {
+  dx: number
+  dy: number
+}
+
+/** Which of the two things a finished gesture was doing. */
+export type Gesture = 'move' | 'resize'
+
 /**
- * The cells a drag or resize in progress is asking for: where the operator has
- * put the element, converted through the grid's own cell size.
+ * The cells a finished drag or resize asked for: where the panel started, moved
+ * or grown by however far the pointer travelled.
  *
- * Deliberately **not** clamped into the row cap. The whole question this answers
- * is whether the operator asked for something the page has no room for, and a
- * clamp here would quietly turn every such request into a satisfied one.
- * Columns are a different matter — see `judgeDrop`.
+ * Read from the **pointer**, not from the panel. The library reports a panel in
+ * flight only while it is accepting the move — a refused one produces no event
+ * and never leaves its cells — so the panel's own position answers the wrong
+ * question. The pointer says what the operator asked for whether or not they got
+ * it, which is the only thing that distinguishes a refusal from a drag taken
+ * back.
  *
- * Null when the grid has not been measured: jsdom measures every box as 0×0,
- * and so does the first frame before layout. There is nothing to conclude from
- * that, and concluding anything would accuse the grid of refusing a drop the
- * operator never made.
+ * Deliberately **not** clamped into the row cap: a clamp here would quietly turn
+ * every out-of-room request into a satisfied one. Columns are a different
+ * matter — see `judgeDrop`.
+ *
+ * Null when the grid has not been measured: jsdom measures every box as 0×0, and
+ * so does the first frame before layout. Concluding anything from that would
+ * accuse the grid of refusing a drop the operator never made.
  */
 export function requestedCells(
-  item: PixelRect,
-  grid: PixelRect,
+  gesture: Gesture,
+  before: PanelGeometry,
+  travel: Travel,
   cell: CellSize,
 ): PanelGeometry | null {
   if (cell.width <= 0 || cell.height <= 0) return null
 
-  return {
-    x: Math.max(0, Math.round((item.left - grid.left) / cell.width)),
-    y: Math.max(0, Math.round((item.top - grid.top) / cell.height)),
-    w: Math.max(1, Math.round(item.width / cell.width)),
-    h: Math.max(1, Math.round(item.height / cell.height)),
-  }
+  const columns = Math.round(travel.dx / cell.width)
+  const rows = Math.round(travel.dy / cell.height)
+
+  return gesture === 'move'
+    ? { ...before, x: Math.max(0, before.x + columns), y: Math.max(0, before.y + rows) }
+    : { ...before, w: Math.max(1, before.w + columns), h: Math.max(1, before.h + rows) }
 }
 
 /** What the grid did with the placement a finished drag or resize asked for. */
@@ -142,6 +149,23 @@ export function judgeDrop(
   const asked = { ...requested, w, x: Math.min(requested.x, GRID_COLUMNS - w) }
 
   return samePlacement(asked, before) ? 'granted' : 'out-of-room'
+}
+
+/**
+ * The title to name in a refusal, or null when nothing stands refused.
+ *
+ * Deliberately just the title. Whether the *page* is full is a different
+ * question from whether the panel could go where it was dropped — and a much
+ * harder one, since a panel is never in its own way, so the obvious predicate
+ * answers "not full" for a page with room for exactly one thing in the space
+ * the panel already occupies. The message says what is certain instead.
+ */
+export function refusedPanelTitle(
+  panels: readonly DashboardPanel[],
+  panelId: string | null,
+): string | null {
+  const refused = panels.find((panel) => panel.id === panelId)
+  return refused ? panelTitle(refused) : null
 }
 
 function samePlacement(a: PanelGeometry, b: PanelGeometry): boolean {

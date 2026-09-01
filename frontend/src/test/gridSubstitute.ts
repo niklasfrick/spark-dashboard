@@ -5,13 +5,17 @@
  * nothing else — see `gridstack.tsx` for what is and is not simulated there.
  */
 
-/** As much of a gridstack node as anything here cares about. */
+/**
+ * As much of a gridstack node as anything here cares about. Width and height
+ * are optional because the library omits values equal to its own defaults, so a
+ * spec can report the sparse node a 1×1 panel really produces.
+ */
 export interface GridNode {
   id: string
   x: number
   y: number
-  w: number
-  h: number
+  w?: number
+  h?: number
 }
 
 /** The props the substitute's grid was last rendered with. */

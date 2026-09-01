@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useSyncExternalStore } from 'react'
 import { LogStreamStore, type LogStream } from '@/lib/logStreamStore'
+import { useHeldWhileFrozen } from './useLiveMotion'
 
 /**
  * The log stream store, provided through context rather than a module singleton
@@ -26,6 +27,12 @@ export function useLogStreamStore(): LogStreamStore {
  * its socket and the last one to unmount closes it. A component that should not
  * be streaming — a collapsed console, a panel bound to nothing — must therefore
  * not call this hook, rather than call it and ignore the result.
+ *
+ * A frozen dashboard holds the lines it had rather than dropping the
+ * subscription: unsubscribing here would close the engine's socket and lose the
+ * output produced while a page was being rearranged. The store keeps filling; a
+ * log panel simply stops scrolling under the operator's cursor until the session
+ * ends.
  */
 export function useLogStream(endpoint: string): LogStream {
   const store = useLogStreamStore()
@@ -34,5 +41,5 @@ export function useLogStream(endpoint: string): LogStream {
     [store, endpoint],
   )
   const read = useCallback(() => store.read(endpoint), [store, endpoint])
-  return useSyncExternalStore(subscribe, read)
+  return useHeldWhileFrozen(useSyncExternalStore(subscribe, read))
 }
