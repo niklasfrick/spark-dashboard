@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useSyncExternalStore } from 'react'
+import { useCallback, useSyncExternalStore } from 'react'
+import { useMetricsIngest } from './useMetricsIngest'
 import { useMetricsStore } from './useMetricsStore'
 import type { TimeWindow } from '../types/events'
 import type { GpuEventData, InferenceRequestData, MetricsSnapshot } from '../types/metrics'
@@ -13,9 +14,7 @@ import type { GpuEventData, InferenceRequestData, MetricsSnapshot } from '../typ
 export function useMetricsHistory(metrics: MetricsSnapshot | null) {
   const store = useMetricsStore()
 
-  useEffect(() => {
-    if (metrics) store.ingest(metrics)
-  }, [store, metrics])
+  useMetricsIngest(metrics)
 
   const subscribeAll = useCallback(
     (listener: () => void) => store.subscribeAll(listener),
