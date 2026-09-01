@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useLogStream } from '../hooks/useLogStream'
 import { findEngineByEndpoint } from '../lib/identity'
+import { BACKEND_DEFAULT_ENGINE } from '../lib/logStreamStore'
 import { LogConsole } from './LogConsole'
 import type { EngineSnapshot } from '../types/metrics'
 
@@ -38,13 +39,13 @@ export function LogViewer({
   const [collapsed, setCollapsed] = useState(true)
 
   // Engine whose container is streamed: the selected tab's engine when one is
-  // active and still present, otherwise the first Docker engine. The empty
-  // string asks the backend for its own default, which applies the same rule.
+  // active and still present, otherwise the first Docker engine — and, with no
+  // engines to choose from, whichever one the backend would pick itself.
   const targetEndpoint = useMemo(() => {
     if (selectedEndpoint && findEngineByEndpoint(engines, selectedEndpoint)) {
       return selectedEndpoint
     }
-    return engines.find((e) => e.deployment_mode === 'Docker')?.endpoint ?? ''
+    return engines.find((e) => e.deployment_mode === 'Docker')?.endpoint ?? BACKEND_DEFAULT_ENGINE
   }, [engines, selectedEndpoint])
 
   const targetEngine = findEngineByEndpoint(engines, targetEndpoint)

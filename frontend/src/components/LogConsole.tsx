@@ -80,10 +80,9 @@ export function LogConsole({ stream, label = null, leading }: LogConsoleProps) {
   return (
     <div
       onKeyDown={handleKeyDown}
-      // Inline rather than `h-full`: the console renders in the browser test
-      // project too, which runs no Tailwind build (same rule as GridPage).
-      style={{ height: '100%' }}
-      className="flex flex-col min-h-0 min-w-0 rounded-md border border-white/[0.04] overflow-hidden"
+      // Fills whatever box it is given — the drawer's fixed strip, or the panel
+      // the operator sized — with only the line area below scrolling.
+      className="h-full flex flex-col min-h-0 min-w-0 rounded-md border border-white/[0.04] overflow-hidden"
     >
       {/* Header bar */}
       <div className="shrink-0 flex items-center gap-2 px-2 py-1 bg-[#111115] flex-wrap">

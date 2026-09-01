@@ -9,6 +9,19 @@
  */
 export class MockWebSocket {
   static instances: MockWebSocket[] = []
+
+  /**
+   * Whether `close()` delivers its event on a later turn, the way a real
+   * browser does, instead of synchronously inside the call.
+   *
+   * Off by default: firing it synchronously keeps the specs that only care
+   * about a socket having closed readable. Turn it on for the specs that care
+   * about what happens *between* asking a socket to close and its handler
+   * running, and drain the queue with `flushCloseEvents()`.
+   */
+  static deferCloseEvents = false
+  private static pendingCloses: MockWebSocket[] = []
+
   url: string
   onopen: ((ev: Event) => void) | null = null
   onmessage: ((ev: MessageEvent) => void) | null = null
@@ -23,7 +36,18 @@ export class MockWebSocket {
 
   close() {
     this.readyState = 3
+    if (MockWebSocket.deferCloseEvents) {
+      MockWebSocket.pendingCloses.push(this)
+      return
+    }
     if (this.onclose) this.onclose(new CloseEvent('close'))
+  }
+
+  /** Deliver every close event `deferCloseEvents` has held back, oldest first. */
+  static flushCloseEvents() {
+    const pending = MockWebSocket.pendingCloses
+    MockWebSocket.pendingCloses = []
+    for (const socket of pending) socket.onclose?.(new CloseEvent('close'))
   }
 
   send() {}

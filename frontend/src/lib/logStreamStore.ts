@@ -47,6 +47,14 @@ export interface LogStream {
  *  constant, so an unwatched endpoint never looks like it changed. */
 const NO_STREAM: LogStream = { status: 'connecting', lines: [] }
 
+/**
+ * The endpoint that asks the backend for whichever container it would pick
+ * itself — the first Docker engine. Sending no `?engine=` at all is how the
+ * `/ws/logs` route spells that, so the empty endpoint is a real address here
+ * rather than a missing one.
+ */
+export const BACKEND_DEFAULT_ENGINE = ''
+
 /** One endpoint's socket, buffer and subscribers. */
 interface Connection {
   socket: WebSocket | null
@@ -65,9 +73,9 @@ export class LogStreamStore {
    * Watch one engine's logs, holding the connection open for as long as the
    * returned release function has not been called.
    *
-   * The endpoint is the engine's, exactly as the metrics snapshot reports it;
-   * the empty string asks the backend for its own default container, which is
-   * what the pre-grid console does on a host it has not been pointed at.
+   * The endpoint is the engine's, exactly as the metrics snapshot reports it,
+   * or `BACKEND_DEFAULT_ENGINE` to let the backend pick — which is what the
+   * pre-grid console does on a host it has not been pointed at.
    */
   subscribe(endpoint: string, listener: () => void): () => void {
     let connection = this.connections.get(endpoint)
@@ -124,8 +132,14 @@ export class LogStreamStore {
 
     socket.onclose = () => {
       connection.socket = null
-      // Released while the socket was closing; there is nobody to reconnect for.
-      if (!this.connections.has(endpoint)) return
+      // This connection is no longer the endpoint's. A real browser fires
+      // `close` on a later task, so between `close()` and this handler the last
+      // subscriber may have left and a new one taken the endpoint over — a
+      // panel removed and re-added, a following panel switching engines and
+      // back. Testing that *some* connection exists for the endpoint would let
+      // this orphan schedule a retry that nothing can ever cancel, leaving a
+      // duplicate stream open for the life of the page.
+      if (this.connections.get(endpoint) !== connection) return
 
       if (!connection.everOpened) {
         this.update(connection, { status: 'unavailable' })

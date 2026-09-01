@@ -23,6 +23,7 @@ describe('the log stream store', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    MockWebSocket.deferCloseEvents = false
   })
 
   it('opens no socket until something subscribes', () => {
@@ -156,6 +157,30 @@ describe('the log stream store', () => {
     vi.advanceTimersByTime(10_000)
 
     expect(MockWebSocket.instances).toHaveLength(1)
+  })
+
+  it('ignores a close event that lands after the endpoint changed hands', () => {
+    // A real browser fires `close` on a later task than the `close()` call, so
+    // a panel removed and re-added — or one switching engines and back — can
+    // hand the endpoint to a new connection while the old one's event is still
+    // in flight. The stale connection must not reconnect: nothing would ever be
+    // able to close the socket it opened.
+    MockWebSocket.deferCloseEvents = true
+    const release = store.subscribe(ALPHA, () => {})
+    latest().connect()
+
+    release()
+    store.subscribe(ALPHA, () => {})
+    const replacement = latest()
+    MockWebSocket.flushCloseEvents()
+
+    vi.advanceTimersByTime(30_000)
+    expect(MockWebSocket.instances).toHaveLength(2)
+    expect(store.read(ALPHA).status).toBe('connecting')
+
+    // The endpoint's own connection is untouched by the orphan's late event.
+    replacement.connect()
+    expect(store.read(ALPHA).status).toBe('connected')
   })
 
   it('drops the oldest lines past the buffer cap', () => {
