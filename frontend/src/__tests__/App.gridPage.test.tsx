@@ -64,8 +64,9 @@ describe('the grid page route', () => {
 
     expect(screen.getByRole('region', { name: 'CPU' })).toBeInTheDocument()
     expect(screen.getByRole('region', { name: 'Memory' })).toBeInTheDocument()
-    // The root dashboard did not render underneath the grid page.
-    expect(screen.queryByText('Waiting for metrics')).not.toBeInTheDocument()
+    // The root dashboard did not render underneath the grid page. (Its marker
+    // is the waiting *heading*; the panels' own waiting notices share the text.)
+    expect(screen.queryByRole('heading', { name: 'Waiting for metrics' })).not.toBeInTheDocument()
   })
 
   it('matches the page by id alone, so a stale slug from before a rename still lands', async () => {
