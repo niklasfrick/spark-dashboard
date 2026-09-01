@@ -4,11 +4,11 @@
  * The registry is keyed by the persisted panel-type vocabulary in
  * `lib/dashboard/panels`, and is deliberately allowed to lag it: a type the
  * vocabulary knows but no component implements yet renders as a placeholder
- * that keeps its grid slot. That is what lets the panel tickets (#81–#82) land
- * one at a time against a preset that already names every type.
+ * that keeps its grid slot. That is what lets the panel tickets land one at a
+ * time against a preset that already names every type.
  *
- * The eight hardware panels (#80) and the engine metric panels (#81) are
- * implemented; the log panel arrives with #82.
+ * The hardware panels (#80), the engine metric panels (#81) and the log panel
+ * (#82) are implemented; the remaining types still render as placeholders.
  */
 
 import type { ComponentType, ReactElement } from 'react'
@@ -29,6 +29,7 @@ import { GpuClockPanel } from './panels/GpuClockPanel'
 import { GpuPowerPanel } from './panels/GpuPowerPanel'
 import { GpuTemperaturePanel } from './panels/GpuTemperaturePanel'
 import { GpuUtilizationPanel } from './panels/GpuUtilizationPanel'
+import { LogsPanel } from './panels/LogsPanel'
 import { MemoryPanel } from './panels/MemoryPanel'
 import { NetworkIoPanel } from './panels/NetworkIoPanel'
 
@@ -54,6 +55,7 @@ const PANEL_CONTENT: Partial<Record<PanelType, ComponentType<PanelContentProps>>
   'engine-slo-goodput': EngineSloGoodputPanel,
   'engine-cache': EngineCachePanel,
   'engine-spec-decode': EngineSpecDecodePanel,
+  logs: LogsPanel,
 }
 
 /**

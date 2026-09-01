@@ -42,6 +42,17 @@ describe('the default preset', () => {
     }
   })
 
+  it('places no log panel', () => {
+    // A stock install would otherwise open on a prominent panel explaining that
+    // the log viewer is not enabled — the deployment default — which reads as a
+    // broken dashboard. Logs are opt-in, placed by the operator who wants them.
+    for (const page of defaultDashboardDocument().pages) {
+      for (const panel of page.panels) {
+        expect(panel.type, panel.id).not.toBe('logs')
+      }
+    }
+  })
+
   it('gives every panel on a page a distinct identifier', () => {
     for (const page of defaultDashboardDocument().pages) {
       const ids = page.panels.map((panel) => panel.id)

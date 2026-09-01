@@ -1,5 +1,5 @@
 import { engineDescription } from '@/lib/format'
-import type { EnginePanelResolution } from './useEnginePanel'
+import type { ResolvedEngineTarget } from './useEnginePanel'
 
 /**
  * The engine a panel resolved to, named — or null on a host running a single
@@ -10,8 +10,6 @@ import type { EnginePanelResolution } from './useEnginePanel'
  * position on the page, and a panel that has followed the page selection
  * somewhere else would look identical to one that has not.
  */
-export function engineLabel(
-  resolution: Extract<EnginePanelResolution, { status: 'resolved' }>,
-): string | null {
+export function engineLabel(resolution: ResolvedEngineTarget): string | null {
   return resolution.multiEngine ? engineDescription(resolution.engine) : null
 }

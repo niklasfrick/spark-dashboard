@@ -9,8 +9,9 @@ import { engineSeries, type DataPoint, type EngineSeriesName } from '@/lib/metri
 import type { DashboardPanel } from '@/lib/dashboard/schema'
 import type { EngineSnapshot } from '@/types/metrics'
 
-/** What an engine panel found at the other end of its binding. */
-export type EnginePanelResolution =
+/** Which engine a panel's binding names on this host, before anything is asked
+ *  about whether that engine is serving. */
+export type EngineTargetResolution =
   /** No snapshot has arrived yet; there are no engines to resolve against. */
   | { status: 'waiting' }
   | {
@@ -19,21 +20,58 @@ export type EnginePanelResolution =
       /** True when the host runs more than one engine, and a panel therefore has
        *  to name the one it is showing. */
       multiEngine: boolean
-      /** This engine's metrics, with the no-model rule applied. */
-      metric: EngineMetricReader
-      /** One of this engine's series over the panel's own time window. */
-      series: (name: EngineSeriesName) => DataPoint[]
     }
-  /** The engine resolved, and has no metrics yet — starting, or loading a model. */
-  | { status: 'starting'; engine: EngineSnapshot }
-  /** The engine resolved and is not serving; `detail` says why. */
-  | { status: 'offline'; engine: EngineSnapshot; detail: string }
   | { status: 'missing'; requested: string }
   | { status: 'unselected' }
   | { status: 'unreadable' }
 
+/** An engine a panel resolved its binding to. */
+export type ResolvedEngineTarget = Extract<EngineTargetResolution, { status: 'resolved' }>
+
+/** What an engine panel found at the other end of its binding. */
+export type EnginePanelResolution =
+  | (ResolvedEngineTarget & {
+      /** This engine's metrics, with the no-model rule applied. */
+      metric: EngineMetricReader
+      /** One of this engine's series over the panel's own time window. */
+      series: (name: EngineSeriesName) => DataPoint[]
+    })
+  /** The engine resolved, and has no metrics yet — starting, or loading a model. */
+  | { status: 'starting'; engine: EngineSnapshot }
+  /** The engine resolved and is not serving; `detail` says why. */
+  | { status: 'offline'; engine: EngineSnapshot; detail: string }
+  | Exclude<EngineTargetResolution, { status: 'resolved' }>
+
 /** Everything but a resolved engine — what a panel hands to `EnginePanelNotice`. */
 export type EnginePanelNoticeState = Exclude<EnginePanelResolution, { status: 'resolved' }>
+
+/**
+ * Which engine a panel's binding names, and nothing more.
+ *
+ * This is the whole of what a panel needs when the engine's *own* state is the
+ * thing it is there to show: the log panel streams a container that is starting,
+ * crash-looping or serving nothing, which is exactly when its logs matter most,
+ * so it must not be told "this engine has no metrics yet" instead. Panels that
+ * chart metrics use `useEnginePanel`, which adds that gate.
+ */
+export function useEngineTarget(panel: DashboardPanel): EngineTargetResolution {
+  const snapshot = useLatestSnapshot()
+  const { chosen } = usePageSelection()
+
+  return useMemo(() => {
+    if (!snapshot) return { status: 'waiting' }
+
+    const engines = snapshot.engines
+    const resolution = resolveEngineBinding(
+      panel.binding,
+      engines,
+      pageSelection(snapshot, chosen).engineEndpoint,
+    )
+    if (resolution.status !== 'resolved') return resolution
+
+    return { status: 'resolved', engine: resolution.target, multiEngine: engines.length > 1 }
+  }, [snapshot, chosen, panel.binding])
+}
 
 /**
  * What an engine panel renders on this host: its binding resolved against the
@@ -53,22 +91,13 @@ export type EnginePanelNoticeState = Exclude<EnginePanelResolution, { status: 'r
  */
 export function useEnginePanel(panel: DashboardPanel): EnginePanelResolution {
   const store = useMetricsStore()
-  const snapshot = useLatestSnapshot()
-  const { chosen } = usePageSelection()
+  const target = useEngineTarget(panel)
   const window = panel.window
 
   return useMemo(() => {
-    if (!snapshot) return { status: 'waiting' }
+    if (target.status !== 'resolved') return target
 
-    const engines = snapshot.engines
-    const resolution = resolveEngineBinding(
-      panel.binding,
-      engines,
-      pageSelection(snapshot, chosen).engineEndpoint,
-    )
-    if (resolution.status !== 'resolved') return resolution
-
-    const engine = resolution.target
+    const { engine } = target
     const availability = engineAvailability(engine)
     if (availability.kind === 'starting') return { status: 'starting', engine }
     if (availability.kind === 'offline') {
@@ -77,11 +106,9 @@ export function useEnginePanel(panel: DashboardPanel): EnginePanelResolution {
 
     const key = engineKey(engine)
     return {
-      status: 'resolved',
-      engine,
-      multiEngine: engines.length > 1,
+      ...target,
       metric: engineMetricReader(engine),
       series: (name) => store.getChartData(engineSeries(name, key), window),
     }
-  }, [store, snapshot, chosen, panel.binding, window])
+  }, [store, target, window])
 }
