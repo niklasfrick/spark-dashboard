@@ -2,18 +2,24 @@ import { useCallback, useMemo, useState } from 'react'
 import { LiveMotionContext } from '@/hooks/useLiveMotion'
 import { useElementSize } from '@/hooks/useElementSize'
 import type { SaveOutcome } from '@/lib/dashboard/client'
-import { applyLayoutChanges, refusedPanelTitle } from '@/lib/dashboard/editing'
+import { addPanel, applyLayoutChanges, refusedPanelTitle } from '@/lib/dashboard/editing'
+import { defaultPanelTitle, type PanelType } from '@/lib/dashboard/panels'
 import type { DashboardPage, DashboardPanel } from '@/lib/dashboard/schema'
-import { EditModeBar } from './EditModeBar'
+import { EditModeBar, type Refusal } from './EditModeBar'
 import { isNarrow } from './breakpoint'
 import { GridPage, type GridEditing } from './GridPage'
 
-/** An edit session: the page as the operator is rearranging it, and whatever
- *  the grid last refused them. */
+/** What the page last had no room for: a drop the grid would not take, or a
+ *  panel the palette could not place. */
+type RefusedRequest =
+  | { kind: 'drop'; panelId: string }
+  | { kind: 'add'; type: PanelType }
+
+/** An edit session: the page as the operator is changing it, and whatever the
+ *  page last refused them. */
 interface EditSession {
   panels: DashboardPanel[]
-  /** Id of the panel whose last drop had nowhere to go. */
-  refusedPanelId: string | null
+  refused: RefusedRequest | null
 }
 
 interface GridPageEditorProps {
@@ -24,12 +30,14 @@ interface GridPageEditorProps {
 }
 
 /**
- * A page, plus the ability to rearrange it.
+ * A page, plus the ability to change it: where the panels sit, and which panels
+ * there are at all.
  *
  * The session is a working copy that lives only here: the grid moves panels
- * inside it, and the stored configuration is untouched until the operator saves.
- * That is what makes discarding free, and it is the only thing standing between
- * an experimental drag and a layout every colleague on this instance loads.
+ * inside it, the palette adds to it, and the stored configuration is untouched
+ * until the operator saves. That is what makes discarding free, and it is the
+ * only thing standing between an experimental layout and one every colleague on
+ * this instance loads.
  *
  * There is no undo. Discarding the session is the substitute — an undo stack
  * over a grid that reflows on collision is far deeper than what it would buy.
@@ -53,13 +61,11 @@ export function GridPageEditor({ page, readOnly, onSave }: GridPageEditorProps) 
 
   const onGestureStart = useCallback(() => {
     // What the operator was told last was about the drag before this one.
-    setSession((current) =>
-      current?.refusedPanelId ? { ...current, refusedPanelId: null } : current,
-    )
+    setSession((current) => (current?.refused ? { ...current, refused: null } : current))
   }, [])
 
   const onOutOfRoom = useCallback((panelId: string) => {
-    setSession((current) => (current ? { ...current, refusedPanelId: panelId } : current))
+    setSession((current) => (current ? { ...current, refused: { kind: 'drop', panelId } } : current))
   }, [])
 
   // One object for the life of the editor, so a drag does not re-bind the
@@ -68,6 +74,17 @@ export function GridPageEditor({ page, readOnly, onSave }: GridPageEditorProps) 
     (): GridEditing => ({ onLayoutChange, onGestureStart, onOutOfRoom }),
     [onLayoutChange, onGestureStart, onOutOfRoom],
   )
+
+  const add = useCallback((type: PanelType) => {
+    setSession((current) => {
+      if (!current) return current
+      const outcome = addPanel(current.panels, type)
+
+      return outcome.status === 'added'
+        ? { ...current, panels: outcome.panels, refused: null }
+        : { ...current, refused: { kind: 'add', type } }
+    })
+  }, [])
 
   const shown = useMemo(
     () => (session ? { ...page, panels: session.panels } : page),
@@ -85,10 +102,14 @@ export function GridPageEditor({ page, readOnly, onSave }: GridPageEditorProps) 
     if (status === 'saved') setSession(null)
   }, [session, saving, onSave])
 
-  const refusedPanel = useMemo(
-    () => refusedPanelTitle(shown.panels, session?.refusedPanelId ?? null),
-    [shown, session?.refusedPanelId],
-  )
+  const refused = useMemo((): Refusal | null => {
+    const request = session?.refused
+    if (!request) return null
+    if (request.kind === 'add') return { kind: 'add', title: defaultPanelTitle(request.type) }
+
+    const title = refusedPanelTitle(shown.panels, request.panelId)
+    return title ? { kind: 'drop', title } : null
+  }, [shown, session?.refused])
 
   return (
     <div
@@ -104,8 +125,9 @@ export function GridPageEditor({ page, readOnly, onSave }: GridPageEditorProps) 
         readOnly={readOnly}
         saving={saving}
         narrow={narrow}
-        refusedPanel={refusedPanel}
-        onBegin={() => setSession({ panels: page.panels, refusedPanelId: null })}
+        refused={refused}
+        onBegin={() => setSession({ panels: page.panels, refused: null })}
+        onAdd={add}
         onSave={() => void save()}
         onDiscard={() => setSession(null)}
       />

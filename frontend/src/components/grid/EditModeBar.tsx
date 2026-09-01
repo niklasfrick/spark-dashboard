@@ -1,4 +1,19 @@
 import { GRID_MAX_ROWS } from '@/lib/dashboard/grid'
+import type { PanelType } from '@/lib/dashboard/panels'
+import { BarButton } from './BarButton'
+import { PanelPalette } from './PanelPalette'
+
+/**
+ * Something the page had no room for, named by the title the operator reads.
+ *
+ * A drop and an addition are told apart because the advice differs: a refused
+ * drag has somewhere else to go, while a panel that will not fit anywhere needs
+ * room made for it first.
+ */
+export interface Refusal {
+  kind: 'drop' | 'add'
+  title: string
+}
 
 interface EditModeBarProps {
   editing: boolean
@@ -11,10 +26,10 @@ interface EditModeBarProps {
    * that has nothing to do with the desktop arrangement being edited.
    */
   narrow: boolean
-  /** The panel whose last drop the grid would not take, by the title the
-   *  operator reads. */
-  refusedPanel: string | null
+  /** What the page would not take, or null when nothing stands refused. */
+  refused: Refusal | null
   onBegin: () => void
+  onAdd: (type: PanelType) => void
   onSave: () => void
   onDiscard: () => void
 }
@@ -35,18 +50,23 @@ export function EditModeBar({
   readOnly,
   saving,
   narrow,
-  refusedPanel,
+  refused,
   onBegin,
+  onAdd,
   onSave,
   onDiscard,
 }: EditModeBarProps) {
   return (
     <div className="shrink-0 flex items-center justify-between gap-3 pb-2 min-h-7">
-      <Status editing={editing} narrow={narrow} readOnly={readOnly} refusedPanel={refusedPanel} />
+      <Status editing={editing} narrow={narrow} readOnly={readOnly} refused={refused} />
 
       <div className="flex items-center gap-2">
         {editing ? (
           <>
+            {/* Adding places a panel in the first free slot, which is an
+                authored change to the desktop layout — so it is withheld
+                exactly where a drag is: in the collapsed single column. */}
+            {!narrow && <PanelPalette onAdd={onAdd} />}
             <BarButton onClick={onDiscard} disabled={saving}>
               Discard
             </BarButton>
@@ -70,22 +90,31 @@ function Status({
   editing,
   narrow,
   readOnly,
-  refusedPanel,
-}: Pick<EditModeBarProps, 'editing' | 'narrow' | 'readOnly' | 'refusedPanel'>) {
+  refused,
+}: Pick<EditModeBarProps, 'editing' | 'narrow' | 'readOnly' | 'refused'>) {
   // The refusal outranks everything else the bar could be saying: it is the
   // answer to what the operator just tried to do. It is an alert rather than a
-  // quiet status because the alternative — a panel that slides back with no
-  // explanation — reads as a broken drag rather than as a page with no room.
-  //
-  // It says only what is certain. The grid refuses a drop it cannot fit under
-  // the row cap *and* one the panels around it cannot make way for, and this
-  // side cannot tell which — so the wording covers both and the advice works
-  // for either.
-  if (refusedPanel) {
+  // quiet status because the alternative — a panel that slides back, or one
+  // that never appears, with no explanation — reads as a broken interaction
+  // rather than as a page with no room.
+  if (refused) {
     return (
       <p role="alert" className="text-xs text-amber-300 truncate">
-        No room for “{refusedPanel}” there. The page is {GRID_MAX_ROWS} rows tall and the panels
-        around it cannot make way — try somewhere else, or make one of them smaller.
+        {refused.kind === 'drop' ? (
+          <>
+            {/* It says only what is certain. The grid refuses a drop it cannot
+                fit under the row cap *and* one the panels around it cannot make
+                way for, and this side cannot tell which — so the wording covers
+                both and the advice works for either. */}
+            No room for “{refused.title}” there. The page is {GRID_MAX_ROWS} rows tall and the
+            panels around it cannot make way — try somewhere else, or make one of them smaller.
+          </>
+        ) : (
+          <>
+            No room for “{refused.title}” on this page. The page is {GRID_MAX_ROWS} rows tall and
+            has no free space that size — remove a panel, or make one smaller, and add it again.
+          </>
+        )}
       </p>
     )
   }
@@ -106,34 +135,5 @@ function Status({
         ? 'This dashboard is read-only, so a rearranged layout cannot be saved.'
         : 'Drag a panel to move it, or its bottom-right corner to resize it. Nothing is saved until you save.'}
     </p>
-  )
-}
-
-function BarButton({
-  primary = false,
-  disabled = false,
-  onClick,
-  children,
-}: {
-  primary?: boolean
-  disabled?: boolean
-  onClick: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className={`text-[10px] uppercase tracking-wider px-2 py-1 rounded border transition-colors ${
-        disabled
-          ? 'border-white/[0.04] text-zinc-600 cursor-not-allowed opacity-60'
-          : primary
-            ? 'bg-[#76B900]/20 hover:bg-[#76B900]/30 border-[#76B900]/40 text-[#cfe98a]'
-            : 'border-white/[0.08] text-zinc-300 hover:bg-white/[0.06]'
-      }`}
-    >
-      {children}
-    </button>
   )
 }
