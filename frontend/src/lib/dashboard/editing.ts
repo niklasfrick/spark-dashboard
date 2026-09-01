@@ -218,7 +218,10 @@ export function addPanel(panels: readonly DashboardPanel[], type: PanelType): Ad
     panelId,
     // No title: the type's own default is used, so a default reworded in a
     // later release reaches every panel nobody renamed.
-    panels: [...panels, { id: panelId, type, geometry, binding: FOLLOW, window: DEFAULT_TIME_WINDOW }],
+    panels: [
+      ...panels,
+      { id: panelId, type, geometry, binding: FOLLOW, window: DEFAULT_TIME_WINDOW },
+    ],
   }
 }
 

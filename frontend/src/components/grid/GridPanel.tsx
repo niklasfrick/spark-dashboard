@@ -35,12 +35,8 @@ export function GridPanel({
     <section
       aria-label={title}
       className={`h-full min-h-0 flex flex-col rounded-md border bg-[#151519] px-2 py-1.5 overflow-hidden ${
-        editing
-          ? configuring
-            ? 'border-[#76B900] cursor-move select-none'
-            : 'border-[#76B900]/40 cursor-move select-none'
-          : 'border-white/[0.04]'
-      }`}
+        editing ? 'cursor-move select-none' : ''
+      } ${editing ? (configuring ? 'border-[#76B900]' : 'border-[#76B900]/40') : 'border-white/[0.04]'}`}
     >
       <div className="shrink-0 flex items-center gap-1">
         <h3 className="flex-1 min-w-0 text-[11px] font-semibold text-zinc-200 truncate">{title}</h3>

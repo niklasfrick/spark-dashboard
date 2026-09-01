@@ -79,7 +79,9 @@ export function GridPageEditor({ page, readOnly, onSave }: GridPageEditorProps) 
   }, [])
 
   const onOutOfRoom = useCallback((panelId: string) => {
-    setSession((current) => (current ? { ...current, refused: { kind: 'drop', panelId } } : current))
+    setSession((current) =>
+      current ? { ...current, refused: { kind: 'drop', panelId } } : current,
+    )
   }, [])
 
   // One object for the life of the editor, so a drag does not re-bind the

@@ -1,6 +1,10 @@
 import { useState } from 'react'
 import { useLatestSnapshot } from '@/hooks/useMetricsStore'
-import { bindingChoices, bindingFromChoice } from '@/lib/dashboard/bindingChoices'
+import {
+  bindingChoices,
+  bindingFromChoice,
+  type BindingChoice,
+} from '@/lib/dashboard/bindingChoices'
 import type { PanelBinding } from '@/lib/dashboard/bindings'
 import { defaultPanelTitle, panelBindingKind, panelUsesWindow } from '@/lib/dashboard/panels'
 import type { DashboardPanel } from '@/lib/dashboard/schema'
@@ -130,7 +134,7 @@ function Select({
   onChange,
 }: {
   value: string
-  options: readonly { value: string; label: string; absent?: boolean }[]
+  options: readonly BindingChoice[]
   onChange: (value: string) => void
 }) {
   return (

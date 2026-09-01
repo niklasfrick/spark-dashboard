@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useDismissablePopover } from '@/hooks/useDismissablePopover'
 import { PANEL_TYPE_IDS, defaultPanelTitle, type PanelType } from '@/lib/dashboard/panels'
 import { BarButton } from './BarButton'
 
@@ -13,39 +13,15 @@ import { BarButton } from './BarButton'
  * first free slot and dragged into position from there, so nothing has to be
  * aimed at empty space; dragging out of a list is more moving parts and
  * notably worse on touch. The list closes on the way out for the same reason:
- * the operator's next move is on the panel that just landed.
+ * the operator's next move is on the panel that just landed, and a list over
+ * the page is in the way of it.
  */
 export function PanelPalette({ onAdd }: { onAdd: (type: PanelType) => void }) {
-  const [open, setOpen] = useState(false)
-  const containerRef = useRef<HTMLDivElement | null>(null)
-
-  // Click-outside and Escape close it, the way the dashboard's other popover
-  // does — a list covering the page is in the way of the drag that follows.
-  useEffect(() => {
-    if (!open) return
-
-    function onPointerDown(event: MouseEvent | TouchEvent) {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setOpen(false)
-      }
-    }
-    function onKey(event: KeyboardEvent) {
-      if (event.key === 'Escape') setOpen(false)
-    }
-
-    document.addEventListener('mousedown', onPointerDown)
-    document.addEventListener('touchstart', onPointerDown)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onPointerDown)
-      document.removeEventListener('touchstart', onPointerDown)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [open])
+  const { open, setOpen, toggle, containerRef } = useDismissablePopover<HTMLDivElement>()
 
   return (
     <div ref={containerRef} className="relative">
-      <BarButton expanded={open} onClick={() => setOpen((current) => !current)}>
+      <BarButton expanded={open} onClick={toggle}>
         Add panel
       </BarButton>
 

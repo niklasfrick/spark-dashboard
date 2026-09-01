@@ -63,9 +63,12 @@ export function EditModeBar({
       <div className="flex items-center gap-2">
         {editing ? (
           <>
-            {/* Adding places a panel in the first free slot, which is an
-                authored change to the desktop layout — so it is withheld
-                exactly where a drag is: in the collapsed single column. */}
+            {/* The rule for the collapsed column is about *cells*, not about
+                editing: adding chooses a slot, so it is withheld there exactly
+                as a drag is, and the operator is not placing panels into a
+                layout they cannot see. What a panel *is* — its title, window
+                and source — is not geometry, so its settings stay available at
+                any width. */}
             {!narrow && <PanelPalette onAdd={onAdd} />}
             <BarButton onClick={onDiscard} disabled={saving}>
               Discard
@@ -100,21 +103,16 @@ function Status({
   if (refused) {
     return (
       <p role="alert" className="text-xs text-amber-300 truncate">
-        {refused.kind === 'drop' ? (
-          <>
-            {/* It says only what is certain. The grid refuses a drop it cannot
-                fit under the row cap *and* one the panels around it cannot make
-                way for, and this side cannot tell which — so the wording covers
-                both and the advice works for either. */}
-            No room for “{refused.title}” there. The page is {GRID_MAX_ROWS} rows tall and the
-            panels around it cannot make way — try somewhere else, or make one of them smaller.
-          </>
-        ) : (
-          <>
-            No room for “{refused.title}” on this page. The page is {GRID_MAX_ROWS} rows tall and
-            has no free space that size — remove a panel, or make one smaller, and add it again.
-          </>
-        )}
+        {/* One sentence of fact, then the advice, which is the only half that
+            differs. What the drop message says is only what is certain: the
+            grid refuses a drop it cannot fit under the row cap *and* one the
+            panels around it cannot make way for, and this side cannot tell
+            which — so the wording covers both. */}
+        No room for “{refused.title}”{refused.kind === 'drop' ? ' there' : ' on this page'}. The
+        page is {GRID_MAX_ROWS} rows tall{' '}
+        {refused.kind === 'drop'
+          ? 'and the panels around it cannot make way — try somewhere else, or make one of them smaller.'
+          : 'and has no free space that size — remove a panel, or make one smaller, and add it again.'}
       </p>
     )
   }

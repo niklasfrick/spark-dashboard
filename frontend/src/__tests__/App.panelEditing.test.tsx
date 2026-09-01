@@ -211,6 +211,25 @@ describe('the panel palette', () => {
     expect(screen.queryByRole('region', { name: 'Panel palette' })).not.toBeInTheDocument()
   })
 
+  it('closes on Escape, and on a click anywhere off it', async () => {
+    // It covers the page it is being added to, so it has to be dismissable
+    // without choosing anything — both ways a reader expects of a popover.
+    const fetchMock = serveConfiguration({ document: storedDocument(onePanel()) })
+    await editPage(fetchMock)
+
+    await openPalette()
+    await userEvent.keyboard('{Escape}')
+
+    expect(screen.queryByRole('region', { name: 'Panel palette' })).not.toBeInTheDocument()
+
+    await openPalette()
+    await userEvent.click(screen.getByRole('region', { name: 'CPU' }))
+
+    expect(screen.queryByRole('region', { name: 'Panel palette' })).not.toBeInTheDocument()
+    // Dismissing chose nothing: the page is the page it was.
+    expect(screen.queryByRole('region', { name: 'GPU Power' })).not.toBeInTheDocument()
+  })
+
   it('adds a second panel of a type without colliding with the first', async () => {
     const fetchMock = serveConfiguration({ document: storedDocument(onePanel()) })
     await editPage(fetchMock)
