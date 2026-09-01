@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useLiveMotion } from './useLiveMotion'
 
 export const ROTATION_INTERVAL_MS = 10_000
 
@@ -49,7 +50,12 @@ export function useTabRotation({
   // of tabs actually changes, not on every new array reference from metrics.
   const orderKey = useMemo(() => order.join(' '), [order])
 
-  const active = enabled && intervalMs > 0 && order.length > 1
+  // A frozen dashboard does not rotate: a page being edited must hold still, and
+  // advancing the tab under a panel the operator is dragging would move the very
+  // thing they are aiming at. Resuming starts a fresh cycle rather than
+  // continuing a countdown that ran out while the page was held.
+  const live = useLiveMotion()
+  const active = enabled && live && intervalMs > 0 && order.length > 1
 
   // A new rotation cycle starts whenever any input to the timer changes. That
   // makes `cycle` derived state, so it is adjusted during render rather than
