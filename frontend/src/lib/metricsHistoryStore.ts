@@ -40,6 +40,19 @@ const SYSTEM_METRIC_KEYS: MetricKey[] = [
 
 const GPU_METRIC_KEYS: MetricKey[] = ['gpuUtil', 'gpuTemp', 'gpuPower', 'gpuClockGraphics']
 
+/** The per-GPU series. Narrower than `MetricKey`: only these exist per GPU. */
+export type GpuSeriesMetric = 'gpuUtil' | 'gpuTemp' | 'gpuPower' | 'gpuClockGraphics'
+
+/**
+ * The series key for one GPU's metric. Multi-GPU hosts read the
+ * `gpu:<index>:<metric>` series; single-GPU hosts keep the legacy un-prefixed
+ * keys so the pre-multi-GPU rendering stays byte-identical. One definition,
+ * because a panel and the pre-grid dashboard must agree on it.
+ */
+export function gpuSeries(metric: GpuSeriesMetric, gpuIndex: number, multiGpu: boolean): string {
+  return multiGpu ? `gpu:${gpuIndex}:${metric}` : metric
+}
+
 type EngineMetricsShape = NonNullable<MetricsSnapshot['engines'][number]['metrics']>
 
 /**
@@ -166,6 +179,7 @@ export class MetricsHistoryStore {
   private eventBuffer = new CircularBuffer<GpuEventData>(EVENT_BUFFER_CAPACITY)
   private requestBuffers: Record<string, CircularBuffer<InferenceRequestData>> = {}
   private lastTimestamp = 0
+  private lastSnapshot: MetricsSnapshot | null = null
   private ingested = 0
   private versions = new Map<string, number>()
   private seriesListeners = new Map<string, Set<() => void>>()
@@ -179,6 +193,7 @@ export class MetricsHistoryStore {
   ingest(metrics: MetricsSnapshot): void {
     if (metrics.timestamp_ms === this.lastTimestamp) return
     this.lastTimestamp = metrics.timestamp_ms
+    this.lastSnapshot = metrics
 
     const ts = metrics.timestamp_ms
     const changed = new Set<string>()
@@ -286,6 +301,15 @@ export class MetricsHistoryStore {
   /** Count of ingested snapshots; the `getSnapshot` for `subscribeAll`. */
   ingestVersion(): number {
     return this.ingested
+  }
+
+  /**
+   * The most recently ingested snapshot, for panels whose current-value
+   * display (a gauge, a rate pair) needs more of the snapshot than any one
+   * series carries. Null until the first snapshot arrives.
+   */
+  latest(): MetricsSnapshot | null {
+    return this.lastSnapshot
   }
 
   private cutoff(window: TimeWindow): number {

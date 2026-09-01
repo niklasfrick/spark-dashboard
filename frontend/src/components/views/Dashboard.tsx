@@ -9,6 +9,7 @@ import { THRESHOLDS } from '@/lib/theme'
 import { formatBytes, formatGiB, formatMhz, formatRate } from '@/lib/format'
 import { computePowerScale, powerPeak } from '@/lib/gpuPower'
 import { findGpuByIndex, gpuIndexOf, snapshotGpus } from '@/lib/identity'
+import { sumSeries } from '@/lib/series'
 import type { MetricsSnapshot } from '@/types/metrics'
 import type { GpuEvent, InferenceRequest } from '@/types/events'
 
@@ -144,19 +145,6 @@ export function Dashboard({
   const requestSpans = requests.map(r => ({
     start: r.start_ms, end: r.end_ms, tps: r.tps, ttft: r.ttft_ms,
   }))
-
-  // Compute totals as sum of two series, aligned by timestamp.
-  const sumSeries = (
-    a: Array<{ timestamp: number; value: number }>,
-    b: Array<{ timestamp: number; value: number }>,
-  ): Array<{ timestamp: number; value: number }> => {
-    const map = new Map<number, number>()
-    for (const p of a) map.set(p.timestamp, p.value)
-    for (const p of b) map.set(p.timestamp, (map.get(p.timestamp) ?? 0) + p.value)
-    return Array.from(map.entries())
-      .sort((x, y) => x[0] - y[0])
-      .map(([timestamp, value]) => ({ timestamp, value }))
-  }
 
   const diskRead = history.getChartData('diskRead')
   const diskWrite = history.getChartData('diskWrite')

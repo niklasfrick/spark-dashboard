@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useMemo, useSyncExternalStore }
 import { MetricsHistoryStore, type DataPoint } from '@/lib/metricsHistoryStore'
 import { DEFAULT_TIME_WINDOW } from '@/lib/dashboard/schema'
 import type { TimeWindow } from '@/types/events'
+import type { MetricsSnapshot } from '@/types/metrics'
 
 /**
  * The metrics history store, provided through context rather than a module
@@ -42,4 +43,18 @@ export function useMetricSeries(
     void version // the series changed; re-read the window
     return store.getChartData(series, window)
   }, [store, series, window, version])
+}
+
+/**
+ * The most recent snapshot, re-rendering on every ingest. This is the
+ * subscription for a panel's *current-value* display — a gauge, a rate pair, a
+ * segment split — which needs more of the snapshot than any one series holds
+ * and legitimately changes every second. Null until the first snapshot lands.
+ */
+export function useLatestSnapshot(): MetricsSnapshot | null {
+  const store = useMetricsStore()
+  const subscribe = useCallback((listener: () => void) => store.subscribeAll(listener), [store])
+  const getVersion = useCallback(() => store.ingestVersion(), [store])
+  useSyncExternalStore(subscribe, getVersion)
+  return store.latest()
 }

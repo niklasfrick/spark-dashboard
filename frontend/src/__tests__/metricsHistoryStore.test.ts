@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { MetricsHistoryStore } from '../lib/metricsHistoryStore'
+import { gpuSeries, MetricsHistoryStore } from '../lib/metricsHistoryStore'
 import type { EngineSnapshot, MetricsSnapshot } from '../types/metrics'
 
 /** A snapshot at `ts` whose per-series values can be nulled out selectively. */
@@ -208,5 +208,42 @@ describe('MetricsHistoryStore per-series subscriptions', () => {
     unsubscribe()
     store.ingest(makeSnapshot(3000))
     expect(listener).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('MetricsHistoryStore latest snapshot', () => {
+  it('holds nothing before the first ingest and the newest snapshot after', () => {
+    const store = new MetricsHistoryStore()
+    expect(store.latest()).toBeNull()
+
+    store.ingest(makeSnapshot(1000))
+    store.ingest(makeSnapshot(2000, { util: 55 }))
+    expect(store.latest()?.gpu.utilization_percent).toBe(55)
+  })
+
+  it('keeps the accepted snapshot when a duplicate timestamp is replayed', () => {
+    const store = new MetricsHistoryStore()
+    store.ingest(makeSnapshot(1000))
+    store.ingest(makeSnapshot(1000, { util: 99 }))
+
+    expect(store.latest()?.gpu.utilization_percent).toBe(11)
+  })
+})
+
+describe('gpuSeries', () => {
+  it('prefixes the GPU index on multi-GPU hosts', () => {
+    expect(gpuSeries('gpuUtil', 1, true)).toBe('gpu:1:gpuUtil')
+  })
+
+  it('keeps the legacy un-prefixed key on single-GPU hosts', () => {
+    expect(gpuSeries('gpuTemp', 0, false)).toBe('gpuTemp')
+  })
+
+  it('names series the store actually resolves', () => {
+    const store = new MetricsHistoryStore()
+    store.ingest(makeSnapshot(1000))
+
+    expect(store.getChartData(gpuSeries('gpuUtil', 0, true)).map((p) => p.value)).toEqual([11])
+    expect(store.getChartData(gpuSeries('gpuUtil', 0, false)).map((p) => p.value)).toEqual([11])
   })
 })
