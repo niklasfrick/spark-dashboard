@@ -1,8 +1,8 @@
 import { useMemo } from 'react'
-import { useLatestSnapshot } from '@/hooks/useMetricsStore'
+import { useLatestSnapshot, useMetricSeries } from '@/hooks/useMetricsStore'
 import { resolveGpuBinding } from '@/lib/dashboard/bindings'
 import { gpuIndexOf, snapshotGpus } from '@/lib/identity'
-import { gpuSeries, type GpuSeriesMetric } from '@/lib/metricsHistoryStore'
+import { gpuSeries, type DataPoint, type GpuSeriesMetric } from '@/lib/metricsHistoryStore'
 import type { DashboardPanel } from '@/lib/dashboard/schema'
 import type { GpuMetrics } from '@/types/metrics'
 
@@ -29,7 +29,7 @@ export type GpuPanelResolution =
  * selection this defers to arrives with #81, and the primary GPU is what the
  * pre-grid dashboard defaults to as well.
  */
-export function useGpuPanel(panel: DashboardPanel): GpuPanelResolution {
+function useGpuPanel(panel: DashboardPanel): GpuPanelResolution {
   const snapshot = useLatestSnapshot()
 
   return useMemo(() => {
@@ -48,4 +48,21 @@ export function useGpuPanel(panel: DashboardPanel): GpuPanelResolution {
       seriesFor: (metric: GpuSeriesMetric) => gpuSeries(metric, index, multiGpu),
     }
   }, [snapshot, panel.binding])
+}
+
+/**
+ * A GPU panel's whole subscription in one call: the resolved binding and the
+ * chart data for `metric` over the panel's own window. Every hook lives in
+ * here, above any caller's unresolved early return; while unresolved, the
+ * legacy un-prefixed key keeps the series subscription alive until the first
+ * snapshot names the real one.
+ */
+export function useGpuPanelSeries(
+  panel: DashboardPanel,
+  metric: GpuSeriesMetric,
+): { resolution: GpuPanelResolution; data: DataPoint[] } {
+  const resolution = useGpuPanel(panel)
+  const series = resolution.status === 'resolved' ? resolution.seriesFor(metric) : metric
+  const data = useMetricSeries(series, panel.window)
+  return { resolution, data }
 }

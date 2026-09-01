@@ -1,13 +1,12 @@
 import { ArcGauge } from '@/components/gauges/ArcGauge'
 import { HBar } from '@/components/gauges/HBar'
 import { TimeSeriesChart } from '@/components/charts/TimeSeriesChart'
-import { useMetricSeries } from '@/hooks/useMetricsStore'
 import { computePowerScale, powerPeak } from '@/lib/gpuPower'
 import { THRESHOLDS } from '@/lib/theme'
 import { gpuLabel } from './gpuLabel'
 import { GpuPanelNotice } from './PanelNotice'
 import { HardwarePanelBody } from './HardwarePanelBody'
-import { useGpuPanel } from './useGpuPanel'
+import { useGpuPanelSeries } from './useGpuPanel'
 import type { PanelContentProps } from '../panelRegistry'
 
 /**
@@ -16,9 +15,7 @@ import type { PanelContentProps } from '../panelRegistry'
  * window otherwise (unified-memory SoCs expose no cap — see `lib/gpuPower`).
  */
 export function GpuPowerPanel({ panel }: PanelContentProps) {
-  const resolution = useGpuPanel(panel)
-  const series = resolution.status === 'resolved' ? resolution.seriesFor('gpuPower') : 'gpuPower'
-  const data = useMetricSeries(series, panel.window)
+  const { resolution, data } = useGpuPanelSeries(panel, 'gpuPower')
   if (resolution.status !== 'resolved') return <GpuPanelNotice resolution={resolution} />
 
   const { gpu } = resolution

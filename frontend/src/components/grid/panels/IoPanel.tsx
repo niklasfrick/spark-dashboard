@@ -1,3 +1,4 @@
+import { MetricRow } from '@/components/MetricRow'
 import { TimeSeriesChart } from '@/components/charts/TimeSeriesChart'
 import { formatRate } from '@/lib/format'
 import { sumSeries } from '@/lib/series'
@@ -9,7 +10,7 @@ import { PanelNotice } from './PanelNotice'
 const TOTAL_COLOR = '#A1A1AA'
 
 interface IoDirection {
-  /** The compact tag in front of the rate: R, W, RX, TX. */
+  /** The short tag in front of the rate: R, W, RX, TX. */
   tag: string
   /** The chart legend name: Read, Write, RX, TX. */
   label: string
@@ -23,21 +24,21 @@ interface IoDirection {
  * The shape disk and network I/O share: two directional rates as the current
  * value, and a three-line chart (each direction plus their sum) as the trend.
  */
-export function IoPanel({ a, b }: { a: IoDirection; b: IoDirection }) {
+export function IoPanel({ inbound, outbound }: { inbound: IoDirection; outbound: IoDirection }) {
   // Narrowed into locals: the guard's narrowing does not reach the render
   // callbacks below.
-  const aRate = a.rate
-  const bRate = b.rate
-  if (aRate === null || bRate === null) {
+  const inRate = inbound.rate
+  const outRate = outbound.rate
+  if (inRate === null || outRate === null) {
     return <PanelNotice>Waiting for metrics</PanelNotice>
   }
 
   const chart = (
     <TimeSeriesChart
       series={[
-        { data: sumSeries(a.data, b.data), label: 'Total', color: TOTAL_COLOR },
-        { data: a.data, label: a.label, color: a.color },
-        { data: b.data, label: b.label, color: b.color },
+        { data: sumSeries(inbound.data, outbound.data), label: 'Total', color: TOTAL_COLOR },
+        { data: inbound.data, label: inbound.label, color: inbound.color },
+        { data: outbound.data, label: outbound.label, color: outbound.color },
       ]}
       unit="B/s"
       height="100%"
@@ -47,9 +48,9 @@ export function IoPanel({ a, b }: { a: IoDirection; b: IoDirection }) {
   return (
     <HardwarePanelBody
       compact={
-        <div className="flex items-baseline justify-between gap-2 min-w-0 font-mono">
-          <Rate tag={a.tag} rate={aRate} />
-          <Rate tag={b.tag} rate={bRate} />
+        <div className="flex flex-col gap-0.5 min-w-0">
+          <MetricRow label={inbound.tag} value={formatRate(inRate)} />
+          <MetricRow label={outbound.tag} value={formatRate(outRate)} />
         </div>
       }
       gauge={(sizePx) => (
@@ -57,8 +58,8 @@ export function IoPanel({ a, b }: { a: IoDirection; b: IoDirection }) {
           className="flex flex-col items-center justify-center gap-0.5 shrink-0"
           style={{ width: sizePx, height: sizePx }}
         >
-          <Rate tag={a.tag} rate={aRate} />
-          <Rate tag={b.tag} rate={bRate} />
+          <Rate tag={inbound.tag} rate={inRate} />
+          <Rate tag={outbound.tag} rate={outRate} />
         </div>
       )}
       chart={chart}

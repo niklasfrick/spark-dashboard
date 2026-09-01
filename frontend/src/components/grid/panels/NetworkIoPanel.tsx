@@ -10,14 +10,14 @@ export function NetworkIoPanel({ panel }: PanelContentProps) {
 
   return (
     <IoPanel
-      a={{
+      inbound={{
         tag: 'RX',
         label: 'RX',
         color: '#3B82F6',
         rate: snapshot ? snapshot.network.rx_bytes_per_sec : null,
         data: rx,
       }}
-      b={{
+      outbound={{
         tag: 'TX',
         label: 'TX',
         color: '#A855F7',

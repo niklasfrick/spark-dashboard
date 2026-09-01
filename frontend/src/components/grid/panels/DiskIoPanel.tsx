@@ -10,14 +10,14 @@ export function DiskIoPanel({ panel }: PanelContentProps) {
 
   return (
     <IoPanel
-      a={{
+      inbound={{
         tag: 'R',
         label: 'Read',
         color: '#76B900',
         rate: snapshot ? snapshot.disk.read_bytes_per_sec : null,
         data: read,
       }}
-      b={{
+      outbound={{
         tag: 'W',
         label: 'Write',
         color: '#F59E0B',

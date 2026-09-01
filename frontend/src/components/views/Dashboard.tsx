@@ -1,14 +1,15 @@
 import { useCallback, useState } from 'react'
-import { ArcGauge, type GaugeSegment } from '@/components/gauges/ArcGauge'
+import { ArcGauge } from '@/components/gauges/ArcGauge'
 import { HBar } from '@/components/gauges/HBar'
 import { CoreHeatmap } from '@/components/charts/CoreHeatmap'
 import { TimeSeriesChart } from '@/components/charts/TimeSeriesChart'
 import { EngineSection } from '@/components/engines/EngineSection'
 import { useElementSize } from '@/hooks/useElementSize'
 import { THRESHOLDS } from '@/lib/theme'
-import { formatBytes, formatGiB, formatMhz, formatRate } from '@/lib/format'
+import { formatGiB, formatMhz, formatRate } from '@/lib/format'
 import { computePowerScale, powerPeak } from '@/lib/gpuPower'
 import { findGpuByIndex, gpuIndexOf, snapshotGpus } from '@/lib/identity'
+import { memorySplit } from '@/lib/memorySplit'
 import { sumSeries } from '@/lib/series'
 import type { MetricsSnapshot } from '@/types/metrics'
 import type { GpuEvent, InferenceRequest } from '@/types/events'
@@ -121,22 +122,8 @@ export function Dashboard({
     powerPeak(powerHistory, activeGpu.power_watts),
   ).percent
 
-  const memUsedPercent = metrics.memory.total_bytes > 0
-    ? (metrics.memory.used_bytes / metrics.memory.total_bytes) * 100
-    : 0
-
-  const gpuUsed = metrics.memory.gpu_estimated_bytes ?? 0
-  const cpuUsed = Math.max(0, metrics.memory.used_bytes - gpuUsed)
-  const cached = Math.min(metrics.memory.cached_bytes, metrics.memory.available_bytes)
-  const free = Math.max(0, metrics.memory.available_bytes - cached)
+  const { usedPercent: memUsedPercent, segments: memorySegments } = memorySplit(metrics.memory)
   const totalGB = formatGiB(metrics.memory.display_total_bytes ?? metrics.memory.total_bytes)
-
-  const memorySegments: GaugeSegment[] = [
-    { value: gpuUsed, total: metrics.memory.total_bytes, color: '#76B900', label: `GPU: ${formatBytes(gpuUsed)}` },
-    { value: cpuUsed, total: metrics.memory.total_bytes, color: '#3B82F6', label: `CPU: ${formatBytes(cpuUsed)}` },
-    { value: cached, total: metrics.memory.total_bytes, color: '#71717A', label: `Cache: ${formatBytes(cached)}` },
-    { value: free, total: metrics.memory.total_bytes, color: '#27272A', label: `Free: ${formatBytes(free)}` },
-  ]
 
   // Un-indexed events apply to all GPUs; indexed events only to their GPU.
   const activeGpuChartEvents = events

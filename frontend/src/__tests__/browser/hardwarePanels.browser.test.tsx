@@ -80,9 +80,11 @@ function Harness({ width, height }: { width: number; height: number }) {
 }
 
 describe('a hardware panel in a real layout engine', () => {
-  it('renders the compact value, and no chart, at the smallest grid cell', async () => {
-    // A 1×1 cell's content box on a laptop viewport: ~100×55px.
-    const { container, getByText } = render(<Harness width={100} height={55} />)
+  it('renders the compact value, and no chart, in a small grid cell', async () => {
+    // A 1×1 cell's content box on a laptop viewport: ~100×55px. The grid has
+    // no minimum panel size, so the follow-up shrink checks the panel stays
+    // legible even below that.
+    const { container, getByText, rerender } = render(<Harness width={100} height={55} />)
 
     await waitFor(() => {
       // Legible: the current value and its bar are on screen…
@@ -91,6 +93,12 @@ describe('a hardware panel in a real layout engine', () => {
       // …and nothing tries to squeeze a chart or a gauge into 55px.
       expect(container.querySelector('[data-chart]')).toBeNull()
       expect(container.querySelector('svg text')).toBeNull()
+    })
+
+    rerender(<Harness width={80} height={40} />)
+    await waitFor(() => {
+      expect(getByText('76')).toBeTruthy()
+      expect(container.querySelector('[data-chart]')).toBeNull()
     })
   })
 
