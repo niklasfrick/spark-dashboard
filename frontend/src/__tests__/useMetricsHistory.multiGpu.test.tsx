@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 import { useMetricsHistory } from '../hooks/useMetricsHistory'
+import { MetricsStoreProvider } from '../hooks/MetricsStoreProvider'
 import type { MetricsSnapshot } from '../types/metrics'
 
 const baseSnapshot: MetricsSnapshot = {
@@ -71,7 +72,10 @@ describe('useMetricsHistory multi-GPU metrics', () => {
   it('keeps per-GPU chart series separate while preserving primary GPU keys', () => {
     const { result, rerender } = renderHook(
       ({ metrics }) => useMetricsHistory(metrics),
-      { initialProps: { metrics: null as MetricsSnapshot | null } },
+      {
+        initialProps: { metrics: null as MetricsSnapshot | null },
+        wrapper: MetricsStoreProvider,
+      },
     )
 
     act(() => rerender({ metrics: baseSnapshot }))

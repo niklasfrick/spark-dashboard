@@ -2,13 +2,14 @@ import { useCallback, useMemo, useState } from 'react'
 import { useDashboardConfiguration } from './hooks/useDashboardConfiguration'
 import { useMetrics } from './hooks/useMetrics'
 import { useMetricsHistory } from './hooks/useMetricsHistory'
+import { MetricsStoreProvider } from './hooks/MetricsStoreProvider'
 import { ConfigurationNotices } from './components/ConfigurationNotices'
 import { ConnectionBadge } from './components/ConnectionBadge'
 import { Dashboard } from './components/views/Dashboard'
 import { LogViewer } from './components/LogViewer'
 import type { GpuEvent, InferenceRequest } from './types/events'
 
-function App() {
+function AppContent() {
   const { metrics, connectionStatus, isStale } = useMetrics()
   // The configuration is loaded and saved from here, at the root, because it is
   // one document for the whole dashboard. Nothing renders from it yet — the
@@ -87,6 +88,16 @@ function App() {
         />
       </main>
     </div>
+  )
+}
+
+// The store provider sits above everything that reads metrics history, so the
+// coming grid pages and the current dashboard share one set of ring buffers.
+function App() {
+  return (
+    <MetricsStoreProvider>
+      <AppContent />
+    </MetricsStoreProvider>
   )
 }
 

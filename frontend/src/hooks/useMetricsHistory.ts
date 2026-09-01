@@ -1,402 +1,64 @@
-import { useRef, useState, useCallback, useEffect } from 'react'
-import { CircularBuffer } from '../lib/circular-buffer'
-import { engineKey, gpuIndexOf, snapshotGpus } from '../lib/identity'
-import type { MetricsSnapshot, GpuEventData, InferenceRequestData } from '../types/metrics'
+import { useCallback, useEffect, useSyncExternalStore } from 'react'
+import { useMetricsStore } from './useMetricsStore'
+import type { TimeWindow } from '../types/events'
+import type { GpuEventData, InferenceRequestData, MetricsSnapshot } from '../types/metrics'
 
-interface DataPoint {
-  timestamp: number
-  value: number
-}
-
-const BUFFER_CAPACITY = 900 // 15 minutes at 1 sample/sec
-const EVENT_BUFFER_CAPACITY = 100
-const REQUEST_BUFFER_CAPACITY = 50
-
-type MetricKey =
-  | 'gpuUtil'
-  | 'gpuTemp'
-  | 'gpuPower'
-  | 'gpuClockGraphics'
-  | 'cpuAggregate'
-  | 'memoryUsedPercent'
-  | 'diskRead'
-  | 'diskWrite'
-  | 'networkRx'
-  | 'networkTx'
-
-const SYSTEM_METRIC_KEYS: MetricKey[] = [
-  'gpuUtil',
-  'gpuTemp',
-  'gpuPower',
-  'gpuClockGraphics',
-  'cpuAggregate',
-  'memoryUsedPercent',
-  'diskRead',
-  'diskWrite',
-  'networkRx',
-  'networkTx',
-]
-
-function createBuffers(): Record<MetricKey, CircularBuffer<DataPoint>> {
-  const buffers = {} as Record<MetricKey, CircularBuffer<DataPoint>>
-  for (const key of SYSTEM_METRIC_KEYS) {
-    buffers[key] = new CircularBuffer<DataPoint>(BUFFER_CAPACITY)
-  }
-  return buffers
-}
-
-function extractGpuValue(gpu: MetricsSnapshot['gpu'], key: MetricKey): number | null {
-  switch (key) {
-    case 'gpuUtil':
-      return gpu.utilization_percent
-    case 'gpuTemp':
-      return gpu.temperature_celsius
-    case 'gpuPower':
-      return gpu.power_watts
-    case 'gpuClockGraphics':
-      return gpu.clock_graphics_mhz
-    default:
-      return null
-  }
-}
-
-function extractValue(metrics: MetricsSnapshot, key: MetricKey): number | null {
-  switch (key) {
-    case 'gpuUtil':
-    case 'gpuTemp':
-    case 'gpuPower':
-    case 'gpuClockGraphics':
-      return extractGpuValue(metrics.gpu, key)
-    case 'cpuAggregate':
-      return metrics.cpu.aggregate_percent
-    case 'memoryUsedPercent':
-      return metrics.memory.total_bytes > 0
-        ? (metrics.memory.used_bytes / metrics.memory.total_bytes) * 100
-        : null
-    case 'diskRead':
-      return metrics.disk.read_bytes_per_sec
-    case 'diskWrite':
-      return metrics.disk.write_bytes_per_sec
-    case 'networkRx':
-      return metrics.network.rx_bytes_per_sec
-    case 'networkTx':
-      return metrics.network.tx_bytes_per_sec
-  }
-}
-
-const DEFAULT_WINDOW_SECONDS = 300 // 5 minutes
-
-export function useMetricsHistory(
-  metrics: MetricsSnapshot | null,
-) {
-  const buffersRef = useRef(createBuffers())
-  const gpuBuffersRef = useRef<
-    Record<string, Record<MetricKey, CircularBuffer<DataPoint>>>
-  >({})
-  const engineBuffersRef = useRef<
-    Record<string, Record<string, CircularBuffer<DataPoint>>>
-  >({})
-  const eventBufferRef = useRef(
-    new CircularBuffer<GpuEventData>(EVENT_BUFFER_CAPACITY),
-  )
-  const requestBuffersRef = useRef<
-    Record<string, CircularBuffer<InferenceRequestData>>
-  >({})
-  const lastTimestampRef = useRef<number>(0)
-  const [version, setVersion] = useState(0)
+/**
+ * Feeds incoming snapshots into the metrics store and exposes its read
+ * accessors to the pre-grid dashboard, which reads many series from one
+ * component and therefore subscribes to every ingested snapshot — exactly the
+ * granularity it had before the store existed. Panels that want one series
+ * subscribe through `useMetricSeries` instead.
+ */
+export function useMetricsHistory(metrics: MetricsSnapshot | null) {
+  const store = useMetricsStore()
 
   useEffect(() => {
-    if (!metrics || metrics.timestamp_ms === lastTimestampRef.current) return
-    lastTimestampRef.current = metrics.timestamp_ms
+    if (metrics) store.ingest(metrics)
+  }, [store, metrics])
 
-    const ts = metrics.timestamp_ms
-    const buffers = buffersRef.current
+  const subscribeAll = useCallback(
+    (listener: () => void) => store.subscribeAll(listener),
+    [store],
+  )
+  const getIngestVersion = useCallback(() => store.ingestVersion(), [store])
+  const version = useSyncExternalStore(subscribeAll, getIngestVersion)
 
-    for (const key of SYSTEM_METRIC_KEYS) {
-      const val = extractValue(metrics, key)
-      if (val !== null) {
-        buffers[key].push({ timestamp: ts, value: val })
-      }
-    }
-
-    for (const gpu of snapshotGpus(metrics)) {
-      const gpuKey = String(gpuIndexOf(gpu))
-      if (!gpuBuffersRef.current[gpuKey]) {
-        gpuBuffersRef.current[gpuKey] = createBuffers()
-      }
-      const gb = gpuBuffersRef.current[gpuKey]
-      for (const key of ['gpuUtil', 'gpuTemp', 'gpuPower', 'gpuClockGraphics'] as MetricKey[]) {
-        const val = extractGpuValue(gpu, key)
-        if (val !== null) {
-          gb[key].push({ timestamp: ts, value: val })
-        }
-      }
-    }
-
-    // Engine-specific metrics
-    for (const engine of metrics.engines) {
-      const key = engineKey(engine)
-      if (!engineBuffersRef.current[key]) {
-        engineBuffersRef.current[key] = {
-          tps: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
-          avgTps: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
-          perReqTps: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
-          ttft: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
-          kvCache: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
-          prefixCacheHit: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
-          e2eLatency: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
-          promptTps: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
-          avgPromptTps: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
-          perReqPromptTps: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
-          queueTime: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
-          interTokenLatency: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
-          batchSize: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
-          ttftP50: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
-          ttftP95: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
-          ttftP99: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
-          itlP50: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
-          itlP95: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
-          itlP99: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
-          e2eP50: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
-          e2eP95: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
-          e2eP99: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
-          tpot: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
-          tpotP50: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
-          tpotP95: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
-          tpotP99: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
-          activeRequests: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
-          queuedRequests: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
-          totalRequests: new CircularBuffer<DataPoint>(BUFFER_CAPACITY),
-        }
-      }
-      const eb = engineBuffersRef.current[key]
-      if (engine.metrics) {
-        if (engine.metrics.tokens_per_sec !== null) {
-          eb.tps.push({ timestamp: ts, value: engine.metrics.tokens_per_sec })
-        }
-        if (engine.metrics.avg_tokens_per_sec !== null) {
-          eb.avgTps.push({ timestamp: ts, value: engine.metrics.avg_tokens_per_sec })
-        }
-        if (engine.metrics.per_request_tps !== null) {
-          eb.perReqTps.push({ timestamp: ts, value: engine.metrics.per_request_tps })
-        }
-        if (engine.metrics.ttft_ms !== null) {
-          eb.ttft.push({ timestamp: ts, value: engine.metrics.ttft_ms })
-        }
-        if (engine.metrics.kv_cache_percent !== null) {
-          eb.kvCache.push({
-            timestamp: ts,
-            value: engine.metrics.kv_cache_percent,
-          })
-        }
-        if (engine.metrics.prefix_cache_hit_rate !== null) {
-          eb.prefixCacheHit.push({
-            timestamp: ts,
-            value: engine.metrics.prefix_cache_hit_rate,
-          })
-        }
-        if (engine.metrics.e2e_latency_ms !== null) {
-          eb.e2eLatency.push({ timestamp: ts, value: engine.metrics.e2e_latency_ms })
-        }
-        if (engine.metrics.prompt_tokens_per_sec !== null) {
-          eb.promptTps.push({ timestamp: ts, value: engine.metrics.prompt_tokens_per_sec })
-        }
-        if (engine.metrics.avg_prompt_tokens_per_sec !== null) {
-          eb.avgPromptTps.push({ timestamp: ts, value: engine.metrics.avg_prompt_tokens_per_sec })
-        }
-        if (engine.metrics.per_request_prompt_tps !== null) {
-          eb.perReqPromptTps.push({ timestamp: ts, value: engine.metrics.per_request_prompt_tps })
-        }
-        if (engine.metrics.queue_time_ms !== null) {
-          eb.queueTime.push({ timestamp: ts, value: engine.metrics.queue_time_ms })
-        }
-        if (engine.metrics.inter_token_latency_ms !== null) {
-          eb.interTokenLatency.push({ timestamp: ts, value: engine.metrics.inter_token_latency_ms })
-        }
-        if (engine.metrics.avg_batch_size !== null) {
-          eb.batchSize.push({ timestamp: ts, value: engine.metrics.avg_batch_size })
-        }
-        if (engine.metrics.tpot_ms !== null) {
-          eb.tpot.push({ timestamp: ts, value: engine.metrics.tpot_ms })
-        }
-        const tp = engine.metrics.ttft_percentiles
-        if (tp) {
-          if (tp.p50_ms !== null) eb.ttftP50.push({ timestamp: ts, value: tp.p50_ms })
-          if (tp.p95_ms !== null) eb.ttftP95.push({ timestamp: ts, value: tp.p95_ms })
-          if (tp.p99_ms !== null) eb.ttftP99.push({ timestamp: ts, value: tp.p99_ms })
-        }
-        const ip = engine.metrics.itl_percentiles
-        if (ip) {
-          if (ip.p50_ms !== null) eb.itlP50.push({ timestamp: ts, value: ip.p50_ms })
-          if (ip.p95_ms !== null) eb.itlP95.push({ timestamp: ts, value: ip.p95_ms })
-          if (ip.p99_ms !== null) eb.itlP99.push({ timestamp: ts, value: ip.p99_ms })
-        }
-        const ep = engine.metrics.e2e_percentiles
-        if (ep) {
-          if (ep.p50_ms !== null) eb.e2eP50.push({ timestamp: ts, value: ep.p50_ms })
-          if (ep.p95_ms !== null) eb.e2eP95.push({ timestamp: ts, value: ep.p95_ms })
-          if (ep.p99_ms !== null) eb.e2eP99.push({ timestamp: ts, value: ep.p99_ms })
-        }
-        const pp = engine.metrics.tpot_percentiles
-        if (pp) {
-          if (pp.p50_ms !== null) eb.tpotP50.push({ timestamp: ts, value: pp.p50_ms })
-          if (pp.p95_ms !== null) eb.tpotP95.push({ timestamp: ts, value: pp.p95_ms })
-          if (pp.p99_ms !== null) eb.tpotP99.push({ timestamp: ts, value: pp.p99_ms })
-        }
-        if (engine.metrics.active_requests !== null) {
-          eb.activeRequests.push({ timestamp: ts, value: engine.metrics.active_requests })
-        }
-        if (engine.metrics.queued_requests !== null) {
-          eb.queuedRequests.push({ timestamp: ts, value: engine.metrics.queued_requests })
-        }
-        if (engine.metrics.total_requests !== null) {
-          eb.totalRequests.push({ timestamp: ts, value: engine.metrics.total_requests })
-        }
-      }
-
-      // Accumulate per-engine inference requests
-      if (engine.recent_requests && engine.recent_requests.length > 0) {
-        if (!requestBuffersRef.current[key]) {
-          requestBuffersRef.current[key] =
-            new CircularBuffer<InferenceRequestData>(REQUEST_BUFFER_CAPACITY)
-        }
-        for (const req of engine.recent_requests) {
-          requestBuffersRef.current[key].push(req)
-        }
-      }
-    }
-
-    // Accumulate GPU events
-    if (metrics.gpu_events && metrics.gpu_events.length > 0) {
-      for (const event of metrics.gpu_events) {
-        eventBufferRef.current.push(event)
-      }
-    }
-
-    setVersion((v) => v + 1)
-  }, [metrics])
-
+  // The accessors change identity with every ingested snapshot, so memoized
+  // consumers (the event and request mappings in App) recompute exactly as
+  // often as they did under the old version counter.
   const getChartData = useCallback(
-    (metric: string): DataPoint[] => {
-      // Force dependency on version for reactivity
+    (metric: string, window?: TimeWindow) => {
       void version
-
-      const windowMs = DEFAULT_WINDOW_SECONDS * 1000
-      const now = lastTimestampRef.current
-      const cutoff = now - windowMs
-
-      // Check system metrics
-      const systemBuffer =
-        buffersRef.current[metric as MetricKey]
-      if (systemBuffer) {
-        return systemBuffer
-          .toArray()
-          .filter((dp) => dp.timestamp >= cutoff)
-      }
-
-      const gpuMatch = metric.match(/^gpu:(\d+):(gpuUtil|gpuTemp|gpuPower|gpuClockGraphics)$/)
-      if (gpuMatch) {
-        const gb = gpuBuffersRef.current[gpuMatch[1]]
-        const buffer = gb?.[gpuMatch[2] as MetricKey]
-        if (buffer) {
-          return buffer
-            .toArray()
-            .filter((dp) => dp.timestamp >= cutoff)
-        }
-      }
-
-      // Check engine metrics (format: "engineKey:metricName")
-      const colonIndex = metric.lastIndexOf(':')
-      if (colonIndex > 0) {
-        const key = metric.substring(0, colonIndex)
-        const metricName = metric.substring(colonIndex + 1)
-        const eb = engineBuffersRef.current[key]
-        if (eb && eb[metricName]) {
-          return eb[metricName]
-            .toArray()
-            .filter((dp) => dp.timestamp >= cutoff)
-        }
-      }
-
-      return []
+      return store.getChartData(metric, window)
     },
-    [version],
+    [store, version],
   )
 
   const getSparklineData = useCallback(
     (metric: string, count = 30): number[] => {
       void version
-
-      const systemBuffer =
-        buffersRef.current[metric as MetricKey]
-      if (systemBuffer) {
-        return systemBuffer.last(count).map((dp) => dp.value)
-      }
-
-      const gpuMatch = metric.match(/^gpu:(\d+):(gpuUtil|gpuTemp|gpuPower|gpuClockGraphics)$/)
-      if (gpuMatch) {
-        const gb = gpuBuffersRef.current[gpuMatch[1]]
-        const buffer = gb?.[gpuMatch[2] as MetricKey]
-        if (buffer) {
-          return buffer.last(count).map((dp) => dp.value)
-        }
-      }
-
-      const colonIndex = metric.lastIndexOf(':')
-      if (colonIndex > 0) {
-        const key = metric.substring(0, colonIndex)
-        const metricName = metric.substring(colonIndex + 1)
-        const eb = engineBuffersRef.current[key]
-        if (eb && eb[metricName]) {
-          return eb[metricName].last(count).map((dp) => dp.value)
-        }
-      }
-
-      return []
+      return store.getSparklineData(metric, count)
     },
-    [version],
+    [store, version],
   )
 
-  const getEvents = useCallback((): GpuEventData[] => {
-    void version
-
-    const windowMs = DEFAULT_WINDOW_SECONDS * 1000
-    const now = lastTimestampRef.current
-    const cutoff = now - windowMs
-
-    return eventBufferRef.current
-      .toArray()
-      .filter((e) => e.timestamp_ms >= cutoff)
-  }, [version])
+  const getEvents = useCallback(
+    (window?: TimeWindow): GpuEventData[] => {
+      void version
+      return store.getEvents(window)
+    },
+    [store, version],
+  )
 
   /** Recent requests, optionally narrowed to one engine. `key` is an engine
    *  key as produced by `engineKey()`; omit it for every engine's requests. */
   const getRequests = useCallback(
-    (key?: string): InferenceRequestData[] => {
+    (key?: string, window?: TimeWindow): InferenceRequestData[] => {
       void version
-
-      const windowMs = DEFAULT_WINDOW_SECONDS * 1000
-      const now = lastTimestampRef.current
-      const cutoff = now - windowMs
-
-      if (key) {
-        const buf = requestBuffersRef.current[key]
-        if (!buf) return []
-        return buf.toArray().filter((r) => r.end_ms >= cutoff)
-      }
-
-      // Return all engines' requests
-      const all: InferenceRequestData[] = []
-      for (const buf of Object.values(requestBuffersRef.current)) {
-        for (const r of buf.toArray()) {
-          if (r.end_ms >= cutoff) {
-            all.push(r)
-          }
-        }
-      }
-      return all
+      return store.getRequests(key, window)
     },
-    [version],
+    [store, version],
   )
 
   return { getChartData, getSparklineData, getEvents, getRequests }

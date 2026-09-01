@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
 import { LogViewer } from '../components/LogViewer'
+import { MockWebSocket, substituteWebSocket } from '../test/websocket'
 import type { EngineSnapshot } from '../types/metrics'
 
 const engine = (
@@ -17,44 +18,7 @@ const engine = (
   gpu_indexes: [],
 })
 
-// Mock WebSocket
-class MockWebSocket {
-  static instances: MockWebSocket[] = []
-  url: string
-  onopen: ((ev: Event) => void) | null = null
-  onmessage: ((ev: MessageEvent) => void) | null = null
-  onclose: ((ev: CloseEvent) => void) | null = null
-  onerror: ((ev: Event) => void) | null = null
-  readyState = 0
-
-  constructor(url: string) {
-    this.url = url
-    MockWebSocket.instances.push(this)
-  }
-
-  close() {
-    this.readyState = 3
-    if (this.onclose) this.onclose(new CloseEvent('close'))
-  }
-
-  send() {}
-
-  // Helper to simulate server messages
-  receive(data: string) {
-    if (this.onmessage) this.onmessage(new MessageEvent('message', { data }))
-  }
-
-  // Helper to simulate connection
-  connect() {
-    this.readyState = 1
-    if (this.onopen) this.onopen(new Event('open'))
-  }
-}
-
-// Swap the global WebSocket for the mock. `globalThis` is typed without an
-// index signature, so widen it rather than reaching for `any`.
-;(globalThis as unknown as { WebSocket: typeof WebSocket }).WebSocket =
-  MockWebSocket as unknown as typeof WebSocket
+substituteWebSocket()
 
 /** Expand the console (which lazily opens the socket) and return the socket. */
 function expand(): MockWebSocket {
