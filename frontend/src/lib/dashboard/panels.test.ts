@@ -1,10 +1,13 @@
 import { describe, it, expect } from 'vitest'
+import { GRID_COLUMNS, GRID_MAX_ROWS } from './grid'
 import {
   PANEL_TYPES,
   PANEL_TYPE_IDS,
+  defaultPanelSize,
   defaultPanelTitle,
   isKnownPanelType,
   panelBindingKind,
+  panelUsesWindow,
 } from './panels'
 
 describe('the panel type vocabulary', () => {
@@ -87,6 +90,47 @@ describe('panelBindingKind', () => {
     // Nothing can be bound for a panel this build cannot render at all; it
     // shows an unsupported-panel placeholder instead.
     expect(panelBindingKind('gpu-voltage')).toBe('none')
+  })
+})
+
+describe('defaultPanelSize', () => {
+  it('gives every panel type a size that fits an empty page', () => {
+    // A size no page could ever hold would make its palette entry permanently
+    // refusable, which reads as a broken palette rather than as a full page.
+    for (const id of PANEL_TYPE_IDS) {
+      const { w, h } = defaultPanelSize(id)
+      expect(w, id).toBeGreaterThanOrEqual(1)
+      expect(h, id).toBeGreaterThanOrEqual(1)
+      expect(w, id).toBeLessThanOrEqual(GRID_COLUMNS)
+      expect(h, id).toBeLessThanOrEqual(GRID_MAX_ROWS)
+    }
+  })
+
+  it('gives a log panel the extra width a line of output needs', () => {
+    expect(defaultPanelSize('logs').w).toBeGreaterThan(defaultPanelSize('gpu-power').w)
+  })
+
+  it('falls back to the standard size for an unimplemented panel', () => {
+    // A rolled-back build cannot add one of these from the palette, but the
+    // size is still asked for wherever a panel is placed by type.
+    expect(defaultPanelSize('gpu-voltage')).toEqual(defaultPanelSize('gpu-power'))
+  })
+})
+
+describe('panelUsesWindow', () => {
+  it('reports a charting panel as covering a time window', () => {
+    expect(panelUsesWindow('gpu-power')).toBe(true)
+    expect(panelUsesWindow('engine-latency')).toBe(true)
+  })
+
+  it('reports the log panel as not covering one', () => {
+    // Logs are a live tail of whatever the engine last printed, so offering a
+    // window to choose would be a control that changes nothing.
+    expect(panelUsesWindow('logs')).toBe(false)
+  })
+
+  it('reports an unimplemented panel as not covering one', () => {
+    expect(panelUsesWindow('gpu-voltage')).toBe(false)
   })
 })
 

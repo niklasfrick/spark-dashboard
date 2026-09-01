@@ -1,12 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import { FOLLOW } from './bindings'
+import { FOLLOW, UNREADABLE } from './bindings'
 import {
+  addPanel,
   applyLayoutChanges,
   judgeDrop,
   refusedPanelTitle,
+  removePanel,
+  renamePanel,
+  repointPanel,
   requestedCells,
+  setPanelWindow,
   withPagePanels,
 } from './editing'
+import { defaultPanelSize } from './panels'
 import { GRID_COLUMNS, GRID_MAX_ROWS, type PanelGeometry } from './grid'
 import { DEFAULT_TIME_WINDOW, type DashboardDocument, type DashboardPanel } from './schema'
 
@@ -188,5 +194,131 @@ describe('naming the panel a refusal is about', () => {
 
     expect(refusedPanelTitle(panels, null)).toBeNull()
     expect(refusedPanelTitle(panels, 'a-panel-since-removed')).toBeNull()
+  })
+})
+
+describe('adding a panel from the palette', () => {
+  it('places it in the first free slot, so nothing has to be aimed at', () => {
+    // The left half of the top rows is taken; reading order puts the new panel
+    // immediately to its right rather than below everything.
+    const outcome = addPanel([panel('a', at(0, 0, 6, 3))], 'gpu-power')
+
+    expect(outcome).toMatchObject({ status: 'added' })
+    if (outcome.status !== 'added') return
+    expect(outcome.panels).toHaveLength(2)
+    expect(outcome.panels[1].geometry).toEqual({ x: 6, y: 0, ...defaultPanelSize('gpu-power') })
+  })
+
+  it('adds it at the size its type asks for', () => {
+    const outcome = addPanel([], 'logs')
+
+    expect(outcome.status === 'added' && outcome.panels[0].geometry).toEqual({
+      x: 0,
+      y: 0,
+      ...defaultPanelSize('logs'),
+    })
+  })
+
+  it('leaves it following the page, so it renders on any host', () => {
+    // A panel pinned at birth would name a target the operator never chose,
+    // and would be wrong on the next machine the layout is opened on.
+    const outcome = addPanel([], 'gpu-power')
+
+    expect(outcome.status === 'added' && outcome.panels[0]).toMatchObject({
+      type: 'gpu-power',
+      binding: FOLLOW,
+      window: DEFAULT_TIME_WINDOW,
+    })
+    // No title: the type's default is used, so renaming a default later
+    // reaches panels an operator added but never renamed.
+    expect(outcome.status === 'added' && 'title' in outcome.panels[0]).toBe(false)
+  })
+
+  it('gives the panel an id no other panel on the page holds', () => {
+    const first = addPanel([], 'gpu-power')
+    const second = first.status === 'added' ? addPanel(first.panels, 'gpu-power') : first
+
+    expect(second.status === 'added' && second.panels.map((p) => p.id)).toEqual([
+      'gpu-power',
+      'gpu-power-2',
+    ])
+  })
+
+  it('refuses when the page has no room, and changes nothing', () => {
+    // The refusal is per panel size rather than per page: what is full is the
+    // space this panel would need, which is the only thing the operator can act
+    // on.
+    const full = [panel('a', at(0, 0, GRID_COLUMNS, GRID_MAX_ROWS))]
+
+    expect(addPanel(full, 'gpu-power')).toEqual({ status: 'out-of-room' })
+  })
+})
+
+describe('removing a panel', () => {
+  it('drops the one named and leaves the rest where they are', () => {
+    const panels = [panel('a', at(0, 0, 6, 4)), panel('b', at(6, 0, 6, 4))]
+
+    expect(removePanel(panels, 'a')).toEqual([panels[1]])
+  })
+
+  it('hands back the very same list when the page has no such panel', () => {
+    const panels = [panel('a', at(0, 0, 6, 4))]
+
+    expect(removePanel(panels, 'ghost')).toBe(panels)
+  })
+})
+
+describe('renaming a panel', () => {
+  it('puts the operator’s own words in the title', () => {
+    const [renamed] = renamePanel([panel('a', at(0, 0, 6, 4))], 'a', 'Node 3 RAM')
+
+    expect(renamed.title).toBe('Node 3 RAM')
+  })
+
+  it('drops the title entirely when it is cleared', () => {
+    // Absent, not empty: the panel goes back to reading as its type's default
+    // rather than rendering a blank header, and the document says so.
+    const titled = [{ ...panel('a', at(0, 0, 6, 4)), title: 'Node 3 RAM' }]
+
+    expect('title' in renamePanel(titled, 'a', '   ')[0]).toBe(false)
+  })
+
+  it('changes nothing else about the panel', () => {
+    const original = panel('a', at(0, 0, 6, 4))
+
+    expect(renamePanel([original], 'a', 'Node 3 RAM')[0]).toEqual({
+      ...original,
+      title: 'Node 3 RAM',
+    })
+  })
+})
+
+describe('a panel’s own time window', () => {
+  it('is set on that panel alone, so two can differ on one page', () => {
+    const panels = [panel('a', at(0, 0, 6, 4)), panel('b', at(6, 0, 6, 4))]
+
+    const next = setPanelWindow(panels, 'b', '15m')
+
+    expect(next.map((p) => p.window)).toEqual([DEFAULT_TIME_WINDOW, '15m'])
+  })
+})
+
+describe('pointing a panel at a target', () => {
+  it('pins it to the target the operator chose', () => {
+    const [pinned] = repointPanel([panel('a', at(0, 0, 6, 4))], 'a', { kind: 'gpu', index: 2 })
+
+    expect(pinned.binding).toEqual({ kind: 'gpu', index: 2 })
+  })
+
+  it('puts it back to following the page', () => {
+    const pinned = [{ ...panel('a', at(0, 0, 6, 4)), binding: { kind: 'gpu', index: 2 } as const }]
+
+    expect(repointPanel(pinned, 'a', FOLLOW)[0].binding).toEqual(FOLLOW)
+  })
+
+  it('is how a binding that could not be read is repaired', () => {
+    const broken = [{ ...panel('a', at(0, 0, 6, 4)), binding: UNREADABLE }]
+
+    expect(repointPanel(broken, 'a', FOLLOW)[0].binding).toEqual(FOLLOW)
   })
 })
