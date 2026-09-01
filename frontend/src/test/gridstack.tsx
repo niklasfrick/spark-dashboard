@@ -10,16 +10,24 @@
  * covers the real engine. Direct prior art: the multi-GPU dashboard spec
  * substitutes the chart component for exactly this reason.
  *
+ * What it does record is the *contract* with the library — the options it was
+ * mounted with and the geometry each item was given — and it lets a spec fire
+ * the one callback that carries geometry back (see `gridSubstitute`). That is
+ * how a spec drives a rearrangement without a layout engine; whether a real drag
+ * produces one is the browser project's question, not this file's.
+ *
  * The browser project must never load this file; it exists to exercise the
  * real library.
  */
 
-import type { ReactNode } from 'react'
+import { useEffect, type ReactNode } from 'react'
+import { recordGrid, recordItem, type GridNode } from './gridSubstitute'
 
 interface GridStackProps {
-  options?: unknown
+  options?: Record<string, unknown>
   children?: ReactNode
   className?: string
+  onChange?: (event: Event, nodes: GridNode[]) => void
 }
 
 interface GridStackItemProps {
@@ -28,7 +36,9 @@ interface GridStackItemProps {
   children?: ReactNode
 }
 
-export function GridStack({ children, className }: GridStackProps) {
+export function GridStack({ children, className, options, onChange }: GridStackProps) {
+  useEffect(() => recordGrid({ options, onChange }))
+
   return (
     <div data-testid="grid-stack" className={className}>
       {children}
@@ -36,6 +46,8 @@ export function GridStack({ children, className }: GridStackProps) {
   )
 }
 
-export function GridStackItem({ id, children }: GridStackItemProps) {
+export function GridStackItem({ id, options, children }: GridStackItemProps) {
+  useEffect(() => recordItem(id, options))
+
   return <div data-testid={`grid-stack-item-${id}`}>{children}</div>
 }

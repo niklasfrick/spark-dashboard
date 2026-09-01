@@ -9,8 +9,11 @@ import { MetricsStoreProvider } from './hooks/MetricsStoreProvider'
 import { AppHeader } from './components/AppHeader'
 import { ConfigurationNotices } from './components/ConfigurationNotices'
 import { Dashboard } from './components/views/Dashboard'
-import { GridPage } from './components/grid/GridPage'
+import { GridPageEditor } from './components/grid/GridPageEditor'
 import { LogViewer } from './components/LogViewer'
+import { withPagePanels } from './lib/dashboard/editing'
+import type { SaveOutcome } from './lib/dashboard/client'
+import type { DashboardPanel } from './lib/dashboard/schema'
 import type { GpuEvent, InferenceRequest } from './types/events'
 
 function AppContent() {
@@ -96,11 +99,22 @@ function AppContent() {
 function GridPageContent({ pageId }: { pageId: string }) {
   const { metrics, connectionStatus, isStale } = useMetrics()
   useMetricsIngest(metrics)
-  const { document, notices: configurationNotices } = useDashboardConfiguration()
+  const { document, notices: configurationNotices, readOnly, save } = useDashboardConfiguration()
 
   // Null document means the load has not resolved; rendering nothing beats
   // flashing the preset past an operator whose real page is milliseconds away.
   const page = document?.pages.find((candidate) => candidate.id === pageId)
+
+  // The whole document is written, not the page: it is one instance-scoped
+  // configuration, and a save has to carry the pages the operator was not
+  // editing along with the one they were.
+  const savePanels = useCallback(
+    (panels: DashboardPanel[]) =>
+      document
+        ? save(withPagePanels(document, pageId, panels))
+        : Promise.resolve<SaveOutcome['status']>('failed'),
+    [document, pageId, save],
+  )
 
   return (
     <div className="h-dvh flex flex-col bg-[#08080a] overflow-hidden">
@@ -111,7 +125,7 @@ function GridPageContent({ pageId }: { pageId: string }) {
       <main className="flex-1 min-h-0 p-3 lg:p-4 2xl:p-5 min-[1920px]:p-6">
         {document &&
           (page ? (
-            <GridPage key={page.id} page={page} />
+            <GridPageEditor key={page.id} page={page} readOnly={readOnly} onSave={savePanels} />
           ) : (
             <div className="h-full flex items-center justify-center">
               <div className="text-center">
