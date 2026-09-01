@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
 import { LogViewer } from '../components/LogViewer'
+import { LogStreamProvider } from '../hooks/LogStreamProvider'
 import { MockWebSocket, substituteWebSocket } from '../test/websocket'
 import type { EngineSnapshot } from '../types/metrics'
 
@@ -20,6 +21,23 @@ const engine = (
 
 substituteWebSocket()
 
+type ViewerProps = Parameters<typeof LogViewer>[0]
+
+/**
+ * The drawer over a store of its own. The connection lives in the store now
+ * (shared per endpoint with the log panels), so the drawer needs a provider the
+ * way it needed a WebSocket before.
+ */
+function renderViewer(props: ViewerProps = {}) {
+  const wrap = (p: ViewerProps) => (
+    <LogStreamProvider>
+      <LogViewer {...p} />
+    </LogStreamProvider>
+  )
+  const result = render(wrap(props))
+  return { ...result, rerender: (next: ViewerProps) => result.rerender(wrap(next)) }
+}
+
 /** Expand the console (which lazily opens the socket) and return the socket. */
 function expand(): MockWebSocket {
   fireEvent.click(screen.getByText('▶ Console Logs'))
@@ -38,27 +56,27 @@ describe('LogViewer', () => {
   })
 
   it('renders collapsed by default', () => {
-    render(<LogViewer />)
+    renderViewer()
     expect(screen.getByText('▶ Console Logs')).toBeDefined()
     // Should not show the expanded log panel
     expect(screen.queryByText('▼ Console Logs')).toBeNull()
   })
 
   it('does not open a socket while collapsed (lazy connect)', () => {
-    render(<LogViewer />)
+    renderViewer()
     expect(MockWebSocket.instances).toHaveLength(0)
     expect(screen.getByText('click to stream')).toBeDefined()
   })
 
   it('connects on first expand', () => {
-    render(<LogViewer />)
+    renderViewer()
     const ws = expand()
     expect(MockWebSocket.instances).toHaveLength(1)
     expect(ws.url).toContain('/ws/logs')
   })
 
   it('closes the socket when collapsed again', () => {
-    render(<LogViewer />)
+    renderViewer()
     const ws = expand()
     act(() => ws.connect())
     fireEvent.click(screen.getByText('▼ Console Logs'))
@@ -67,14 +85,14 @@ describe('LogViewer', () => {
   })
 
   it('shows live state when connected', () => {
-    render(<LogViewer />)
+    renderViewer()
     const ws = expand()
     act(() => ws.connect())
     expect(screen.getByText('⏵ Live')).toBeDefined()
   })
 
   it('displays log messages from WebSocket', () => {
-    render(<LogViewer />)
+    renderViewer()
     const ws = expand()
     act(() => ws.connect())
     act(() => ws.receive('INFO: Server started on port 3000'))
@@ -82,7 +100,7 @@ describe('LogViewer', () => {
   })
 
   it('filters log lines by text', () => {
-    render(<LogViewer />)
+    renderViewer()
     const ws = expand()
     act(() => ws.connect())
     act(() => {
@@ -100,7 +118,7 @@ describe('LogViewer', () => {
   })
 
   it('shows paused state when pause button clicked', () => {
-    render(<LogViewer />)
+    renderViewer()
     const ws = expand()
     act(() => ws.connect())
     fireEvent.click(screen.getByText('⏵ Live'))
@@ -108,20 +126,20 @@ describe('LogViewer', () => {
   })
 
   it('shows waiting message when connected but no logs', () => {
-    render(<LogViewer />)
+    renderViewer()
     const ws = expand()
     act(() => ws.connect())
     expect(screen.getByText('Waiting for log output...')).toBeDefined()
   })
 
   it('shows connecting message before the socket opens', () => {
-    render(<LogViewer />)
+    renderViewer()
     expand()
     expect(screen.getByText('Connecting...')).toBeDefined()
   })
 
   it('shows the not-enabled hint when the handshake never succeeds', () => {
-    render(<LogViewer />)
+    renderViewer()
     const ws = expand()
     // Close without ever opening: /ws/logs is not registered on the backend.
     act(() => ws.close())
@@ -134,7 +152,7 @@ describe('LogViewer', () => {
   })
 
   it('reconnects after a dropped live connection', () => {
-    render(<LogViewer />)
+    renderViewer()
     const ws = expand()
     act(() => ws.connect())
     act(() => ws.close())
@@ -144,7 +162,7 @@ describe('LogViewer', () => {
   })
 
   it('highlights error lines in red', () => {
-    render(<LogViewer />)
+    renderViewer()
     const ws = expand()
     act(() => ws.connect())
     act(() => ws.receive('ERROR: critical failure'))
@@ -153,7 +171,7 @@ describe('LogViewer', () => {
   })
 
   it('highlights warning lines in yellow', () => {
-    render(<LogViewer />)
+    renderViewer()
     const ws = expand()
     act(() => ws.connect())
     act(() => ws.receive('WARN: deprecated function used'))
@@ -162,12 +180,10 @@ describe('LogViewer', () => {
   })
 
   it('passes the selected engine endpoint as ?engine=', () => {
-    render(
-      <LogViewer
-        engines={[engine('http://localhost:8000'), engine('http://localhost:8100')]}
-        selectedEndpoint="http://localhost:8100"
-      />,
-    )
+    renderViewer({
+      engines: [engine('http://localhost:8000'), engine('http://localhost:8100')],
+      selectedEndpoint: 'http://localhost:8100',
+    })
     const ws = expand()
     expect(ws.url).toContain(
       `/ws/logs?engine=${encodeURIComponent('http://localhost:8100')}`,
@@ -175,12 +191,10 @@ describe('LogViewer', () => {
   })
 
   it('falls back to the first Docker engine when no engine is selected', () => {
-    render(
-      <LogViewer
-        engines={[engine('http://localhost:8000', 'Native'), engine('http://localhost:8100')]}
-        selectedEndpoint={null}
-      />,
-    )
+    renderViewer({
+      engines: [engine('http://localhost:8000', 'Native'), engine('http://localhost:8100')],
+      selectedEndpoint: null,
+    })
     const ws = expand()
     expect(ws.url).toContain(
       `/ws/logs?engine=${encodeURIComponent('http://localhost:8100')}`,
@@ -189,15 +203,13 @@ describe('LogViewer', () => {
 
   it('reconnects and clears the buffer when the selected engine changes', () => {
     const engines = [engine('http://localhost:8000'), engine('http://localhost:8100')]
-    const { rerender } = render(
-      <LogViewer engines={engines} selectedEndpoint="http://localhost:8000" />,
-    )
+    const { rerender } = renderViewer({ engines, selectedEndpoint: 'http://localhost:8000' })
     const ws = expand()
     act(() => ws.connect())
     act(() => ws.receive('line from engine 8000'))
     expect(screen.getByText('line from engine 8000')).toBeDefined()
 
-    rerender(<LogViewer engines={engines} selectedEndpoint="http://localhost:8100" />)
+    rerender({ engines, selectedEndpoint: 'http://localhost:8100' })
 
     // A second socket is opened against the newly selected engine…
     expect(MockWebSocket.instances).toHaveLength(2)
@@ -209,7 +221,7 @@ describe('LogViewer', () => {
   })
 
   it('does not show the auto-scroll indicator while following the stream', () => {
-    render(<LogViewer />)
+    renderViewer()
     const ws = expand()
     act(() => ws.connect())
     act(() => {
@@ -223,7 +235,7 @@ describe('LogViewer', () => {
   })
 
   it('shows the auto-scroll indicator only after scrolling back, hides it at the bottom', () => {
-    const { container } = render(<LogViewer />)
+    const { container } = renderViewer()
     const ws = expand()
     act(() => ws.connect())
     act(() => ws.receive('line 1'))
@@ -249,9 +261,10 @@ describe('LogViewer', () => {
   })
 
   it('shows which engine is being streamed in the header', () => {
-    render(
-      <LogViewer engines={[engine('http://localhost:8000')]} selectedEndpoint="http://localhost:8000" />,
-    )
+    renderViewer({
+      engines: [engine('http://localhost:8000')],
+      selectedEndpoint: 'http://localhost:8000',
+    })
     expect(screen.getByText('http://localhost:8000')).toBeDefined()
   })
 })

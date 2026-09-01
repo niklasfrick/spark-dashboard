@@ -4,6 +4,7 @@ import { useMetrics } from './hooks/useMetrics'
 import { useMetricsHistory } from './hooks/useMetricsHistory'
 import { useMetricsIngest } from './hooks/useMetricsIngest'
 import { useRoute } from './hooks/useRoute'
+import { LogStreamProvider } from './hooks/LogStreamProvider'
 import { MetricsStoreProvider } from './hooks/MetricsStoreProvider'
 import { AppHeader } from './components/AppHeader'
 import { ConfigurationNotices } from './components/ConfigurationNotices'
@@ -129,16 +130,19 @@ function GridPageContent({ pageId }: { pageId: string }) {
   )
 }
 
-// The store provider sits above everything that reads metrics history, so the
-// grid pages and the current dashboard share one set of ring buffers. The root
-// URL keeps serving the pre-grid dashboard untouched until the #86 cutover;
-// grid pages are only reachable at their own URLs.
+// The store providers sit above everything that reads metrics history or log
+// streams, so the grid pages and the current dashboard share one set of ring
+// buffers and one connection per engine's logs. The root URL keeps serving the
+// pre-grid dashboard untouched until the #86 cutover; grid pages are only
+// reachable at their own URLs.
 function App() {
   const route = useRoute()
 
   return (
     <MetricsStoreProvider>
-      {route.kind === 'page' ? <GridPageContent pageId={route.pageId} /> : <AppContent />}
+      <LogStreamProvider>
+        {route.kind === 'page' ? <GridPageContent pageId={route.pageId} /> : <AppContent />}
+      </LogStreamProvider>
     </MetricsStoreProvider>
   )
 }
