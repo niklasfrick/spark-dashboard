@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { gaugeSizePx, hardwarePanelMode } from './mode'
+import { enginePanelMode, gaugeSizePx, hardwarePanelMode } from './mode'
 
 describe('hardwarePanelMode', () => {
   it('renders the richest layout while the box is unmeasured', () => {
@@ -23,6 +23,28 @@ describe('hardwarePanelMode', () => {
 
   it('prefers compact over chart-only when the box is both short and narrow', () => {
     expect(hardwarePanelMode({ width: 100, height: 40 })).toBe('compact')
+  })
+})
+
+describe('enginePanelMode', () => {
+  it('renders the richest layout while the box is unmeasured', () => {
+    expect(enginePanelMode({ width: 0, height: 0 })).toBe('full')
+  })
+
+  it('keeps the values and drops the chart in a short box', () => {
+    // Two rows of engine tiles alone need most of this height.
+    expect(enginePanelMode({ width: 400, height: 150 })).toBe('tiles')
+  })
+
+  it('charts under the values when the box is tall enough for both', () => {
+    // A 4×3 preset cell on a desktop viewport.
+    expect(enginePanelMode({ width: 400, height: 260 })).toBe('full')
+  })
+
+  it('keeps the chart in a narrow box, unlike the hardware panels', () => {
+    // Engine panels have no gauge column competing for the width, so narrow is
+    // not a reason to drop anything.
+    expect(enginePanelMode({ width: 120, height: 300 })).toBe('full')
   })
 })
 

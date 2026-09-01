@@ -12,15 +12,11 @@ import {
   serializeRotationState,
   type RotationInterval,
 } from '@/lib/rotation'
-import {
-  parseLatencyMode,
-  serializeLatencyMode,
-  type LatencyMode,
-} from '@/lib/latencyMode'
 import { aggregateEngines, groupRunningByProvider } from '@/lib/engineAggregate'
 import { engineDisplayName, formatGpuIndexes } from '@/lib/format'
 import { engineKey, findEngineByKey } from '@/lib/identity'
 import { getProviderLogo } from '@/lib/providerLogo'
+import { useLatencyMode } from '@/hooks/useLatencyMode'
 import { useTabRotation } from '@/hooks/useTabRotation'
 import type { EngineSnapshot, EngineType, DeploymentMode } from '@/types/metrics'
 import type { InferenceRequest } from '@/types/events'
@@ -31,7 +27,6 @@ const ENGINE_ICON: Record<EngineType, string> = {
 }
 
 const ROTATION_INTERVAL_STORAGE_KEY = 'spark-dashboard:engine-rotation-interval'
-const LATENCY_MODE_STORAGE_KEY = 'spark-dashboard:latency-mode'
 const ACTIVE_TAB_STORAGE_KEY = 'spark-dashboard:active-tab'
 
 function EngineChip({ label, iconSrc }: { label: string; iconSrc?: string }) {
@@ -167,14 +162,7 @@ export function EngineSection({
       return 10000
     }
   })
-  const [latencyMode, setLatencyMode] = useState<LatencyMode>(() => {
-    if (typeof window === 'undefined') return 'avg'
-    try {
-      return parseLatencyMode(window.localStorage.getItem(LATENCY_MODE_STORAGE_KEY))
-    } catch {
-      return 'avg'
-    }
-  })
+  const [latencyMode, setLatencyMode] = useLatencyMode()
   const [focusWithin, setFocusWithin] = useState(false)
   const [userPaused, setUserPaused] = useState(false)
 
@@ -228,15 +216,6 @@ export function EngineSection({
       // ignore storage errors (private mode, quota, etc.)
     }
   }, [rotationEnabledState, rotationInterval])
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    try {
-      window.localStorage.setItem(LATENCY_MODE_STORAGE_KEY, serializeLatencyMode(latencyMode))
-    } catch {
-      // ignore storage errors
-    }
-  }, [latencyMode])
 
   const aggregate = useMemo(() => aggregateEngines(engines), [engines])
   const providerGroups = useMemo(() => groupRunningByProvider(engines), [engines])

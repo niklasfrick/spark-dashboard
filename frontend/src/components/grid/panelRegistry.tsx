@@ -7,8 +7,8 @@
  * that keeps its grid slot. That is what lets the panel tickets (#81–#82) land
  * one at a time against a preset that already names every type.
  *
- * The eight hardware panels (#80) are implemented; the engine and log panels
- * arrive with #81/#82.
+ * The eight hardware panels (#80) and the engine metric panels (#81) are
+ * implemented; the log panel arrives with #82.
  */
 
 import type { ComponentType, ReactElement } from 'react'
@@ -16,6 +16,12 @@ import { isKnownPanelType, type PanelType } from '@/lib/dashboard/panels'
 import type { DashboardPanel } from '@/lib/dashboard/schema'
 import { CpuUtilizationPanel } from './panels/CpuUtilizationPanel'
 import { DiskIoPanel } from './panels/DiskIoPanel'
+import { EngineLatencyPanel } from './panels/EngineLatencyPanel'
+import { EngineRequestsPanel } from './panels/EngineRequestsPanel'
+import {
+  EngineDecodeThroughputPanel,
+  EnginePrefillThroughputPanel,
+} from './panels/EngineThroughputPanel'
 import { GpuClockPanel } from './panels/GpuClockPanel'
 import { GpuPowerPanel } from './panels/GpuPowerPanel'
 import { GpuTemperaturePanel } from './panels/GpuTemperaturePanel'
@@ -38,6 +44,10 @@ const PANEL_CONTENT: Partial<Record<PanelType, ComponentType<PanelContentProps>>
   memory: MemoryPanel,
   'disk-io': DiskIoPanel,
   'network-io': NetworkIoPanel,
+  'engine-prefill-throughput': EnginePrefillThroughputPanel,
+  'engine-decode-throughput': EngineDecodeThroughputPanel,
+  'engine-latency': EngineLatencyPanel,
+  'engine-requests': EngineRequestsPanel,
 }
 
 /**

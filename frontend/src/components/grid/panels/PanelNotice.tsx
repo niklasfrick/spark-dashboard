@@ -1,4 +1,6 @@
 import type { ReactNode } from 'react'
+import { engineDescription } from '@/lib/format'
+import type { EnginePanelNoticeState } from './useEnginePanel'
 import type { GpuPanelResolution } from './useGpuPanel'
 
 /**
@@ -15,9 +17,35 @@ export function PanelNotice({ children }: { children: ReactNode }) {
 }
 
 /**
- * What a GPU panel says instead of data. Silent substitution is prohibited
+ * What an engine panel says instead of data. Silent substitution is prohibited
  * (see `lib/dashboard/bindings.ts`), so each way of having no target names
- * itself; #81 extends the same vocabulary to the engine panels.
+ * itself — an operator who changed an engine's port sees which panels now point
+ * at nothing, and a panel never fills the gap with another engine's numbers.
+ */
+export function EnginePanelNotice({ resolution }: { resolution: EnginePanelNoticeState }) {
+  switch (resolution.status) {
+    case 'waiting':
+      return <PanelNotice>Waiting for metrics</PanelNotice>
+    case 'starting':
+      return <PanelNotice>{engineDescription(resolution.engine)} has no metrics yet.</PanelNotice>
+    case 'offline':
+      return (
+        <PanelNotice>
+          {engineDescription(resolution.engine)} {resolution.detail}
+        </PanelNotice>
+      )
+    case 'missing':
+      return <PanelNotice>No engine at {resolution.requested} — repoint this panel.</PanelNotice>
+    case 'unselected':
+      return <PanelNotice>No inference engine running.</PanelNotice>
+    case 'unreadable':
+      return <PanelNotice>This panel’s pinned engine could not be read — repoint it.</PanelNotice>
+  }
+}
+
+/**
+ * What a GPU panel says instead of data, on the same terms as the engine
+ * notices above.
  */
 export function GpuPanelNotice({
   resolution,

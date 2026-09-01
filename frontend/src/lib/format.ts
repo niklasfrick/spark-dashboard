@@ -1,3 +1,4 @@
+import type { EngineIdentity } from '@/lib/identity'
 import type { EngineType } from '@/types/metrics'
 
 const KIB = 1024
@@ -149,6 +150,30 @@ export function engineDisplayName(engineType: EngineType): string {
     Vllm: 'vLLM',
   }
   return names[engineType]
+}
+
+/**
+ * The readable half of an engine endpoint — `host:port`, without the scheme or
+ * any path. Falls back to the endpoint as stored when it does not parse as a
+ * URL, because the operator has to be able to match it against what they
+ * configured.
+ */
+export function formatEndpoint(endpoint: string): string {
+  try {
+    return new URL(endpoint).host || endpoint
+  } catch {
+    return endpoint
+  }
+}
+
+/**
+ * How an engine reads in a panel label or a placeholder: its provider plus the
+ * host and port of the instance. Both halves are needed — a machine can run
+ * several engines of the same provider, which is exactly when a panel has to say
+ * which one it is showing.
+ */
+export function engineDescription(engine: EngineIdentity): string {
+  return `${engineDisplayName(engine.engine_type)} ${formatEndpoint(engine.endpoint)}`
 }
 
 /** Apply a formatter to a nullable metric, rendering '--' when absent.

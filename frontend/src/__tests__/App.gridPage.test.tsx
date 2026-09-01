@@ -92,12 +92,37 @@ describe('the grid page route', () => {
     render(<App />)
     await configurationSettles(fetchMock)
 
-    // The tracer panels render for real; the preset panels no component
-    // implements yet keep their slots as placeholders (#80–#82).
+    // Every panel the preset places is implemented (#80/#81), so the page
+    // renders in full rather than around placeholders.
     expect(screen.getByRole('region', { name: 'CPU' })).toBeInTheDocument()
     expect(screen.getByRole('region', { name: 'Memory' })).toBeInTheDocument()
     expect(screen.getByRole('region', { name: 'GPU Utilization' })).toBeInTheDocument()
-    expect(screen.getAllByText('This panel is not available yet.')).not.toHaveLength(0)
+    expect(screen.getByRole('region', { name: 'Latency' })).toBeInTheDocument()
+    expect(screen.queryByText('This panel is not available yet.')).not.toBeInTheDocument()
+  })
+
+  it('keeps the slot of a panel type this build has not implemented yet', async () => {
+    // The vocabulary names more panels than the registry implements — the log
+    // panel arrives with #82, and a preset written by a newer build can place
+    // one this build has never rendered. It keeps its slot rather than
+    // reflowing the arrangement around it.
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        { id: 'a', type: 'logs', geometry: { x: 0, y: 0, w: 6, h: 4 } },
+        { id: 'b', type: 'memory', geometry: { x: 6, y: 0, w: 6, h: 4 } },
+      ]),
+    })
+    visit('/pages/watch')
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+
+    expect(
+      within(screen.getByRole('region', { name: 'Logs' })).getByText(
+        'This panel is not available yet.',
+      ),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Memory' })).toBeInTheDocument()
   })
 
   it('keeps an unknown panel type’s slot with a placeholder naming the type', async () => {

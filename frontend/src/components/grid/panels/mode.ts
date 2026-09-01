@@ -32,6 +32,32 @@ export function hardwarePanelMode({ width, height }: ElementSize): HardwarePanel
 }
 
 /**
+ * How an engine panel renders inside its own measured box.
+ *
+ *   - `full`  — the tile values with their trend chart underneath.
+ *   - `tiles` — the values alone; the box has no room left for a chart once the
+ *               tiles have taken what they need.
+ *
+ * Engine tiles are read, not glanced at — several labelled numbers rather than
+ * one gauge — so they claim their height first and the chart takes what is left.
+ */
+export type EnginePanelMode = 'full' | 'tiles'
+
+/**
+ * Below this content height (px) the tiles leave too little for a chart to say
+ * anything. Deliberately higher than the hardware panels' threshold: those give
+ * their chart the whole box beside a gauge, while here it shares the box with
+ * two or three rows of values.
+ */
+const TILES_ONLY_BELOW_PX = 200
+
+/** Pick the mode for a measured content box, on the same unmeasured-means-
+ *  richest terms as `hardwarePanelMode`. */
+export function enginePanelMode({ height }: ElementSize): EnginePanelMode {
+  return height > 0 && height < TILES_ONLY_BELOW_PX ? 'tiles' : 'full'
+}
+
+/**
  * The gauge column's square size for a measured content height: fill the row
  * up to the size the pre-grid dashboard capped its gauges at. Unmeasured
  * boxes get the cap, consistent with `hardwarePanelMode`'s richest-layout

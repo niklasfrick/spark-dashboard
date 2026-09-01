@@ -60,7 +60,7 @@ type EngineMetricsShape = NonNullable<MetricsSnapshot['engines'][number]['metric
  * buffer set is created from this table too, so the series names and the
  * field mapping cannot drift apart.
  */
-const ENGINE_SERIES: ReadonlyArray<readonly [string, (m: EngineMetricsShape) => number | null]> = [
+const ENGINE_SERIES = [
   ['tps', (m) => m.tokens_per_sec],
   ['avgTps', (m) => m.avg_tokens_per_sec],
   ['perReqTps', (m) => m.per_request_tps],
@@ -90,7 +90,20 @@ const ENGINE_SERIES: ReadonlyArray<readonly [string, (m: EngineMetricsShape) => 
   ['activeRequests', (m) => m.active_requests],
   ['queuedRequests', (m) => m.queued_requests],
   ['totalRequests', (m) => m.total_requests],
-]
+] as const satisfies ReadonlyArray<readonly [string, (m: EngineMetricsShape) => number | null]>
+
+/** The per-engine series, named by the table above so a panel cannot ask for
+ *  one that is never ingested. */
+export type EngineSeriesName = (typeof ENGINE_SERIES)[number][0]
+
+/**
+ * The series key for one engine's metric. `key` is an engine key as produced by
+ * `engineKey()` — one definition, because the ingest side and every panel that
+ * charts an engine must agree on it.
+ */
+export function engineSeries(name: EngineSeriesName, key: string): string {
+  return `${key}:${name}`
+}
 
 /** The series key of the event buffer, for subscriptions. */
 export const EVENTS_SERIES = 'events'
