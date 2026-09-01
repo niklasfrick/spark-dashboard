@@ -2,10 +2,13 @@ import { useCallback, useMemo, useState } from 'react'
 import { useDashboardConfiguration } from './hooks/useDashboardConfiguration'
 import { useMetrics } from './hooks/useMetrics'
 import { useMetricsHistory } from './hooks/useMetricsHistory'
+import { useMetricsIngest } from './hooks/useMetricsIngest'
+import { useRoute } from './hooks/useRoute'
 import { MetricsStoreProvider } from './hooks/MetricsStoreProvider'
+import { AppHeader } from './components/AppHeader'
 import { ConfigurationNotices } from './components/ConfigurationNotices'
-import { ConnectionBadge } from './components/ConnectionBadge'
 import { Dashboard } from './components/views/Dashboard'
+import { GridPage } from './components/grid/GridPage'
 import { LogViewer } from './components/LogViewer'
 import type { GpuEvent, InferenceRequest } from './types/events'
 
@@ -50,13 +53,7 @@ function AppContent() {
 
   return (
     <div className="h-dvh flex flex-col bg-[#08080a] overflow-hidden">
-      <header className="shrink-0 border-b border-white/[0.04] px-4 py-1.5 flex justify-between items-center">
-        <h1 className="text-xl font-semibold text-zinc-100 tracking-tight" style={{ fontFamily: 'Inter, sans-serif' }}>
-          <span className="text-[#76B900]">Spark</span>{' '}
-          <span className="text-zinc-500 font-normal">Dashboard</span>
-        </h1>
-        <ConnectionBadge status={connectionStatus} isStale={isStale} />
-      </header>
+      <AppHeader status={connectionStatus} isStale={isStale} />
 
       <ConfigurationNotices notices={configurationNotices} />
 
@@ -91,12 +88,57 @@ function AppContent() {
   )
 }
 
+// A grid page at its own URL (#79): the same masthead and notices as the root,
+// with the panels rendered from the stored configuration. Snapshots are only
+// ingested here — each panel subscribes to its own series, so this shell does
+// not re-render per snapshot the way the pre-grid dashboard does.
+function GridPageContent({ pageId }: { pageId: string }) {
+  const { metrics, connectionStatus, isStale } = useMetrics()
+  useMetricsIngest(metrics)
+  const { document, notices: configurationNotices } = useDashboardConfiguration()
+
+  // Null document means the load has not resolved; rendering nothing beats
+  // flashing the preset past an operator whose real page is milliseconds away.
+  const page = document?.pages.find((candidate) => candidate.id === pageId)
+
+  return (
+    <div className="h-dvh flex flex-col bg-[#08080a] overflow-hidden">
+      <AppHeader status={connectionStatus} isStale={isStale} />
+
+      <ConfigurationNotices notices={configurationNotices} />
+
+      <main className="flex-1 min-h-0 p-3 lg:p-4 2xl:p-5 min-[1920px]:p-6">
+        {document &&
+          (page ? (
+            <GridPage key={page.id} page={page} />
+          ) : (
+            <div className="h-full flex items-center justify-center">
+              <div className="text-center">
+                <h2 className="text-xl font-bold text-zinc-50 mb-2">No page at this address</h2>
+                <p className="text-zinc-400 mb-4">
+                  The dashboard configuration has no page “{pageId}”. It may have been deleted.
+                </p>
+                <a href="/" className="text-[#76B900] hover:underline">
+                  Back to the dashboard
+                </a>
+              </div>
+            </div>
+          ))}
+      </main>
+    </div>
+  )
+}
+
 // The store provider sits above everything that reads metrics history, so the
-// coming grid pages and the current dashboard share one set of ring buffers.
+// grid pages and the current dashboard share one set of ring buffers. The root
+// URL keeps serving the pre-grid dashboard untouched until the #86 cutover;
+// grid pages are only reachable at their own URLs.
 function App() {
+  const route = useRoute()
+
   return (
     <MetricsStoreProvider>
-      <AppContent />
+      {route.kind === 'page' ? <GridPageContent pageId={route.pageId} /> : <AppContent />}
     </MetricsStoreProvider>
   )
 }
