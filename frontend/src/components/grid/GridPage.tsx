@@ -1,6 +1,7 @@
 import 'gridstack/dist/gridstack.css'
 import { useMemo } from 'react'
 import { GridStack, GridStackItem, type GridStackOptions } from 'gridstack/dist/react'
+import { PageSelectionProvider } from '@/hooks/PageSelectionProvider'
 import { useElementSize } from '@/hooks/useElementSize'
 import { GRID_COLUMNS, GRID_MAX_ROWS } from '@/lib/dashboard/grid'
 import type { DashboardPage } from '@/lib/dashboard/schema'
@@ -74,13 +75,18 @@ export function GridPage({ page }: { page: DashboardPage }) {
       style={{ height: '100%' }}
       className={`min-h-0 ${narrow ? 'overflow-y-auto' : 'overflow-hidden'}`}
     >
-      <GridStack options={options}>
-        {page.panels.map((panel) => (
-          <GridStackItem key={panel.id} id={panel.id} options={panel.geometry}>
-            <GridPanel panel={panel} />
-          </GridStackItem>
-        ))}
-      </GridStack>
+      {/* The selection is per page and lives inside it: every following panel
+          on this page reads the same GPU and engine, and a page mounted at
+          another id starts from the host's defaults again. */}
+      <PageSelectionProvider>
+        <GridStack options={options}>
+          {page.panels.map((panel) => (
+            <GridStackItem key={panel.id} id={panel.id} options={panel.geometry}>
+              <GridPanel panel={panel} />
+            </GridStackItem>
+          ))}
+        </GridStack>
+      </PageSelectionProvider>
     </div>
   )
 }
