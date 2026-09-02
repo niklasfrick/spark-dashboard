@@ -293,6 +293,32 @@ Override the location with `--state-dir` / `SPARK_DASHBOARD_STATE_DIR` — under
 systemd that also needs a unit override, since `ProtectSystem=strict` leaves the
 granted state directory the only writable path.
 
+**Backing it up is copying the file.** There is deliberately no import/export
+feature; the location is documented instead, so an operator can copy a
+configuration to another host or keep a snapshot before experimenting:
+
+```bash
+# systemd
+sudo cp /var/lib/spark-dashboard/dashboards.json ~/dashboards.backup.json
+sudo systemctl stop spark-dashboard                                   # restore
+sudo install -o spark-dashboard -g spark-dashboard -m 644 \
+  ~/dashboards.backup.json /var/lib/spark-dashboard/dashboards.json
+sudo systemctl start spark-dashboard
+
+# Docker — see deploy/docker/docker.md for the volume commands
+```
+
+Stop the service first so the copy cannot land under a write, and **reload any
+open dashboard afterwards**: a browser still holding the pre-restore document
+would put it straight back on its next save.
+
+> **The document's format is internal and subject to change.** It is the
+> frontend's own versioned state, not a stable contract
+> ([ADR-0002](./docs/adr/0002-configuration-is-an-opaque-document.md)) — copy the
+> file whole, don't generate or hand-edit it. A document written by a newer build
+> is refused by an older one, which falls back to the default preset with a
+> banner rather than failing.
+
 ```
 GET    /api/dashboard   the document, or 204 when none is stored
 PUT    /api/dashboard   replaces it wholesale (204 on success)
