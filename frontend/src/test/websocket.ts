@@ -1,7 +1,7 @@
 /**
  * A stand-in for the browser WebSocket, shared by every spec that drives the
- * application through the socket seam — the log viewer's log stream and the
- * metrics feed both arrive this way.
+ * application through the socket seam — a log panel's stream and the metrics
+ * feed both arrive this way.
  *
  * One copy, for the same reason `configurationServer.ts` is one copy: two
  * substitutes of the same seam under the same name and different behavior is

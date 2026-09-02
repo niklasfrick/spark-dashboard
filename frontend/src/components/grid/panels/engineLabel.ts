@@ -15,16 +15,27 @@ export function engineLabel(resolution: ResolvedEngineTarget): string | null {
   return resolution.multiEngine ? engineDescription(resolution.engine) : null
 }
 
+/** How a panel says which engine it is showing. */
+export interface EngineIdentity {
+  /** The engine process, named. Null on a single-engine host. */
+  label: string | null
+  /** The provider of the model it is serving. Null on a single-engine host,
+   *  and for a model no shipped provider is recognized from. */
+  logo: ProviderLogo | null
+}
+
 /**
- * The logo of whoever published the model this engine is serving, for the same
- * row and on the same terms as the label.
+ * Both halves of the identity a panel wears, resolved together because they are
+ * only ever shown together.
  *
- * The two say different halves of the same thing: the label names the engine
- * process, the mark names what it is serving — which is how an operator
- * actually tells two panels apart when both endpoints are localhost. Null for
- * a model no provider is recognized from, and on a single-engine host, where
- * there is nothing to tell apart.
+ * They say different things: the label names the engine process, the mark names
+ * what it is serving — which is how an operator actually tells two panels apart
+ * when both endpoints are on localhost. Both are absent on a single-engine
+ * host, where there is nothing to tell apart.
  */
-export function engineLogo(resolution: ResolvedEngineTarget): ProviderLogo | null {
-  return resolution.multiEngine ? getProviderLogo(resolution.engine.model?.name) : null
+export function engineIdentity(resolution: ResolvedEngineTarget): EngineIdentity {
+  return {
+    label: engineLabel(resolution),
+    logo: resolution.multiEngine ? getProviderLogo(resolution.engine.model?.name) : null,
+  }
 }

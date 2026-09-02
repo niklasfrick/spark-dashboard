@@ -1,8 +1,8 @@
 import { TimeSeriesChart } from '@/components/charts/TimeSeriesChart'
-import { MetricTile } from '@/components/engines/EngineCardPrimitives'
+import { MetricTile } from '@/components/engines/EnginePanelPrimitives'
 import { fmtInt } from '@/lib/format'
 import { EnginePanelBody } from './EnginePanelBody'
-import { engineLabel, engineLogo } from './engineLabel'
+import { engineIdentity } from './engineLabel'
 import { EnginePanelNotice } from './PanelNotice'
 import { useEnginePanel } from './useEnginePanel'
 import type { PanelContentProps } from '../panelRegistry'
@@ -24,8 +24,7 @@ export function EngineRequestsPanel({ panel }: PanelContentProps) {
 
   return (
     <EnginePanelBody
-      label={engineLabel(resolution)}
-      logo={engineLogo(resolution)}
+      identity={engineIdentity(resolution)}
       tiles={
         <div className="grid grid-cols-2 gap-1.5">
           <MetricTile label="Active" value={fmtInt(metric('active_requests'))} />

@@ -1,11 +1,11 @@
 import { TimeSeriesChart } from '@/components/charts/TimeSeriesChart'
-import { LiveWithTotal, MetricTile } from '@/components/engines/EngineCardPrimitives'
+import { LiveWithTotal, MetricTile } from '@/components/engines/EnginePanelPrimitives'
 import { computeTrend } from '@/lib/engineStats'
 import { formatTps, fmtVal } from '@/lib/format'
 import type { NumericEngineMetric } from '@/lib/engineMetrics'
 import type { EngineSeriesName } from '@/lib/metricsHistoryStore'
 import { EnginePanelBody } from './EnginePanelBody'
-import { engineLabel, engineLogo } from './engineLabel'
+import { engineIdentity } from './engineLabel'
 import { EnginePanelNotice } from './PanelNotice'
 import { useEnginePanel } from './useEnginePanel'
 import type { PanelContentProps } from '../panelRegistry'
@@ -65,8 +65,7 @@ function ThroughputPanel({ panel, fields }: PanelContentProps & { fields: Throug
 
   return (
     <EnginePanelBody
-      label={engineLabel(resolution)}
-      logo={engineLogo(resolution)}
+      identity={engineIdentity(resolution)}
       tiles={
         <div className="grid grid-cols-1 gap-1.5">
           <LiveWithTotal

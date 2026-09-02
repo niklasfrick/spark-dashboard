@@ -482,6 +482,7 @@ real NVML/procfs parsing on Linux, with compile-time stubs on other platforms.
 │       │   ├── grid/           GridPage, palette, panel settings
 │       │   │   └── panels/     One component per panel type
 │       │   ├── pages/          Header page tabs and page settings
+│       │   ├── engines/        Engine tiles, gauges and per-panel controls
 │       │   ├── charts/         TimeSeriesChart, CoreHeatmap
 │       │   └── gauges/         ArcGauge, HBar
 │       ├── types/              TypeScript type definitions

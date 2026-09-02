@@ -1,15 +1,14 @@
 import type { ReactNode } from 'react'
 import { useElementSize } from '@/hooks/useElementSize'
 import type { ProviderLogo } from '@/lib/providerLogo'
+import type { EngineIdentity } from './engineLabel'
 import { enginePanelMode } from './mode'
 
 interface EnginePanelBodyProps {
-  /** Names the engine, on a host running more than one. Null keeps the row out
-   *  of the layout entirely, which is the single-engine case. */
-  label?: string | null
-  /** The served model's provider, shown beside the label. Null where the label
-   *  is, and also where the model matches no provider we ship a mark for. */
-  logo?: ProviderLogo | null
+  /** Which engine this panel is showing — its name, and the provider of the
+   *  model it serves. Both null on a single-engine host, which keeps the row
+   *  out of the layout entirely. */
+  identity?: EngineIdentity
   /** Controls belonging to this panel — the SLO thresholds, the latency mode.
    *  They share the label row, so they cost no height of their own. */
   actions?: ReactNode
@@ -28,7 +27,8 @@ interface EnginePanelBodyProps {
  * numbers under another's name — with several engines on a host, "Latency"
  * alone does not say whose.
  */
-export function EnginePanelBody({ label, logo, actions, tiles, chart }: EnginePanelBodyProps) {
+export function EnginePanelBody({ identity, actions, tiles, chart }: EnginePanelBodyProps) {
+  const { label, logo } = identity ?? { label: null, logo: null }
   const [ref, size] = useElementSize<HTMLDivElement>()
   const mode = enginePanelMode(size)
 

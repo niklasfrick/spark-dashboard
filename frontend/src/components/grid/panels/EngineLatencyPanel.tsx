@@ -1,5 +1,5 @@
 import { TimeSeriesChart } from '@/components/charts/TimeSeriesChart'
-import { MetricTile } from '@/components/engines/EngineCardPrimitives'
+import { MetricTile } from '@/components/engines/EnginePanelPrimitives'
 import { LatencyModeControl } from '@/components/engines/LatencyModeControl'
 import { useLatencyMode } from '@/hooks/useLatencyMode'
 import { computeTrend } from '@/lib/engineStats'
@@ -7,7 +7,7 @@ import { formatDurationMs, formatTtft, fmtVal } from '@/lib/format'
 import { pickLatencyValue, type LatencyMode } from '@/lib/latencyMode'
 import type { EngineSeriesName } from '@/lib/metricsHistoryStore'
 import { EnginePanelBody } from './EnginePanelBody'
-import { engineLabel, engineLogo } from './engineLabel'
+import { engineIdentity } from './engineLabel'
 import { EnginePanelNotice } from './PanelNotice'
 import { useEnginePanel } from './useEnginePanel'
 import type { PanelContentProps } from '../panelRegistry'
@@ -42,8 +42,7 @@ export function EngineLatencyPanel({ panel }: PanelContentProps) {
 
   return (
     <EnginePanelBody
-      label={engineLabel(resolution)}
-      logo={engineLogo(resolution)}
+      identity={engineIdentity(resolution)}
       actions={<LatencyModeControl mode={mode} onModeChange={setMode} />}
       tiles={
         <div className="grid grid-cols-2 gap-1.5">

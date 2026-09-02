@@ -1,10 +1,10 @@
 import { TimeSeriesChart } from '@/components/charts/TimeSeriesChart'
 import { AnimatedCounter } from '@/components/engines/AnimatedCounter'
-import { KvBar, MetricTile, TrendArrow } from '@/components/engines/EngineCardPrimitives'
+import { KvBar, MetricTile, TrendArrow } from '@/components/engines/EnginePanelPrimitives'
 import { computeTrend } from '@/lib/engineStats'
 import { formatCompactTokens } from '@/lib/format'
 import { EnginePanelBody } from './EnginePanelBody'
-import { engineLabel, engineLogo } from './engineLabel'
+import { engineIdentity } from './engineLabel'
 import { EnginePanelNotice } from './PanelNotice'
 import { useEnginePanel } from './useEnginePanel'
 import type { PanelContentProps } from '../panelRegistry'
@@ -27,8 +27,7 @@ export function EngineCachePanel({ panel }: PanelContentProps) {
 
   return (
     <EnginePanelBody
-      label={engineLabel(resolution)}
-      logo={engineLogo(resolution)}
+      identity={engineIdentity(resolution)}
       tiles={
         <div className="flex flex-col gap-2">
           <div className="grid grid-cols-2 gap-1.5">
