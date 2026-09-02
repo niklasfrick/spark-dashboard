@@ -323,8 +323,13 @@ Each page has its own URL, built from a stable id plus a readable slug:
 
 ```
 /pages/<id>            e.g. /pages/overview
-/pages/<id>/<slug>     e.g. /pages/p-7f3a/training-view
+/pages/<id>/<slug>     e.g. /pages/overview/wall-display
 ```
+
+The id is fixed when the page is created and never changes again; the slug is
+whatever the page is called now, and is omitted when it would only repeat the
+id. The second example above is the page created as *Overview* and since
+renamed to *Wall Display*.
 
 **Only the id is matched** — the slug is decoration. Renaming a page rewrites
 the slug and leaves the id alone, so a kiosk browser or a bookmark pointed at

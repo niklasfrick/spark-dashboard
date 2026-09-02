@@ -36,6 +36,11 @@ interface PagesMenuProps {
  * that page; resetting takes everything and cannot be undone, so it asks first —
  * in place, because a confirmation the operator has to hunt for in a modal is
  * one they learn to dismiss without reading.
+ *
+ * Naming a page and renaming one are deliberately the same control. A page is
+ * created named after its position and renamed from the field above, which is
+ * why creating one leaves this menu open: the next thing an operator does with
+ * a new page is call it something.
  */
 export function PagesMenu({
   page,
@@ -49,6 +54,13 @@ export function PagesMenu({
   onResetEverything,
 }: PagesMenuProps) {
   const { open, setOpen, toggle, containerRef } = useDismissablePopover<HTMLDivElement>()
+
+  /** Every action here changes the page the menu is describing, so it gets the
+   *  menu out of the way of whatever it did. */
+  const andClose = (action: () => void) => () => {
+    setOpen(false)
+    action()
+  }
 
   const disabled = readOnly || locked || busy
   const reason = readOnly
@@ -86,7 +98,11 @@ export function PagesMenu({
 
           <div className="h-px bg-white/[0.06]" />
 
-          <MenuButton disabled={disabled} onClick={() => close(setOpen, onCreate)}>
+          {/* The one action that does *not* close the menu. Creating a page and
+              naming it is one job, and the field that names it is right above:
+              the menu re-keys to the page that was just made, so the operator
+              types over “Page 3” instead of hunting for this menu again. */}
+          <MenuButton disabled={disabled} onClick={onCreate}>
             New page
           </MenuButton>
 
@@ -94,27 +110,18 @@ export function PagesMenu({
             disabled={disabled || !canDelete}
             hint={canDelete ? undefined : 'The dashboard always has at least one page.'}
             tone="danger"
-            onClick={() => close(setOpen, onDelete)}
+            onClick={andClose(onDelete)}
           >
             Delete “{page.name}”
           </MenuButton>
 
           <div className="h-px bg-white/[0.06]" />
 
-          <ResetEverything
-            disabled={disabled}
-            onConfirm={() => close(setOpen, onResetEverything)}
-          />
+          <ResetEverything disabled={disabled} onConfirm={andClose(onResetEverything)} />
         </section>
       )}
     </div>
   )
-}
-
-/** Runs the action and gets the menu out of the way of whatever it did. */
-function close(setOpen: (open: boolean) => void, action: () => void): void {
-  setOpen(false)
-  action()
 }
 
 /**

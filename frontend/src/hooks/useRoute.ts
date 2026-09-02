@@ -25,9 +25,7 @@ export function useRoute(): Route {
  * clicking the tab you are on does not fill the back button with itself.
  */
 export function navigateTo(pathname: string): void {
-  if (pathname === window.location.pathname) return
-  window.history.pushState(null, '', pathname)
-  window.dispatchEvent(new PopStateEvent('popstate'))
+  go(pathname, 'push')
 }
 
 /**
@@ -37,8 +35,15 @@ export function navigateTo(pathname: string): void {
  * not changed and pressing back should leave the page rather than undo a slug.
  */
 export function replacePath(pathname: string): void {
+  go(pathname, 'replace')
+}
+
+function go(pathname: string, how: 'push' | 'replace'): void {
   if (pathname === window.location.pathname) return
-  window.history.replaceState(null, '', pathname)
+
+  if (how === 'push') window.history.pushState(null, '', pathname)
+  else window.history.replaceState(null, '', pathname)
+
   window.dispatchEvent(new PopStateEvent('popstate'))
 }
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { PageTabs } from '@/components/pages/PageTabs'
 import type { DashboardPage } from '@/lib/dashboard/schema'
 
@@ -56,7 +57,11 @@ const overflowButton = () => screen.queryByRole('button', { name: /more$/ })
  * runs after layout, before paint) and the render it causes.
  */
 async function measured(): Promise<void> {
-  await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+  // Inside `act`, because the render the observer causes is a state update the
+  // test asked for — outside it React rightly complains that nobody was waiting.
+  await act(async () => {
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+  })
 }
 
 describe('the page tabs in a real layout engine', () => {
@@ -80,7 +85,7 @@ describe('the page tabs in a real layout engine', () => {
     expect(visible.length).toBeLessThan(8)
 
     // Nothing is lost: the strip and the menu together are still every page.
-    overflowButton()!.click()
+    await userEvent.click(overflowButton()!)
     const hidden = within(await screen.findByRole('list', { name: 'More pages' }))
       .getAllByRole('link')
       .map((tab) => tab.textContent ?? '')

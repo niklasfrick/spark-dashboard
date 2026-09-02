@@ -162,7 +162,30 @@ describe('creating a page', () => {
       'Wall Display',
       'Page 3',
     ])
-    expect(screen.queryAllByRole('region')).toEqual([])
+    // No panels: a new page is empty, so the operator adds what they came for
+    // rather than deleting a preset they did not ask for.
+    expect(within(screen.getByRole('main')).queryAllByRole('region')).toEqual([])
+  })
+
+  it('stays open on the new page’s name, so creating and naming it is one job', async () => {
+    const fetchMock = serveConfiguration({ document: twoPages() })
+    await openPage(fetchMock)
+
+    await openMenu()
+    await userEvent.click(screen.getByRole('button', { name: 'New page' }))
+    await waitFor(() => expect(window.location.pathname).toBe('/pages/page-3'))
+
+    // The menu did not close, and the field now names the page just made.
+    const name = within(menu()).getByLabelText('Page name')
+    expect(name).toHaveValue('Page 3')
+
+    await userEvent.clear(name)
+    await userEvent.type(name, 'Training View')
+    await userEvent.click(within(menu()).getByRole('button', { name: 'Rename' }))
+
+    await waitFor(() => expect(tabNames()).toEqual(['Watch', 'Wall Display', 'Training View']))
+    // The id was fixed at creation, so naming it afterwards left the URL alone.
+    expect(window.location.pathname).toBe('/pages/page-3/training-view')
   })
 
   it('survives a reload, which is the only reason to store it at all', async () => {
