@@ -89,18 +89,25 @@ for details on what each script does.
 
 **Multi-Engine Support**
 - Run and monitor any number of inference engines side by side — each
-  vLLM process or container is detected automatically and gets its own tab
-- **All Engines** overview tab with running-engine count, summed
-  throughput, and weighted-mean latencies across every detected engine
-- Per-engine drill-down tabs with provider chips showing the engine type
-  (vLLM) and source (Docker / host process)
-- Auto-rotating tab carousel with a configurable interval (default 3 s);
-  rotation pauses automatically the moment you interact with a tab so you
-  can focus on a single engine without fighting the UI
+  vLLM process or container is detected automatically
+- Every engine panel follows the page's engine selection by default, so one
+  layout works whether the host runs one engine or four
+- Pin a panel to a specific engine to watch two of them at once; a pinned
+  panel whose engine is gone says so and keeps its place rather than
+  silently showing a different one
+- With several engines on a host, each panel names the one it is showing and
+  marks the provider of the model it is serving
 
 **Dashboard**
-- Arc gauges, time-series charts, sparklines, per-core heatmap
+- A grid of panels you arrange yourself: drag, resize, add from a palette of
+  every metric, remove what you do not want, save or discard
+- Multiple named pages with their own URLs, so a wall display can be pointed
+  at one arrangement and stay there across reboots
+- Fits the viewport on desktop with no scrolling; stacks into one column on
+  a phone, derived from your desktop arrangement
+- Per-panel time window, arc gauges, time-series charts, per-core heatmap
 - 15-minute rolling history with circular buffers
+- Layout saved on the server, shared by everyone who opens the instance
 - Connection status badge, staleness detection, auto-reconnect
 
 ## Architecture
@@ -470,14 +477,17 @@ real NVML/procfs parsing on Linux, with compile-time stubs on other platforms.
 │       └── prometheus.rs       Prometheus text-format parser
 ├── frontend/
 │   └── src/
-│       ├── hooks/              useMetrics, useMetricsHistory
+│       ├── hooks/              useMetrics, metrics store, configuration
 │       ├── components/
-│       │   ├── views/          Dashboard, GlanceableView, DetailedView
-│       │   ├── engines/        EngineSection, EngineCard
-│       │   ├── charts/         TimeSeriesChart, Sparkline, CoreHeatmap
-│       │   └── gauges/         ArcGauge
+│       │   ├── grid/           GridPage, palette, panel settings
+│       │   │   └── panels/     One component per panel type
+│       │   ├── pages/          Header page tabs and page settings
+│       │   ├── charts/         TimeSeriesChart, CoreHeatmap
+│       │   └── gauges/         ArcGauge, HBar
 │       ├── types/              TypeScript type definitions
-│       └── lib/                Circular buffer, formatting, theme
+│       └── lib/
+│           ├── dashboard/      Schema, migrations, preset, grid, routes
+│           └── …               Circular buffer, formatting, theme
 ├── deploy/                     Deployment & install artifacts, by type
 │   ├── docker/                 Container install
 │   │   ├── Dockerfile          Multi-stage container build
