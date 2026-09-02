@@ -337,6 +337,55 @@ describe('the engine panels on a grid page', () => {
     expect(within(status).getByText('Serving')).toBeInTheDocument()
   })
 
+  it('sums every engine on the host into one overview', async () => {
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        { id: 'all', type: 'engines-overview', geometry: { x: 0, y: 0, w: 6, h: 4 } },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(
+      makeSnapshot(1000, [
+        makeEngine(ALPHA, {}, { tokens_per_sec: 120, active_requests: 3, queued_requests: 1 }),
+        makeEngine(
+          BETA,
+          { model: modelNamed('meta-llama/Llama-3.1-8B') },
+          { tokens_per_sec: 640, active_requests: 4, queued_requests: 2 },
+        ),
+      ]),
+    )
+
+    const all = region('All Engines')
+    // Throughput and counts sum: concurrent workers compose additively.
+    expect(within(all).getByText('760.0')).toBeInTheDocument()
+    expect(within(all).getByText('7')).toBeInTheDocument() // active: 3 + 4
+    expect(within(all).getByText('3')).toBeInTheDocument() // queued: 1 + 2
+    // Both engines are running, and each provider is named once with its count.
+    expect(within(all).getByText('2/2 running')).toBeInTheDocument()
+    // Labelled by the model's own organization prefix, which is authoritative
+    // — `custom-org/llama-3b` is not Meta's, whatever the weights are.
+    expect(within(all).getByText('Qwen (1)')).toBeInTheDocument()
+    expect(within(all).getByText('meta-llama (1)')).toBeInTheDocument()
+  })
+
+  it('says the host is running nothing rather than summing zero engines', async () => {
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        { id: 'all', type: 'engines-overview', geometry: { x: 0, y: 0, w: 6, h: 4 } },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, []))
+
+    expect(
+      within(region('All Engines')).getByText('No inference engine running.'),
+    ).toBeInTheDocument()
+  })
+
   it('names the engine when it says one is not speculating', async () => {
     // On a page holding two engines, "this engine" would not say which.
     const fetchMock = serveConfiguration({

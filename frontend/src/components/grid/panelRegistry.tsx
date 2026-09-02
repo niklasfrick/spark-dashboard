@@ -22,6 +22,7 @@ import { EngineRequestsPanel } from './panels/EngineRequestsPanel'
 import { EngineSloGoodputPanel } from './panels/EngineSloGoodputPanel'
 import { EngineSpecDecodePanel } from './panels/EngineSpecDecodePanel'
 import { EngineStatusPanel } from './panels/EngineStatusPanel'
+import { EnginesOverviewPanel } from './panels/EnginesOverviewPanel'
 import {
   EngineDecodeThroughputPanel,
   EnginePrefillThroughputPanel,
@@ -57,6 +58,7 @@ const PANEL_CONTENT: Partial<Record<PanelType, ComponentType<PanelContentProps>>
   'engine-cache': EngineCachePanel,
   'engine-spec-decode': EngineSpecDecodePanel,
   'engine-status': EngineStatusPanel,
+  'engines-overview': EnginesOverviewPanel,
   logs: LogsPanel,
 }
 

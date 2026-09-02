@@ -74,10 +74,8 @@ export const PANEL_TYPES = {
   'network-io': { binds: 'none', title: 'Network' },
 
   // ── Engines ─────────────────────────────────────────────────────────────
-  // Not implemented yet. The aggregation it needs — running-engine count,
-  // summed throughput, latencies weighted by request volume — was written for
-  // the fixed dashboard's All Engines tab and removed with it in #86; recover
-  // `lib/engineAggregate.ts` from history rather than deriving it again.
+  // The only engine panel that binds to nothing: it is about the host, not
+  // about one target.
   'engines-overview': { binds: 'none', title: 'All Engines' },
   'engine-status': { binds: 'engine', title: 'Engine' },
   'engine-prefill-throughput': { binds: 'engine', title: 'Prefill Throughput' },
