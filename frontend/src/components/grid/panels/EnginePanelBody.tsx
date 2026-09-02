@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { useElementSize } from '@/hooks/useElementSize'
-import type { ProviderLogo } from '@/lib/providerLogo'
 import type { EngineIdentity } from './engineLabel'
+import { ProviderMark } from './engineIdentity'
 import { enginePanelMode } from './mode'
 
 interface EnginePanelBodyProps {
@@ -28,7 +28,7 @@ interface EnginePanelBodyProps {
  * alone does not say whose.
  */
 export function EnginePanelBody({ identity, actions, tiles, chart }: EnginePanelBodyProps) {
-  const { label, logo } = identity ?? { label: null, logo: null }
+  const { label, model, logo } = identity ?? { label: null, model: null, logo: null }
   const [ref, size] = useElementSize<HTMLDivElement>()
   const mode = enginePanelMode(size)
 
@@ -44,8 +44,14 @@ export function EnginePanelBody({ identity, actions, tiles, chart }: EnginePanel
       {(label || actions) && (
         <div className="shrink-0 flex items-center justify-between gap-2 min-w-0">
           {label && (
-            <span className="flex items-center gap-1.5 min-w-0">
+            // The model first, because that is what an operator is thinking
+            // about; the endpoint after it, because that is what actually tells
+            // two engines apart when both serve the same model.
+            <span className="flex items-center gap-1.5 min-w-0" title={model ? `${model} — ${label}` : label}>
               {logo && <ProviderMark logo={logo} />}
+              {model && (
+                <span className="text-[10px] font-medium text-zinc-300 truncate">{model}</span>
+              )}
               <span className="text-[10px] font-medium uppercase tracking-wider text-zinc-500 truncate">
                 {label}
               </span>
@@ -57,29 +63,5 @@ export function EnginePanelBody({ identity, actions, tiles, chart }: EnginePanel
       <div className="shrink-0 min-w-0">{tiles}</div>
       {mode === 'full' && chart && <div className="flex-1 min-h-0 min-w-0">{chart}</div>}
     </div>
-  )
-}
-
-/**
- * The provider mark: a white tile, because the logos are drawn for light
- * backgrounds and several are near-black on this one.
- *
- * A missing asset hides the tile rather than leaving a broken image in the
- * label row — the mapping ships more provider names than icon files, and an
- * operator serving an unlisted model should see the label alone, not a gap.
- */
-function ProviderMark({ logo }: { logo: ProviderLogo }) {
-  return (
-    <span className="h-4 w-4 shrink-0 rounded bg-white p-0.5 flex items-center justify-center ring-1 ring-white/[0.06]">
-      <img
-        src={logo.url}
-        alt={logo.alt}
-        className="h-full w-full object-contain"
-        onError={(event) => {
-          const tile = event.currentTarget.parentElement
-          if (tile) tile.style.display = 'none'
-        }}
-      />
-    </span>
   )
 }

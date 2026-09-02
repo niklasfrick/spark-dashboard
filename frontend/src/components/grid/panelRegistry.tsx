@@ -21,6 +21,7 @@ import { EngineLatencyPanel } from './panels/EngineLatencyPanel'
 import { EngineRequestsPanel } from './panels/EngineRequestsPanel'
 import { EngineSloGoodputPanel } from './panels/EngineSloGoodputPanel'
 import { EngineSpecDecodePanel } from './panels/EngineSpecDecodePanel'
+import { EngineStatusPanel } from './panels/EngineStatusPanel'
 import {
   EngineDecodeThroughputPanel,
   EnginePrefillThroughputPanel,
@@ -55,6 +56,7 @@ const PANEL_CONTENT: Partial<Record<PanelType, ComponentType<PanelContentProps>>
   'engine-slo-goodput': EngineSloGoodputPanel,
   'engine-cache': EngineCachePanel,
   'engine-spec-decode': EngineSpecDecodePanel,
+  'engine-status': EngineStatusPanel,
   logs: LogsPanel,
 }
 

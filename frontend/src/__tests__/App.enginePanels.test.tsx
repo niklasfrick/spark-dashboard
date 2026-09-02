@@ -8,7 +8,7 @@ import {
 } from '../test/configurationServer'
 import { MockWebSocket, substituteWebSocket } from '../test/websocket'
 import { DASHBOARD_SCHEMA_VERSION } from '../lib/dashboard/schema'
-import type { EngineMetrics, EngineSnapshot, MetricsSnapshot } from '../types/metrics'
+import type { EngineMetrics, EngineSnapshot, MetricsSnapshot, ModelInfo } from '../types/metrics'
 
 // The engine panels through the application seam (#81): real routing, real
 // configuration loading, real registry, store and binding resolution, with the
@@ -93,8 +93,9 @@ function engineMetrics(overrides: Partial<EngineMetrics> = {}): EngineMetrics {
   }
 }
 
-/** A served model, identified by name alone — which is all the panels read. */
-function modelNamed(name: string): EngineSnapshot['model'] {
+/** A served model, identified by name alone; specs that care about the rest
+ *  spread this and override what they need. */
+function modelNamed(name: string): ModelInfo {
   return {
     name,
     parameter_size: null,
@@ -275,6 +276,65 @@ describe('the engine panels on a grid page', () => {
     // name or its provider mark.
     expect(within(region('Latency')).queryByRole('img')).not.toBeInTheDocument()
     expect(screen.queryByText('vLLM localhost:8000')).not.toBeInTheDocument()
+  })
+
+  it('says which engine it is and what it is serving', async () => {
+    // The identity the fixed dashboard carried in its engine header, now a
+    // panel of its own — placed once, rather than repeated on all six metric
+    // panels an operator would then read the same model name off.
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        { id: 'who', type: 'engine-status', geometry: { x: 0, y: 0, w: 6, h: 4 } },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(
+      makeSnapshot(1000, [
+        makeEngine(ALPHA, {
+          model: {
+            ...modelNamed('Qwen/Qwen3-8B'),
+            parameter_size: '8B',
+            quantization: 'AWQ',
+            precision: 'bf16',
+          },
+          gpu_indexes: [0, 1],
+        }),
+      ]),
+    )
+
+    const status = region('Engine')
+    // The organization prefix goes: the provider mark beside it already says it.
+    expect(within(status).getByText('Qwen3-8B')).toBeInTheDocument()
+    expect(within(status).getByRole('img', { name: 'Qwen' })).toBeInTheDocument()
+    expect(within(status).getByText('Serving')).toBeInTheDocument()
+
+    // The deployment and the weights, each omitted rather than dashed when the
+    // backend did not report it.
+    for (const tag of ['vLLM', 'Direct', 'GPU 0+1', '8B', 'AWQ', 'bf16']) {
+      expect(within(status).getByText(tag), tag).toBeInTheDocument()
+    }
+  })
+
+  it('says an engine has no model rather than showing an empty identity', async () => {
+    // The auth-gated case: /v1/models is refused, so the engine is up and
+    // reporting metrics with nothing to say about what it is serving.
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        { id: 'who', type: 'engine-status', geometry: { x: 0, y: 0, w: 6, h: 4 } },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, [makeEngine(ALPHA, { model: null })]))
+
+    const status = region('Engine')
+    // The absence is the headline, and the engine is still described as
+    // serving — it has metrics, only its model could not be read.
+    expect(within(status).getByText('No model loaded')).toBeInTheDocument()
+    expect(within(status).getByText('Serving')).toBeInTheDocument()
   })
 
   it('names the engine when it says one is not speculating', async () => {
