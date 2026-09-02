@@ -168,6 +168,46 @@ describe('the hardware panels on a grid page', () => {
     expect(screen.queryByText('This panel is not available yet.')).not.toBeInTheDocument()
   })
 
+  it('names the hardware each panel is reading', async () => {
+    // "76%" without saying what is at 76% is only useful to someone who
+    // already knows the machine — and on a host with several GPUs, or a
+    // machine an operator does not administer, nobody does.
+    const fetchMock = serveConfiguration({ document: storedDocument(allHardwarePanels()) })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000))
+
+    for (const panel of ['GPU Utilization', 'GPU Temp', 'GPU Power', 'GPU Clock']) {
+      expect(within(region(panel)).getByText('NVIDIA Alpha 0'), panel).toBeInTheDocument()
+    }
+    expect(within(region('CPU')).getByText('Grace CPU')).toBeInTheDocument()
+    // The memory pool's size stands in for a device name, and says whether the
+    // GPU is drawing from the same pool.
+    expect(within(region('Memory')).getByText('128 GB Unified')).toBeInTheDocument()
+    expect(within(region('Disk I/O')).getByText('nvme0n1')).toBeInTheDocument()
+    expect(within(region('Network')).getByText('enp1s0')).toBeInTheDocument()
+  })
+
+  it('names the GPU a pinned panel actually resolved to, not the primary one', async () => {
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        {
+          id: 'pinned',
+          type: 'gpu-utilization',
+          binding: { kind: 'gpu', index: 1 },
+          geometry: { x: 0, y: 0, w: 6, h: 4 },
+        },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, [makeGpu(0), makeGpu(1, { name: 'NVIDIA Beta 1' })]))
+
+    expect(within(region('GPU Utilization')).getByText('NVIDIA Beta 1')).toBeInTheDocument()
+  })
+
   it('waits quietly before the first snapshot, then fills in when it arrives', async () => {
     const fetchMock = serveConfiguration({ document: storedDocument(allHardwarePanels()) })
 

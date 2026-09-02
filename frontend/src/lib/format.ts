@@ -14,6 +14,12 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / KIB).toFixed(1)} KB`
 }
 
+/** Format bytes as binary GiB, labelled "GB" to match OS conventions. Used
+ *  where a whole pool is named rather than a rate — the memory panel's caption. */
+export function formatGiB(bytes: number, decimals = 0): string {
+  return `${(bytes / GIB).toFixed(decimals)} GB`
+}
+
 /** Format bytes/sec to human-readable rate string */
 export function formatRate(bytesPerSec: number): string {
   return `${formatBytes(bytesPerSec)}/s`

@@ -21,6 +21,7 @@ export function CpuUtilizationPanel({ panel }: PanelContentProps) {
 
   return (
     <HardwarePanelBody
+      device={cpu.name}
       compact={
         <HBar value={cpu.aggregate_percent} label="CPU" unit="%" thresholds={THRESHOLDS.cpuUsage} />
       }
@@ -34,7 +35,7 @@ export function CpuUtilizationPanel({ panel }: PanelContentProps) {
         />
       )}
       chart={
-        <TimeSeriesChart data={data} yDomain={[0, 100]} unit="%" seriesLabel="CPU" height="100%" />
+        <TimeSeriesChart data={data} yDomain={[0, 100]} unit="%" seriesLabel="CPU" />
       }
       below={cpu.per_core.length > 0 ? <CoreHeatmap cores={cpu.per_core} /> : undefined}
     />

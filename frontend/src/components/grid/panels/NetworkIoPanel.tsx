@@ -10,6 +10,7 @@ export function NetworkIoPanel({ panel }: PanelContentProps) {
 
   return (
     <IoPanel
+      device={snapshot?.network.name}
       inbound={{
         tag: 'RX',
         label: 'RX',

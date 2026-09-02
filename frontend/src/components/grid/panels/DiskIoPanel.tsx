@@ -10,6 +10,7 @@ export function DiskIoPanel({ panel }: PanelContentProps) {
 
   return (
     <IoPanel
+      device={snapshot?.disk.name}
       inbound={{
         tag: 'R',
         label: 'Read',

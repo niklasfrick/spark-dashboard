@@ -29,6 +29,7 @@ export function GpuPowerPanel({ panel }: PanelContentProps) {
 
   return (
     <HardwarePanelBody
+      device={resolution.gpu.name}
       compact={
         <HBar
           value={percent}
@@ -48,7 +49,7 @@ export function GpuPowerPanel({ panel }: PanelContentProps) {
           size={sizePx}
         />
       )}
-      chart={<TimeSeriesChart data={data} unit="W" seriesLabel="Power" height="100%" />}
+      chart={<TimeSeriesChart data={data} unit="W" seriesLabel="Power" />}
     />
   )
 }

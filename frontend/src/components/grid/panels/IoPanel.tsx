@@ -24,7 +24,16 @@ interface IoDirection {
  * The shape disk and network I/O share: two directional rates as the current
  * value, and a three-line chart (each direction plus their sum) as the trend.
  */
-export function IoPanel({ inbound, outbound }: { inbound: IoDirection; outbound: IoDirection }) {
+export function IoPanel({
+  device,
+  inbound,
+  outbound,
+}: {
+  /** The disk or interface these rates were read from. */
+  device?: string | null
+  inbound: IoDirection
+  outbound: IoDirection
+}) {
   // Narrowed into locals: the guard's narrowing does not reach the render
   // callbacks below.
   const inRate = inbound.rate
@@ -41,12 +50,12 @@ export function IoPanel({ inbound, outbound }: { inbound: IoDirection; outbound:
         { data: outbound.data, label: outbound.label, color: outbound.color },
       ]}
       unit="B/s"
-      height="100%"
     />
   )
 
   return (
     <HardwarePanelBody
+      device={device}
       compact={
         <div className="flex flex-col gap-0.5 min-w-0">
           <MetricRow label={inbound.tag} value={formatRate(inRate)} />
