@@ -1,6 +1,6 @@
 import { SpecDecodeSection } from '@/components/engines/EngineCardPrimitives'
 import { EnginePanelBody } from './EnginePanelBody'
-import { engineLabel } from './engineLabel'
+import { engineLabel, engineLogo } from './engineLabel'
 import { EnginePanelNotice, PanelNotice } from './PanelNotice'
 import { useEnginePanel } from './useEnginePanel'
 import type { PanelContentProps } from '../panelRegistry'
@@ -41,6 +41,7 @@ export function EngineSpecDecodePanel({ panel }: PanelContentProps) {
   return (
     <EnginePanelBody
       label={engineLabel(resolution)}
+      logo={engineLogo(resolution)}
       tiles={
         <SpecDecodeSection
           acceptanceRate={metric('spec_decode_acceptance_rate')}

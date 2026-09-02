@@ -1,11 +1,15 @@
 import type { ReactNode } from 'react'
 import { useElementSize } from '@/hooks/useElementSize'
+import type { ProviderLogo } from '@/lib/providerLogo'
 import { enginePanelMode } from './mode'
 
 interface EnginePanelBodyProps {
   /** Names the engine, on a host running more than one. Null keeps the row out
    *  of the layout entirely, which is the single-engine case. */
   label?: string | null
+  /** The served model's provider, shown beside the label. Null where the label
+   *  is, and also where the model matches no provider we ship a mark for. */
+  logo?: ProviderLogo | null
   /** Controls belonging to this panel — the SLO thresholds, the latency mode.
    *  They share the label row, so they cost no height of their own. */
   actions?: ReactNode
@@ -24,7 +28,7 @@ interface EnginePanelBodyProps {
  * numbers under another's name — with several engines on a host, "Latency"
  * alone does not say whose.
  */
-export function EnginePanelBody({ label, actions, tiles, chart }: EnginePanelBodyProps) {
+export function EnginePanelBody({ label, logo, actions, tiles, chart }: EnginePanelBodyProps) {
   const [ref, size] = useElementSize<HTMLDivElement>()
   const mode = enginePanelMode(size)
 
@@ -40,8 +44,11 @@ export function EnginePanelBody({ label, actions, tiles, chart }: EnginePanelBod
       {(label || actions) && (
         <div className="shrink-0 flex items-center justify-between gap-2 min-w-0">
           {label && (
-            <span className="text-[10px] font-medium uppercase tracking-wider text-zinc-500 truncate">
-              {label}
+            <span className="flex items-center gap-1.5 min-w-0">
+              {logo && <ProviderMark logo={logo} />}
+              <span className="text-[10px] font-medium uppercase tracking-wider text-zinc-500 truncate">
+                {label}
+              </span>
             </span>
           )}
           {actions}
@@ -50,5 +57,29 @@ export function EnginePanelBody({ label, actions, tiles, chart }: EnginePanelBod
       <div className="shrink-0 min-w-0">{tiles}</div>
       {mode === 'full' && chart && <div className="flex-1 min-h-0 min-w-0">{chart}</div>}
     </div>
+  )
+}
+
+/**
+ * The provider mark: a white tile, because the logos are drawn for light
+ * backgrounds and several are near-black on this one.
+ *
+ * A missing asset hides the tile rather than leaving a broken image in the
+ * label row — the mapping ships more provider names than icon files, and an
+ * operator serving an unlisted model should see the label alone, not a gap.
+ */
+function ProviderMark({ logo }: { logo: ProviderLogo }) {
+  return (
+    <span className="h-4 w-4 shrink-0 rounded bg-white p-0.5 flex items-center justify-center ring-1 ring-white/[0.06]">
+      <img
+        src={logo.url}
+        alt={logo.alt}
+        className="h-full w-full object-contain"
+        onError={(event) => {
+          const tile = event.currentTarget.parentElement
+          if (tile) tile.style.display = 'none'
+        }}
+      />
+    </span>
   )
 }

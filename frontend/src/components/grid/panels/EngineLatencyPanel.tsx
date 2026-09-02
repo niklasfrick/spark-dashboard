@@ -7,7 +7,7 @@ import { formatDurationMs, formatTtft, fmtVal } from '@/lib/format'
 import { pickLatencyValue, type LatencyMode } from '@/lib/latencyMode'
 import type { EngineSeriesName } from '@/lib/metricsHistoryStore'
 import { EnginePanelBody } from './EnginePanelBody'
-import { engineLabel } from './engineLabel'
+import { engineLabel, engineLogo } from './engineLabel'
 import { EnginePanelNotice } from './PanelNotice'
 import { useEnginePanel } from './useEnginePanel'
 import type { PanelContentProps } from '../panelRegistry'
@@ -43,6 +43,7 @@ export function EngineLatencyPanel({ panel }: PanelContentProps) {
   return (
     <EnginePanelBody
       label={engineLabel(resolution)}
+      logo={engineLogo(resolution)}
       actions={<LatencyModeControl mode={mode} onModeChange={setMode} />}
       tiles={
         <div className="grid grid-cols-2 gap-1.5">

@@ -93,6 +93,19 @@ function engineMetrics(overrides: Partial<EngineMetrics> = {}): EngineMetrics {
   }
 }
 
+/** A served model, identified by name alone — which is all the panels read. */
+function modelNamed(name: string): EngineSnapshot['model'] {
+  return {
+    name,
+    parameter_size: null,
+    quantization: null,
+    precision: null,
+    tensor_type: null,
+    model_type: null,
+    pipeline_tag: null,
+  }
+}
+
 function makeEngine(
   endpoint: string,
   overrides: Partial<EngineSnapshot> = {},
@@ -102,15 +115,7 @@ function makeEngine(
     engine_type: 'Vllm',
     endpoint,
     status: { type: 'Running' },
-    model: {
-      name: 'Qwen/Qwen3-8B',
-      parameter_size: null,
-      quantization: null,
-      precision: null,
-      tensor_type: null,
-      model_type: null,
-      pipeline_tag: null,
-    },
+    model: modelNamed('Qwen/Qwen3-8B'),
     metrics: engineMetrics(metricOverrides),
     recent_requests: [],
     deployment_mode: 'Native',
@@ -265,6 +270,11 @@ describe('the engine panels on a grid page', () => {
 
     // Every panel on the page is implemented — no slot-keeping placeholders.
     expect(screen.queryByText('This panel is not available yet.')).not.toBeInTheDocument()
+
+    // One engine on the host: nothing to tell apart, so no panel wears its
+    // name or its provider mark.
+    expect(within(region('Latency')).queryByRole('img')).not.toBeInTheDocument()
+    expect(screen.queryByText('vLLM localhost:8000')).not.toBeInTheDocument()
   })
 
   it('names the engine when it says one is not speculating', async () => {
@@ -361,7 +371,7 @@ describe('the engine panels on a grid page', () => {
     receive(
       makeSnapshot(1000, [
         makeEngine(ALPHA, {}, { tokens_per_sec: 120 }),
-        makeEngine(BETA, {}, { tokens_per_sec: 640 }),
+        makeEngine(BETA, { model: modelNamed('meta-llama/Llama-3.1-8B') }, { tokens_per_sec: 640 }),
       ]),
     )
 
@@ -375,9 +385,20 @@ describe('the engine panels on a grid page', () => {
     expect(within(beta).getByText('640.0')).toBeInTheDocument()
     expect(within(beta).getByTestId('chart-series-Live')).toHaveAttribute('data-values', '640')
 
-    // With several engines each panel names the one it is showing.
+    // With several engines each panel names the one it is showing…
     expect(within(alpha).getByText('vLLM localhost:8000')).toBeInTheDocument()
     expect(within(beta).getByText('vLLM localhost:8001')).toBeInTheDocument()
+
+    // …and marks whose model it is serving, which is the half of the identity
+    // two engines on localhost do not carry in their endpoints.
+    expect(within(alpha).getByRole('img', { name: 'Qwen' })).toHaveAttribute(
+      'src',
+      '/icons/providers/qwen.svg',
+    )
+    expect(within(beta).getByRole('img', { name: 'meta-llama' })).toHaveAttribute(
+      'src',
+      '/icons/providers/meta.svg',
+    )
   })
 
   it('keeps the slot of a panel pinned to an engine that is gone, naming it', async () => {

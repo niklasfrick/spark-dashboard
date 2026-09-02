@@ -4,7 +4,7 @@ import { KvBar, MetricTile, TrendArrow } from '@/components/engines/EngineCardPr
 import { computeTrend } from '@/lib/engineStats'
 import { formatCompactTokens } from '@/lib/format'
 import { EnginePanelBody } from './EnginePanelBody'
-import { engineLabel } from './engineLabel'
+import { engineLabel, engineLogo } from './engineLabel'
 import { EnginePanelNotice } from './PanelNotice'
 import { useEnginePanel } from './useEnginePanel'
 import type { PanelContentProps } from '../panelRegistry'
@@ -28,6 +28,7 @@ export function EngineCachePanel({ panel }: PanelContentProps) {
   return (
     <EnginePanelBody
       label={engineLabel(resolution)}
+      logo={engineLogo(resolution)}
       tiles={
         <div className="flex flex-col gap-2">
           <div className="grid grid-cols-2 gap-1.5">

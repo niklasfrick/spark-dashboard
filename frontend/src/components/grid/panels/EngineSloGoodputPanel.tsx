@@ -4,7 +4,7 @@ import { useSloSettings } from '@/hooks/useSloSettings'
 import { engineKey } from '@/lib/identity'
 import { combinedGoodput, formatSloThreshold, recomputeGoodputPct } from '@/lib/slo'
 import { EnginePanelBody } from './EnginePanelBody'
-import { engineLabel } from './engineLabel'
+import { engineLabel, engineLogo } from './engineLabel'
 import { EnginePanelNotice } from './PanelNotice'
 import { useEnginePanel } from './useEnginePanel'
 import type { PanelContentProps } from '../panelRegistry'
@@ -48,6 +48,7 @@ export function EngineSloGoodputPanel({ panel }: PanelContentProps) {
   return (
     <EnginePanelBody
       label={engineLabel(resolution)}
+      logo={engineLogo(resolution)}
       actions={
         <SloSettingsControl
           thresholds={thresholds}
