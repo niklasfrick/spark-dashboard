@@ -1,6 +1,8 @@
 import { Settings2 } from 'lucide-react'
+import { useState } from 'react'
 import { isKnownPanelType } from '@/lib/dashboard/panels'
 import { panelTitle, type DashboardPanel } from '@/lib/dashboard/schema'
+import { PanelDeviceContext } from './panelDevice'
 import { renderPanelContent } from './panelRegistry'
 
 /**
@@ -30,6 +32,9 @@ export function GridPanel({
   onConfigure?: () => void
 }) {
   const title = panelTitle(panel)
+  // Reported up by the content, which is the only thing that knows what its
+  // binding resolved to — see `panelDevice`.
+  const [device, setDevice] = useState<string | null>(null)
 
   return (
     <section
@@ -39,13 +44,25 @@ export function GridPanel({
       } ${editing ? (configuring ? 'border-[#76B900]' : 'border-[#76B900]/40') : 'border-white/[0.04]'}`}
     >
       <div className="shrink-0 flex items-center gap-1">
-        <h3 className="flex-1 min-w-0 text-[11px] font-semibold text-zinc-200 truncate">{title}</h3>
+        <h3 className="shrink-0 text-[11px] font-semibold text-zinc-200 truncate">{title}</h3>
+        {/* The hardware, beside the name of the metric — the title never gives
+            up room for it, and it truncates away to nothing on a panel too
+            narrow to hold both. The separator sits inside the span so the two
+            disappear together rather than leaving a stray dot. */}
+        {device && (
+          <span
+            className="flex-1 min-w-0 truncate text-[10px] text-zinc-500"
+            title={device}
+          >
+            <span className="text-zinc-600">·</span> {device}
+          </span>
+        )}
         {editing && onConfigure && (
           <button
             type="button"
             aria-label={`Configure ${title}`}
             onClick={onConfigure}
-            className={`shrink-0 rounded p-0.5 transition-colors ${
+            className={`ml-auto shrink-0 rounded p-0.5 transition-colors ${
               configuring ? 'text-[#76B900]' : 'text-zinc-500 hover:text-zinc-200'
             }`}
           >
@@ -54,7 +71,9 @@ export function GridPanel({
         )}
       </div>
       <div className={`flex-1 min-h-0 min-w-0 ${editing ? 'pointer-events-none' : ''}`}>
-        {renderPanelContent(panel) ?? <PanelPlaceholder type={panel.type} />}
+        <PanelDeviceContext.Provider value={setDevice}>
+          {renderPanelContent(panel) ?? <PanelPlaceholder type={panel.type} />}
+        </PanelDeviceContext.Provider>
       </div>
     </section>
   )

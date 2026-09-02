@@ -187,6 +187,13 @@ describe('the hardware panels on a grid page', () => {
     expect(within(region('Memory')).getByText('128 GB Unified')).toBeInTheDocument()
     expect(within(region('Disk I/O')).getByText('nvme0n1')).toBeInTheDocument()
     expect(within(region('Network')).getByText('enp1s0')).toBeInTheDocument()
+
+    // On the title row, beside the name of the metric — not buried in the body,
+    // where it would cost the panel height and read as another value.
+    const cpu = region('CPU')
+    expect(within(cpu).getByRole('heading', { name: 'CPU' }).parentElement).toContainElement(
+      within(cpu).getByText('Grace CPU'),
+    )
   })
 
   it('names the GPU a pinned panel actually resolved to, not the primary one', async () => {

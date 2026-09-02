@@ -1,11 +1,11 @@
 import type { ReactNode } from 'react'
 import { useElementSize } from '@/hooks/useElementSize'
+import { usePanelDevice } from '../panelDevice'
 import { gaugeSizePx, hardwarePanelMode } from './mode'
 
 interface HardwarePanelBodyProps {
   /** The hardware this panel is reading: the GPU model, the CPU model, the
-   *  disk or interface name. Shown only in the full rendering, where there is
-   *  room for it — a panel too short to chart in is too short to caption. */
+   *  disk or interface name. Shown by the frame, on the title row. */
   device?: string | null
   /** The value-only rendering for a box too short to chart in. */
   compact: ReactNode
@@ -27,7 +27,9 @@ interface HardwarePanelBodyProps {
  *
  * Every panel also names the hardware it is reading — which GPU model, which
  * disk, which interface. A dashboard that says "76%" without saying what is at
- * 76% is only useful to someone who already knows the machine.
+ * 76% is only useful to someone who already knows the machine. The name is
+ * handed to the frame rather than drawn here, so it sits on the title row
+ * beside the metric and costs the panel's own box no height.
  */
 export function HardwarePanelBody({
   device,
@@ -38,6 +40,7 @@ export function HardwarePanelBody({
 }: HardwarePanelBodyProps) {
   const [ref, size] = useElementSize<HTMLDivElement>()
   const mode = hardwarePanelMode(size)
+  usePanelDevice(device)
 
   return (
     <div
@@ -52,17 +55,6 @@ export function HardwarePanelBody({
         <div className="flex-1 min-h-0 min-w-0 flex flex-col justify-center">{compact}</div>
       ) : (
         <>
-          {mode === 'full' && device && (
-            // Right-aligned under the frame's title, which is where the fixed
-            // dashboard put it too: the metric names itself in the header, and
-            // the hardware it is read from sits opposite.
-            <div
-              className="shrink-0 text-[10px] text-zinc-500 truncate text-right -mt-0.5 mb-0.5"
-              title={device}
-            >
-              {device}
-            </div>
-          )}
           <div className="flex-1 flex items-center gap-2 min-w-0 min-h-0 overflow-hidden">
             {mode === 'full' && gauge && <div className="shrink-0">{gauge(gaugeSizePx(size.height))}</div>}
             <div className="flex-1 min-w-0 h-full min-h-0">{chart}</div>
