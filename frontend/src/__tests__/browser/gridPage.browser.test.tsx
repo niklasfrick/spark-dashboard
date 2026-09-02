@@ -7,6 +7,7 @@ import type { PanelGeometry } from '@/lib/dashboard/grid'
 import { defaultDashboardDocument } from '@/lib/dashboard/preset'
 import { DEFAULT_TIME_WINDOW, type DashboardPage } from '@/lib/dashboard/schema'
 import type { PanelType } from '@/lib/dashboard/panels'
+import { panelGeometry } from '@/test/gridEngine'
 
 // The real grid engine, which only a real layout engine can drive: the #79
 // acceptance criteria that depend on measurement. Fit-to-viewport (row height
@@ -42,23 +43,6 @@ function Harness({ width, height, content }: { width: number; height: number; co
   )
 }
 
-/** The engine's geometry for each item, with gridstack's sparse defaults filled in. */
-function itemGeometry(container: HTMLElement): Map<string, PanelGeometry> {
-  const found = new Map<string, PanelGeometry>()
-  for (const el of container.querySelectorAll('.grid-stack-item')) {
-    const id = el.getAttribute('gs-id')
-    if (!id) continue
-    found.set(id, {
-      x: Number(el.getAttribute('gs-x') ?? 0),
-      y: Number(el.getAttribute('gs-y') ?? 0),
-      // The library omits values equal to its defaults — missing means 1.
-      w: Number(el.getAttribute('gs-w') ?? 1),
-      h: Number(el.getAttribute('gs-h') ?? 1),
-    })
-  }
-  return found
-}
-
 describe('the grid page in a real layout engine', () => {
   it('fits the viewport: the measured container height is divided into rows, and a full page does not overflow', async () => {
     const content = page([
@@ -89,13 +73,13 @@ describe('the grid page in a real layout engine', () => {
     const { container, rerender } = render(<Harness width={800} height={480} content={content} />)
 
     await waitFor(() => {
-      expect(itemGeometry(container).get('right')).toMatchObject({ x: 6, y: 0, w: 6 })
+      expect(panelGeometry(container).get('right')).toMatchObject({ x: 6, y: 0, w: 6 })
     })
 
     // Narrow: both panels full-width in one column, stacked in reading order.
     rerender(<Harness width={360} height={480} content={content} />)
     await waitFor(() => {
-      const items = itemGeometry(container)
+      const items = panelGeometry(container)
       expect(items.get('left')).toMatchObject({ x: 0, w: 1, h: 5 })
       expect(items.get('right')).toMatchObject({ x: 0, w: 1, h: 5 })
       const ys = [items.get('left')!.y, items.get('right')!.y].sort((a, b) => a - b)
@@ -105,7 +89,7 @@ describe('the grid page in a real layout engine', () => {
     // Wide again: the authored desktop layout, not a recompacted approximation.
     rerender(<Harness width={800} height={480} content={content} />)
     await waitFor(() => {
-      const items = itemGeometry(container)
+      const items = panelGeometry(container)
       expect(items.get('left')).toMatchObject({ x: 0, y: 0, w: 6, h: 5 })
       expect(items.get('right')).toMatchObject({ x: 6, y: 0, w: 6, h: 5 })
     })
@@ -131,7 +115,7 @@ describe('the grid page in a real layout engine', () => {
 
     rerender(<Harness width={390} height={800} content={preset} />)
     await waitFor(() => {
-      const items = itemGeometry(container)
+      const items = panelGeometry(container)
       expect(items.size).toBe(preset.panels.length)
       for (const [id, geometry] of items) {
         expect(geometry, id).toMatchObject({ x: 0, w: 1 })

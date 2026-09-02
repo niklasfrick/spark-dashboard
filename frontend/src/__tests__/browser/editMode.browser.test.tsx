@@ -6,6 +6,7 @@ import { FOLLOW } from '@/lib/dashboard/bindings'
 import type { PanelGeometry } from '@/lib/dashboard/grid'
 import { DEFAULT_TIME_WINDOW, type DashboardPage } from '@/lib/dashboard/schema'
 import type { PanelType } from '@/lib/dashboard/panels'
+import { dragPanelBy, measuredPanel, resizePanelBy } from '@/test/gridEngine'
 
 // Out of room, in a real layout engine (#83). Everything about this is
 // measurement: the engine refuses a move by simulating it and keeping the old
@@ -17,10 +18,8 @@ import type { PanelType } from '@/lib/dashboard/panels'
 // suite; this is the criterion that is #83's own, and the fiddliest interaction
 // in the rework.
 //
-// The drag is driven with **mouse** events, not pointer events: the library
-// binds mousedown on the item's content and then move and release on the
-// document. Pointer-based helpers silently do nothing, which looks exactly like
-// a library defect.
+// How a gesture is driven — mouse events, not pointer events — belongs to
+// `test/gridEngine.ts`, which every spec that drives a real grid shares.
 
 function page(panels: Array<[string, PanelType, PanelGeometry]>): DashboardPage {
   return {
@@ -46,71 +45,6 @@ function Harness({ content, width = 800 }: { content: DashboardPage; width?: num
   )
 }
 
-/** Drags an element by a pixel offset, the way the library listens for it. */
-function dragBy(element: Element, dx: number, dy: number) {
-  const box = element.getBoundingClientRect()
-  dragFrom(element, { clientX: box.left + box.width / 2, clientY: box.top + box.height / 2 }, dx, dy)
-}
-
-/**
- * Pulls a panel's bottom-right corner by a pixel offset.
- *
- * The grab starts at the panel's own corner rather than at the handle's box: the
- * library autohides the handle, so it measures 0×0 until hovered, and a resize
- * that begins at the origin is one the library reads as dragging the corner in
- * from the far left — it shrinks the panel sideways instead.
- */
-function resizeBy(item: HTMLElement, dx: number, dy: number) {
-  const box = item.getBoundingClientRect()
-  const handle = item.querySelector('.ui-resizable-se')!
-  dragFrom(handle, { clientX: box.right, clientY: box.bottom }, dx, dy)
-}
-
-function dragFrom(
-  element: Element,
-  from: { clientX: number; clientY: number },
-  dx: number,
-  dy: number,
-) {
-  const at = (fraction: number) => ({
-    clientX: from.clientX + dx * fraction,
-    clientY: from.clientY + dy * fraction,
-    bubbles: true,
-    button: 0,
-  })
-
-  element.dispatchEvent(new MouseEvent('mousedown', { ...from, bubbles: true, button: 0 }))
-  // Several moves: the library needs to pass its own start threshold before it
-  // is dragging at all, and the last one is what the drop is judged against.
-  for (const fraction of [0.1, 0.4, 0.7, 1]) {
-    document.dispatchEvent(new MouseEvent('mousemove', at(fraction)))
-  }
-  document.dispatchEvent(new MouseEvent('mouseup', at(1)))
-}
-
-/**
- * The named item, once the grid has actually been measured.
- *
- * Every drag here is expressed in the item's own height, so a drag started
- * before the ResizeObserver has fired covers a different number of rows than it
- * means to — which looks exactly like the feature not working. A four-row panel
- * in an eight-row grid is half the grid tall; the pre-measurement fallback row
- * height is not.
- */
-async function measuredItem(container: HTMLElement, id: string): Promise<HTMLElement> {
-  const item = container.querySelector(`[gs-id="${id}"]`) as HTMLElement
-
-  await waitFor(() => {
-    const grid = container.querySelector('.grid-stack')!.getBoundingClientRect()
-    // Half the grid, less a margin's worth. The item's own size lags the row
-    // height by a frame, so "taller than the fallback" is not enough of a
-    // condition — it passes while the panel is still catching up.
-    expect(item.getBoundingClientRect().height).toBeGreaterThan(grid.height * 0.45)
-  })
-
-  return item
-}
-
 describe('a move the page has no room for', () => {
   it('is refused, and says so instead of snapping back in silence', async () => {
     // A page filled to its cap, and filled unevenly, so there is nothing the
@@ -131,8 +65,8 @@ describe('a move the page has no room for', () => {
 
     // Half its own height is two of the four rows it covers: enough to run the
     // page past its cap, whatever the measured row height turned out to be.
-    const item = await measuredItem(container, 'bottom')
-    act(() => dragBy(item.querySelector('.grid-stack-item-content')!, 0, item.offsetHeight / 2))
+    const item = await measuredPanel(container, 'bottom')
+    act(() => dragPanelBy(item, 0, item.offsetHeight / 2))
 
     await waitFor(() => {
       expect(getByRole('alert').textContent).toMatch(/No room for “Memory” there/)
@@ -157,10 +91,11 @@ describe('a move the page has no room for', () => {
     await waitFor(() => expect(container.querySelectorAll('.grid-stack-item')).toHaveLength(2))
     act(() => getByRole('button', { name: 'Edit layout' }).click())
 
-    // Upward, onto the panel above: room the page does have, once the engine
-    // has moved the other one.
-    const item = await measuredItem(container, 'bottom')
-    act(() => dragBy(item.querySelector('.grid-stack-item-content')!, 0, -item.offsetHeight / 2))
+    // Upward onto the panel above, by the whole of its own height: the top
+    // half of a page whose halves are the same size, which is room the page
+    // does have — once the engine has moved the other panel into the bottom.
+    const item = await measuredPanel(container, 'bottom')
+    act(() => dragPanelBy(item, 0, -item.offsetHeight))
 
     await waitFor(() => {
       expect(container.querySelector('[gs-id="bottom"]')?.getAttribute('gs-y')).not.toBe('4')
@@ -185,8 +120,8 @@ describe('a resize the page has no room for', () => {
 
     // The corner the library makes resizable in edit mode, pulled down by half
     // the panel — two more rows the page does not have.
-    const item = await measuredItem(container, 'bottom')
-    act(() => resizeBy(item, 0, item.offsetHeight / 2))
+    const item = await measuredPanel(container, 'bottom')
+    act(() => resizePanelBy(item, 0, item.offsetHeight / 2))
 
     await waitFor(() => {
       expect(getByRole('alert').textContent).toMatch(/No room for “Memory” there/)
