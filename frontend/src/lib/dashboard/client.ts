@@ -53,6 +53,18 @@ export interface SaveOutcome {
   readOnly: boolean
 }
 
+/** How a reset ended. */
+export interface ResetOutcome {
+  status:
+    /** The document is gone, so the dashboard is back to the default preset. */
+    | 'reset'
+    /** This instance cannot write at all; no retry will change that. */
+    | 'read-only'
+    /** The removal failed — a permission, a dropped connection. Worth retrying. */
+    | 'failed'
+  readOnly: boolean
+}
+
 /** Reads the stored document. Never throws: every failure is a state above. */
 export async function fetchStoredConfiguration(): Promise<StoredConfiguration> {
   let response: Response
@@ -98,6 +110,31 @@ export async function saveStoredConfiguration(document: DashboardDocument): Prom
   // over the header if the two ever disagree.
   if (response.status === 503) return { status: 'read-only', readOnly: true }
   if (response.status === 413) return { status: 'too-large', readOnly }
+  return { status: 'failed', readOnly }
+}
+
+/**
+ * Removes the stored document. Never throws.
+ *
+ * A reset is a deletion rather than a write of the preset, because "nothing is
+ * configured" and "reset to the default" are deliberately the same state on
+ * disk — so a preset reworded in a later release reaches every dashboard that
+ * was reset, instead of freezing today's arrangement into a document forever.
+ */
+export async function deleteStoredConfiguration(): Promise<ResetOutcome> {
+  let response: Response
+  try {
+    response = await fetch(CONFIGURATION_URL, { method: 'DELETE' })
+  } catch {
+    return { status: 'failed', readOnly: false }
+  }
+
+  const readOnly = isReadOnly(response)
+
+  if (response.ok) return { status: 'reset', readOnly }
+  // As with a write, the server answers 503 only for storage it knows is
+  // unwritable, so trust it over the header if the two ever disagree.
+  if (response.status === 503) return { status: 'read-only', readOnly: true }
   return { status: 'failed', readOnly }
 }
 

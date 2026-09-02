@@ -26,16 +26,32 @@ export interface ConfigurationServerOptions {
   getStatus?: number
   /** The write's status: 204 stored, 503 read-only, 413 too large, 500 failed. */
   putStatus?: number
+  /** The reset's status: 204 removed, 503 read-only, 500 failed. */
+  deleteStatus?: number
 }
 
-/** Installs the stub as the global `fetch` and hands it back for assertions. */
+/**
+ * Installs the stub as the global `fetch` and hands it back for assertions.
+ *
+ * It **holds what was written**, the way the real server does: an accepted write
+ * is what a later read returns, and an accepted reset makes reads report nothing
+ * stored again. A stub that answered from the original bytes forever would let a
+ * spec claim a round trip it never made.
+ */
 export function serveConfiguration(options: ConfigurationServerOptions = {}): FetchMock {
-  const { document = null, readOnly = false, getStatus, putStatus = 204 } = options
+  const { document = null, readOnly = false, getStatus, putStatus = 204, deleteStatus = 204 } =
+    options
   const headers = { [READ_ONLY_HEADER]: String(readOnly) }
+  let stored = document
 
   const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
     if (init?.method === 'PUT') {
+      if (accepted(putStatus)) stored = String(init.body)
       return Promise.resolve(new Response(null, { status: putStatus, headers }))
+    }
+    if (init?.method === 'DELETE') {
+      if (accepted(deleteStatus)) stored = null
+      return Promise.resolve(new Response(null, { status: deleteStatus, headers }))
     }
     if (getStatus !== undefined && getStatus !== 200) {
       return Promise.resolve(
@@ -43,14 +59,19 @@ export function serveConfiguration(options: ConfigurationServerOptions = {}): Fe
       )
     }
     return Promise.resolve(
-      document === null
+      stored === null
         ? new Response(null, { status: 204, headers })
-        : new Response(document, { status: 200, headers }),
+        : new Response(stored, { status: 200, headers }),
     )
   })
 
   vi.stubGlobal('fetch', fetchMock)
   return fetchMock
+}
+
+/** Whether the server took it — anything but 2xx leaves the document alone. */
+function accepted(status: number): boolean {
+  return status >= 200 && status < 300
 }
 
 /** Installs a `fetch` that never reaches the server at all. */
@@ -65,6 +86,11 @@ export function configurationWrites(fetchMock: FetchMock): string[] {
   return fetchMock.mock.calls
     .filter(([, init]) => init?.method === 'PUT')
     .map(([, init]) => String(init?.body))
+}
+
+/** How many resets the code under test issued. */
+export function configurationResets(fetchMock: FetchMock): number {
+  return fetchMock.mock.calls.filter(([, init]) => init?.method === 'DELETE').length
 }
 
 /**

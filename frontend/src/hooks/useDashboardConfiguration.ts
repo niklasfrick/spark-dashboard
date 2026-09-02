@@ -1,6 +1,7 @@
 /**
  * The configuration lifecycle: load it once at boot, save it when the operator
- * asks, and keep whatever the operator needs telling about.
+ * asks, remove it when they reset, and keep whatever the operator needs telling
+ * about.
  *
  * Two rules shape everything here, both from the fact that the configuration is
  * **instance-scoped** — one document shared by everyone who opens the dashboard:
@@ -19,27 +20,38 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  deleteStoredConfiguration,
   fetchStoredConfiguration,
   saveStoredConfiguration,
+  type ResetOutcome,
   type SaveOutcome,
 } from '@/lib/dashboard/client'
 import { loadDashboardConfiguration, type ConfigurationFallbackReason } from '@/lib/dashboard/load'
 import type { MigrationPath } from '@/lib/dashboard/migrations'
 import type { ConfigurationNotice } from '@/lib/dashboard/notices'
+import { defaultDashboardDocument } from '@/lib/dashboard/preset'
 import type { DashboardDocument } from '@/lib/dashboard/schema'
 
-type SaveFailureNotice = 'save-failed' | 'too-large' | null
+type WriteFailureNotice = 'save-failed' | 'too-large' | 'reset-failed' | null
 
 /**
  * How a save's outcome reads to the operator. Read-only is not here: it is a
  * property of the instance rather than of the attempt, and it has its own
  * standing notice as long as it holds.
  */
-const SAVE_FAILURE_NOTICE: Record<SaveOutcome['status'], SaveFailureNotice> = {
+const SAVE_FAILURE_NOTICE: Record<SaveOutcome['status'], WriteFailureNotice> = {
   saved: null,
   'read-only': null,
   'too-large': 'too-large',
   failed: 'save-failed',
+}
+
+/** The same, for a reset. It is a different sentence because it is a different
+ *  thing that did not happen: nothing was removed, rather than nothing stored. */
+const RESET_FAILURE_NOTICE: Record<ResetOutcome['status'], WriteFailureNotice> = {
+  reset: null,
+  'read-only': null,
+  failed: 'reset-failed',
 }
 
 export interface DashboardConfigurationState {
@@ -59,6 +71,11 @@ export interface DashboardConfigurationState {
    * server never accepted.
    */
   save: (document: DashboardDocument) => Promise<SaveOutcome['status']>
+  /**
+   * Removes the stored document, putting every page back to the default preset.
+   * Destructive and unrecoverable, so the caller confirms first.
+   */
+  reset: () => Promise<ResetOutcome['status']>
 }
 
 /**
@@ -73,7 +90,7 @@ export function useDashboardConfiguration(path?: MigrationPath): DashboardConfig
   const [fallback, setFallback] = useState<ConfigurationFallbackReason | null>(null)
   const [unavailable, setUnavailable] = useState(false)
   const [readOnly, setReadOnly] = useState(false)
-  const [saveFailure, setSaveFailure] = useState<SaveFailureNotice>(null)
+  const [writeFailure, setWriteFailure] = useState<WriteFailureNotice>(null)
   const pathRef = useRef(path)
 
   useEffect(() => {
@@ -112,7 +129,7 @@ export function useDashboardConfiguration(path?: MigrationPath): DashboardConfig
 
       const outcome = await saveStoredConfiguration(next)
       setReadOnly(outcome.readOnly)
-      setSaveFailure(SAVE_FAILURE_NOTICE[outcome.status])
+      setWriteFailure(SAVE_FAILURE_NOTICE[outcome.status])
 
       if (outcome.status === 'saved') {
         // What was stored is now what this build wrote, so any complaint about
@@ -128,14 +145,36 @@ export function useDashboardConfiguration(path?: MigrationPath): DashboardConfig
     [readOnly],
   )
 
+  const reset = useCallback(async (): Promise<ResetOutcome['status']> => {
+    if (readOnly) return 'read-only'
+
+    const outcome = await deleteStoredConfiguration()
+    setReadOnly(outcome.readOnly)
+    setWriteFailure(RESET_FAILURE_NOTICE[outcome.status])
+
+    if (outcome.status === 'reset') {
+      // The preset is held rather than re-fetched: it is exactly what a read of
+      // the now-absent document would resolve to, and going back to the server
+      // for an answer already known is a round trip the operator waits through.
+      setDocument(defaultDashboardDocument())
+      // Every complaint about the stored document described one that no longer
+      // exists — including one written by a build this cannot read, which is
+      // what makes a reset the way out of a rollback.
+      setFallback(null)
+      setUnavailable(false)
+    }
+
+    return outcome.status
+  }, [readOnly])
+
   const notices = useMemo((): ConfigurationNotice[] => {
     const list: ConfigurationNotice[] = []
     if (fallback) list.push(fallback)
     if (unavailable) list.push({ kind: 'unavailable' })
     if (readOnly) list.push({ kind: 'read-only' })
-    if (saveFailure) list.push({ kind: saveFailure })
+    if (writeFailure) list.push({ kind: writeFailure })
     return list
-  }, [fallback, unavailable, readOnly, saveFailure])
+  }, [fallback, unavailable, readOnly, writeFailure])
 
-  return { document, notices, readOnly, save }
+  return { document, notices, readOnly, save, reset }
 }

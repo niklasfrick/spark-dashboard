@@ -100,5 +100,11 @@ function describe(notice: ConfigurationNotice): NoticeText {
         detail: 'The server refused it for its size. Remove some panels or pages and save again.',
         tone: 'error',
       }
+    case 'reset-failed':
+      return {
+        title: 'Resetting the dashboard configuration failed.',
+        detail: 'The stored configuration is still there, and nothing was removed. Try again.',
+        tone: 'error',
+      }
   }
 }

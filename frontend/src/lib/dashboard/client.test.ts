@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   CONFIGURATION_URL,
   READ_ONLY_HEADER,
+  deleteStoredConfiguration,
   fetchStoredConfiguration,
   saveStoredConfiguration,
 } from './client'
@@ -169,5 +170,51 @@ describe('saveStoredConfiguration', () => {
       status: 'failed',
       readOnly: false,
     })
+  })
+})
+
+describe('deleteStoredConfiguration', () => {
+  it('deletes the document rather than writing the preset over it', async () => {
+    // The reset is an absence, not a document: that is what lets a preset
+    // reworded in a later release reach every dashboard that was ever reset.
+    const fetchMock = respondWith(new Response(null, { status: 204, headers: writable }))
+
+    expect(await deleteStoredConfiguration()).toEqual({ status: 'reset', readOnly: false })
+
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe(CONFIGURATION_URL)
+    expect(init?.method).toBe('DELETE')
+    expect(init?.body).toBeUndefined()
+  })
+
+  it('reports read-only when the instance cannot write at all', async () => {
+    respondWith(
+      new Response('Dashboard configuration storage is read-only', {
+        status: 503,
+        headers: readOnly,
+      }),
+    )
+
+    expect(await deleteStoredConfiguration()).toEqual({ status: 'read-only', readOnly: true })
+  })
+
+  it('reports a failure when the removal itself failed', async () => {
+    respondWith(
+      new Response('Failed to delete the dashboard configuration', {
+        status: 500,
+        headers: writable,
+      }),
+    )
+
+    expect(await deleteStoredConfiguration()).toEqual({ status: 'failed', readOnly: false })
+  })
+
+  it('reports a failure when the server cannot be reached', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new TypeError('Failed to fetch'))),
+    )
+
+    expect(await deleteStoredConfiguration()).toEqual({ status: 'failed', readOnly: false })
   })
 })
