@@ -3,14 +3,43 @@ import { parseRoute, type Route } from '@/lib/dashboard/routes'
 
 /**
  * The view the browser's current path names, kept current across history
- * navigation. `popstate` covers back/forward; a programmatic `pushState` must
- * be followed by dispatching a `popstate` event, which is the deal the future
- * in-app navigation (#85) signs up to — no custom event channel until someone
- * actually navigates.
+ * navigation. `popstate` covers back/forward; a programmatic `pushState` is
+ * followed by dispatching a `popstate` event — see `navigateTo` — so in-app
+ * navigation needs no custom event channel of its own.
  */
 export function useRoute(): Route {
   const pathname = useSyncExternalStore(subscribe, readPathname)
   return useMemo(() => parseRoute(pathname), [pathname])
+}
+
+/**
+ * Goes to another page without reloading the document.
+ *
+ * The browser fires `popstate` for its own back and forward, but not for a
+ * `pushState` — so this raises it, which is what `useRoute` subscribes to. Doing
+ * it here rather than in a store keeps the browser's history as the one source
+ * of truth for which page is showing: the URL is the state, so a reload, a
+ * bookmark and a back button all land in the same place.
+ *
+ * Navigating to where you already are is a no-op rather than a history entry, so
+ * clicking the tab you are on does not fill the back button with itself.
+ */
+export function navigateTo(pathname: string): void {
+  if (pathname === window.location.pathname) return
+  window.history.pushState(null, '', pathname)
+  window.dispatchEvent(new PopStateEvent('popstate'))
+}
+
+/**
+ * Corrects the current URL in place, without a history entry.
+ *
+ * This is what a rename does: the id in the path still matches, so the page has
+ * not changed and pressing back should leave the page rather than undo a slug.
+ */
+export function replacePath(pathname: string): void {
+  if (pathname === window.location.pathname) return
+  window.history.replaceState(null, '', pathname)
+  window.dispatchEvent(new PopStateEvent('popstate'))
 }
 
 function subscribe(onChange: () => void): () => void {

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { LiveMotionContext } from '@/hooks/useLiveMotion'
 import { useElementSize } from '@/hooks/useElementSize'
 import type { PanelBinding } from '@/lib/dashboard/bindings'
@@ -39,6 +39,12 @@ interface GridPageEditorProps {
   /** Nothing can be written on this instance; the standing banner says why. */
   readOnly: boolean
   onSave: (panels: DashboardPanel[]) => Promise<SaveOutcome['status']>
+  /**
+   * Whether a session is open, for the page list in the header. The session is a
+   * working copy that dies with this component, so switching pages while one is
+   * open would throw it away — the header withholds that until it is settled.
+   */
+  onEditingChange?: (editing: boolean) => void
 }
 
 /**
@@ -56,7 +62,12 @@ interface GridPageEditorProps {
  * which is also why removing a panel is behind its settings rather than one
  * click on the frame.
  */
-export function GridPageEditor({ page, readOnly, onSave }: GridPageEditorProps) {
+export function GridPageEditor({
+  page,
+  readOnly,
+  onSave,
+  onEditingChange,
+}: GridPageEditorProps) {
   const [session, setSession] = useState<EditSession | null>(null)
   const [saving, setSaving] = useState(false)
   const [containerRef, { width }] = useElementSize<HTMLDivElement>()
@@ -66,6 +77,17 @@ export function GridPageEditor({ page, readOnly, onSave }: GridPageEditorProps) 
   // static and saving is withheld, so the work is still there when the window
   // is wide again.
   const narrow = isNarrow(width)
+
+  const editing = session !== null
+  // Told rather than derived: the header is a sibling of this component, and
+  // the session it needs to know about is deliberately private to it.
+  useEffect(() => {
+    onEditingChange?.(editing)
+    // A page reached with the back button unmounts the editor and takes the
+    // session with it. Without this the header would stay locked against a
+    // session that no longer exists, with no button left on screen to end it.
+    return () => onEditingChange?.(false)
+  }, [editing, onEditingChange])
 
   const onLayoutChange = useCallback<GridEditing['onLayoutChange']>((changes) => {
     setSession((current) =>

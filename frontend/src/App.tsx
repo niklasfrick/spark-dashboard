@@ -11,6 +11,7 @@ import { ConfigurationNotices } from './components/ConfigurationNotices'
 import { Dashboard } from './components/views/Dashboard'
 import { GridPageEditor } from './components/grid/GridPageEditor'
 import { LogViewer } from './components/LogViewer'
+import { PageBar } from './components/pages/PageBar'
 import { withPagePanels } from './lib/dashboard/editing'
 import type { SaveOutcome } from './lib/dashboard/client'
 import type { DashboardPanel } from './lib/dashboard/schema'
@@ -99,7 +100,12 @@ function AppContent() {
 function GridPageContent({ pageId }: { pageId: string }) {
   const { metrics, connectionStatus, isStale } = useMetrics()
   useMetricsIngest(metrics)
-  const { document, notices: configurationNotices, readOnly, save } = useDashboardConfiguration()
+  const { document, notices: configurationNotices, readOnly, save, reset } =
+    useDashboardConfiguration()
+  // The edit session lives in the editor below, but the header has to know about
+  // it: switching pages unmounts the session, so the page list holds still for
+  // as long as there is unsaved work in it.
+  const [editing, setEditing] = useState(false)
 
   // Null document means the load has not resolved; rendering nothing beats
   // flashing the preset past an operator whose real page is milliseconds away.
@@ -118,14 +124,35 @@ function GridPageContent({ pageId }: { pageId: string }) {
 
   return (
     <div className="h-dvh flex flex-col bg-[#08080a] overflow-hidden">
-      <AppHeader status={connectionStatus} isStale={isStale} />
+      <AppHeader
+        status={connectionStatus}
+        isStale={isStale}
+        pages={
+          document && (
+            <PageBar
+              document={document}
+              activePageId={pageId}
+              readOnly={readOnly}
+              editing={editing}
+              save={save}
+              reset={reset}
+            />
+          )
+        }
+      />
 
       <ConfigurationNotices notices={configurationNotices} />
 
       <main className="flex-1 min-h-0 p-3 lg:p-4 2xl:p-5 min-[1920px]:p-6">
         {document &&
           (page ? (
-            <GridPageEditor key={page.id} page={page} readOnly={readOnly} onSave={savePanels} />
+            <GridPageEditor
+              key={page.id}
+              page={page}
+              readOnly={readOnly}
+              onSave={savePanels}
+              onEditingChange={setEditing}
+            />
           ) : (
             <div className="h-full flex items-center justify-center">
               <div className="text-center">
