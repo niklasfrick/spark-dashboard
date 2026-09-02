@@ -22,3 +22,5 @@ Thumbs.db
 # Claude Code workspace
 .claude/
 .gstack/
+# Playwright CLI output (may contain credentials)
+.playwright-cli/

@@ -115,7 +115,9 @@ const ROW: React.CSSProperties = {
   alignItems: 'center',
   gap: TAB_GAP,
   // A tab is never half on screen: what does not fit is in the menu, not
-  // clipped at the edge.
+  // clipped at the edge. The padding keeps that clip off the tabs themselves,
+  // so an active tab's border is inside the box rather than on its boundary.
+  paddingBlock: 2,
   overflow: 'hidden',
 }
 
@@ -172,7 +174,6 @@ function OverflowMenu({
                 page={page}
                 active={page.id === activePageId}
                 locked={locked}
-                block
                 onSelect={(selected) => {
                   setOpen(false)
                   onSelect(selected)
@@ -190,13 +191,11 @@ function PageLink({
   page,
   active,
   locked,
-  block = false,
   onSelect,
 }: {
   page: DashboardPage
   active: boolean
   locked: boolean
-  block?: boolean
   onSelect: (page: DashboardPage) => void
 }) {
   return (
@@ -216,16 +215,22 @@ function PageLink({
         event.preventDefault()
         if (!locked) onSelect(page)
       }}
-      className={`${tabClass(active)} ${block ? 'block' : ''} ${locked ? 'cursor-not-allowed opacity-50' : ''}`}
+      className={`${tabClass(active)} ${locked ? 'cursor-not-allowed opacity-50' : ''}`}
     >
       {page.name}
     </a>
   )
 }
 
-/** One class list, so the hidden measuring row measures the tabs that ship. */
+/**
+ * One class list, so the hidden measuring row measures the tabs that ship.
+ *
+ * `block` is load-bearing, not styling. An inline anchor's vertical padding and
+ * border hang outside its line box, so the strip — which clips what does not fit
+ * — would cut the bottom off the tab the operator is on.
+ */
 function tabClass(active: boolean): string {
-  return `whitespace-nowrap rounded-md px-2.5 py-1 text-[11px] transition-colors ${
+  return `block whitespace-nowrap rounded-md px-2.5 py-1 text-[11px] transition-colors ${
     active
       ? 'bg-[#76B900]/15 text-[#cfe98a] border border-[#76B900]/30'
       : 'border border-transparent text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.06]'
