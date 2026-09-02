@@ -10,6 +10,7 @@ import {
 } from '../test/configurationServer'
 import { gridSubstitute } from '../test/gridSubstitute'
 import { MockWebSocket, substituteWebSocket } from '../test/websocket'
+import { GRID_COLUMNS, GRID_MAX_ROWS } from '../lib/dashboard/grid'
 import { DASHBOARD_SCHEMA_VERSION } from '../lib/dashboard/schema'
 import type { MetricsSnapshot } from '../types/metrics'
 
@@ -130,7 +131,7 @@ describe('entering and leaving edit mode', () => {
     expect(gridSubstitute.acceptsLayoutChanges()).toBe(true)
     // The row cap becomes the engine's business for the session, which is what
     // makes running out of room a state rather than a scrollbar.
-    expect(gridSubstitute.options().maxRow).toBe(8)
+    expect(gridSubstitute.options().maxRow).toBe(GRID_MAX_ROWS)
   })
 
   it('puts the page back to static when the session ends', async () => {
@@ -141,7 +142,10 @@ describe('entering and leaving edit mode', () => {
     await userEvent.click(discard())
 
     expect(gridSubstitute.options().staticGrid).toBe(true)
-    expect(gridSubstitute.options().maxRow).toBe(0)
+    // The cap is off — as the row count a page can never reach, one per cell,
+    // and never as zero, which the library reads as a cap of none and compacts
+    // the whole page into.
+    expect(gridSubstitute.options().maxRow).toBe(GRID_COLUMNS * GRID_MAX_ROWS)
     expect(editLayout()).toBeInTheDocument()
   })
 })

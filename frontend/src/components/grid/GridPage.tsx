@@ -28,6 +28,21 @@ import { GridPanel } from './GridPanel'
 const FALLBACK_CELL_HEIGHT = 80
 
 /**
+ * The row cap outside an edit session: high enough to be no cap at all.
+ *
+ * Zero is the library's own word for "no limit" — but only when a grid is
+ * built with it. Handed to `updateOptions` it is read as a limit first, and
+ * every page taller than zero rows is compacted to fit it: leaving edit mode
+ * would snap the whole page upward, authored gaps and all, and show an
+ * arrangement nobody saved until the next reload.
+ *
+ * A number the engine can never exceed avoids both. The collapsed column is
+ * the tallest a page ever gets, and it cannot be taller than one row per cell
+ * — panels do not overlap, so their heights sum to at most the whole grid.
+ */
+const UNCAPPED_ROWS = GRID_COLUMNS * GRID_MAX_ROWS
+
+/**
  * Where the pointer was when the grid raised a gesture event.
  *
  * The library hands its own synthetic event to the callback, carrying the
@@ -108,9 +123,10 @@ export function GridPage({
       // a desktop-width grid. Outside one it must stay off: the engine clamps
       // every node into the cap when it re-adds them during a column change,
       // and the single-column stack legitimately needs more rows than the cap.
-      // Zero, not undefined — `updateOptions` ignores an absent maxRow, so
-      // leaving edit mode has to say the cap is gone in as many words.
-      maxRow: draggable ? GRID_MAX_ROWS : 0,
+      // A number, not undefined — `updateOptions` ignores an absent maxRow, so
+      // leaving edit mode has to say the cap is gone in as many words — and not
+      // zero, which it would read as a cap of none; see `UNCAPPED_ROWS`.
+      maxRow: draggable ? GRID_MAX_ROWS : UNCAPPED_ROWS,
       cellHeight,
       margin: 3,
       // Authored gaps are authored. Without floating, the engine compacts
