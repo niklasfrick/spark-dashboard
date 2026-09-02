@@ -41,11 +41,17 @@ export interface TabLayout {
 /**
  * The tabs that fit in `available` px, given each tab's natural width.
  *
- * **The page being viewed is always one of them.** When it sits past the point
- * where the strip runs out, it takes the place of the leading tabs that would
- * otherwise have filled the space — the operator is never left looking at a
- * header that does not say where they are. Everything else fills in from the
- * front, in document order.
+ * **The page being viewed comes first.** When it sits past the point where the
+ * strip runs out, it takes the place of the leading tabs that would otherwise
+ * have filled the space, so the operator is not left looking at a header that
+ * does not say where they are. Everything else fills in from the front, in
+ * document order.
+ *
+ * When even that page will not fit, the space goes to whatever does, and on a
+ * phone — where the masthead and the badge leave the strip almost nothing —
+ * that is nothing at all, so the strip comes back **empty**. Either way, saying
+ * where the operator is falls to the menu button, which takes the page's name;
+ * a tab forced through the clip edge would claim to say it and fail.
  */
 export function fitTabs(
   widths: readonly number[],
@@ -68,9 +74,10 @@ export function fitTabs(
     chosen.add(index)
   }
 
-  // The active tab is not negotiable, so its width comes off the top — even when
-  // it is the only thing that fits, and even when it does not.
-  if (active !== null) place(active)
+  // The active tab gets first refusal on the space — but only if it fits.
+  // Forcing it on would put a tab through the clip edge, which reads as a
+  // rendering fault rather than as a header with no room.
+  if (active !== null && widths[active] <= budget) place(active)
 
   for (const index of all) {
     if (chosen.has(index)) continue

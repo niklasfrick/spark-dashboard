@@ -46,8 +46,21 @@ describe('fitTabs', () => {
     expect(layout).toEqual({ visible: [0, 3], overflow: [1, 2] })
   })
 
-  it('shows the page being viewed even when it is the only thing that fits', () => {
-    expect(fitTabs([100, 400, 100], 1, 200)).toEqual({ visible: [1], overflow: [0, 2] })
+  it('shows the page being viewed when it is the only thing that fits', () => {
+    const available = OVERFLOW_BUTTON_WIDTH + TAB_GAP + 100
+
+    expect(fitTabs([300, 100, 300], 1, available)).toEqual({ visible: [1], overflow: [0, 2] })
+  })
+
+  it('gives the space to the tabs that do fit when the page being viewed cannot', () => {
+    // Rather than forcing a 400px tab through a 120px opening. Saying where the
+    // operator is falls to the menu button, which takes the page's name.
+    expect(fitTabs([100, 400, 100], 1, 200)).toEqual({ visible: [0], overflow: [1, 2] })
+  })
+
+  it('empties the strip when there is no room for anything at all', () => {
+    // A phone, where the masthead and the badge leave the strip almost nothing.
+    expect(fitTabs([100, 100], 0, 20)).toEqual({ visible: [], overflow: [0, 1] })
   })
 
   it('fills from the front when the URL names no page in the list', () => {

@@ -72,34 +72,50 @@ export function PageTabs({ pages, activePageId, locked, onSelect }: PageTabsProp
     // radius stay in classes — nothing there changes a measurement.
     <nav aria-label="Pages" style={{ flex: 1, minWidth: 0 }}>
       <div ref={stripRef} style={ROW}>
-        {/* Bare spans, not list items: a span measures its own content wherever
-            it lands, while a block-level wrapper would measure the container
-            it sits in and report every tab as full width. */}
-        <div ref={measureRef} aria-hidden style={MEASURING_ROW}>
-          {pages.map((page) => (
-            <span key={page.id} className={tabClass(false)}>
-              {page.name}
-            </span>
-          ))}
-        </div>
+        {/* Only the tabs are clipped. The menu button sits outside this box,
+            because its popover hangs below the row — inside, the very thing
+            that keeps a tab from overhanging the header would swallow the
+            dropdown whole, on exactly the narrow screens that need it most. */}
+        <div style={TABS}>
+          {/* Bare spans, not list items: a span measures its own content
+              wherever it lands, while a block-level wrapper would measure the
+              container it sits in and report every tab as full width. */}
+          <div ref={measureRef} aria-hidden style={MEASURING_ROW}>
+            {pages.map((page) => (
+              <span key={page.id} className={tabClass(false)}>
+                {page.name}
+              </span>
+            ))}
+          </div>
 
-        <ul style={{ display: 'flex', alignItems: 'center', gap: TAB_GAP }}>
-          {visible.map((index) => (
-            <li key={pages[index].id}>
-              <PageLink
-                page={pages[index]}
-                active={index === activeIndex}
-                locked={locked}
-                onSelect={onSelect}
-              />
-            </li>
-          ))}
-        </ul>
+          {visible.length > 0 && (
+            <ul style={{ display: 'flex', alignItems: 'center', gap: TAB_GAP }}>
+              {visible.map((index) => (
+                <li key={pages[index].id}>
+                  <PageLink
+                    page={pages[index]}
+                    active={index === activeIndex}
+                    locked={locked}
+                    onSelect={onSelect}
+                  />
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
 
         {overflow.length > 0 && (
           <OverflowMenu
             pages={overflow.map((index) => pages[index])}
             activePageId={activePageId}
+            // With no tab on the strip, this button is the only thing left that
+            // can say which page is showing — so it says it, instead of counting
+            // pages nobody can see.
+            label={
+              activeIndex >= 0 && overflow.includes(activeIndex)
+                ? pages[activeIndex].name
+                : `${overflow.length} more`
+            }
             locked={locked}
             onSelect={onSelect}
           />
@@ -109,14 +125,27 @@ export function PageTabs({ pages, activePageId, locked, onSelect }: PageTabsProp
   )
 }
 
+/** The whole strip: the clipped tab area, then the menu button beside it. */
 const ROW: React.CSSProperties = {
-  position: 'relative',
   display: 'flex',
   alignItems: 'center',
   gap: TAB_GAP,
-  // A tab is never half on screen: what does not fit is in the menu, not
-  // clipped at the edge. The padding keeps that clip off the tabs themselves,
-  // so an active tab's border is inside the box rather than on its boundary.
+  minWidth: 0,
+}
+
+/**
+ * The tabs, and the only thing that clips: a tab is never half on screen, so
+ * what does not fit is in the menu rather than sliced at the edge.
+ *
+ * It shrinks but does not grow, so the menu button sits beside the last tab
+ * instead of being pushed to the far end of the header. The vertical padding
+ * keeps the clip off the tabs themselves — an active tab's border is inside the
+ * box rather than on its boundary.
+ */
+const TABS: React.CSSProperties = {
+  position: 'relative',
+  flex: '0 1 auto',
+  minWidth: 0,
   paddingBlock: 2,
   overflow: 'hidden',
 }
@@ -142,25 +171,30 @@ const MEASURING_ROW: React.CSSProperties = {
 function OverflowMenu({
   pages,
   activePageId,
+  label,
   locked,
   onSelect,
 }: {
   pages: readonly DashboardPage[]
   activePageId: string
+  /** What the button reads: a count, or the current page when no tab fits. */
+  label: string
   locked: boolean
   onSelect: (page: DashboardPage) => void
 }) {
   const { open, setOpen, toggle, containerRef } = useDismissablePopover<HTMLDivElement>()
 
   return (
-    <div ref={containerRef} style={{ position: 'relative', flexShrink: 0 }}>
+    // `maxWidth` rather than a shrinking button: a page name can be long, and
+    // one that overran the strip would be clipped by it exactly as a tab would.
+    <div ref={containerRef} style={{ position: 'relative', flexShrink: 0, maxWidth: '100%' }}>
       <button
         type="button"
         onClick={toggle}
         aria-expanded={open}
-        className="text-[11px] px-2 py-1 rounded-md border border-white/[0.08] text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.06] transition-colors whitespace-nowrap"
+        className="max-w-full truncate text-[11px] px-2 py-1 rounded-md border border-white/[0.08] text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.06] transition-colors whitespace-nowrap"
       >
-        {pages.length} more
+        {label}
       </button>
 
       {open && (

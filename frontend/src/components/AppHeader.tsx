@@ -28,7 +28,11 @@ export function AppHeader({
         style={{ fontFamily: 'Inter, sans-serif' }}
       >
         <span className="text-[#76B900]">Spark</span>{' '}
-        <span className="text-zinc-500 font-normal">Dashboard</span>
+        {/* The green mark is the identity and always shows; the second word is
+            the first thing to go when the header is narrow, because a masthead
+            that leaves no room for the page tabs has crowded out the navigation
+            it exists to sit beside. */}
+        <span className="hidden sm:inline text-zinc-500 font-normal">Dashboard</span>
       </h1>
 
       {pages}

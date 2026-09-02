@@ -36,12 +36,18 @@ function Harness({ width, list, activePageId }: {
   )
 }
 
-/** The tabs on the strip — the menu's own links are inside its list, not here. */
+/**
+ * The tabs on the strip — the menu's own links are inside its list, not here.
+ *
+ * `queryAllByRole`, so an empty strip is an empty list rather than a throw: on a
+ * narrow enough header no tab fits at all, and that is a state to assert, not an
+ * error.
+ */
 function stripTabs(): string[] {
   const menu = screen.queryByRole('list', { name: 'More pages' })
 
   return within(screen.getByRole('navigation', { name: 'Pages' }))
-    .getAllByRole('link')
+    .queryAllByRole('link')
     .filter((tab) => !menu?.contains(tab))
     .map((tab) => tab.textContent ?? '')
 }
@@ -115,6 +121,28 @@ describe('the page tabs in a real layout engine', () => {
     // and before that every tab is on it for want of a reason not to be.
     await waitFor(() => expect(overflowButton()).not.toBeNull())
     expect(stripTabs()).toContain('Arrangement number 8 for the wall display')
+  })
+
+  it('names the page on the menu button when the header fits no tab at all', async () => {
+    // A phone: the masthead and the connection badge leave the strip almost
+    // nothing. A tab sliced by the clip edge would claim to say where the
+    // operator is and fail, so the button says it instead.
+    render(<Harness width={90} list={pages(4)} activePageId="page-2" />)
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('button', { name: 'Arrangement number 2 for the wall display' }),
+      ).not.toBeNull(),
+    )
+    expect(stripTabs()).toEqual([])
+
+    // And every page, the current one included, is still in the menu.
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Arrangement number 2 for the wall display' }),
+    )
+    expect(
+      within(await screen.findByRole('list', { name: 'More pages' })).getAllByRole('link'),
+    ).toHaveLength(4)
   })
 
   it('gives the tabs back when the header is widened again', async () => {
