@@ -504,6 +504,10 @@ real NVML/procfs parsing on Linux, with compile-time stubs on other platforms.
 │   ├── docker-dev.sh           Containerized build/deploy harness
 │   ├── .env.example            Dev configuration template
 │   └── README.md               Operator docs
+├── docs/
+│   ├── adr/                    Architecture decision records
+│   └── agents/                 Agent-facing workflow docs
+├── CONTEXT.md                  Domain glossary, and what is out of scope
 ├── LICENSE                     MIT
 ├── CONTRIBUTING.md
 └── Cargo.toml

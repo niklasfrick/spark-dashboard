@@ -15,6 +15,16 @@ cp dev/.env.example .env       # edit with your remote host's user/host
 See [`dev/README.md`](./dev/README.md) for what each script does and what
 environment variables are required.
 
+## Before you build something
+
+- [`CONTEXT.md`](./CONTEXT.md) — the project's vocabulary (panel, page, binding,
+  preset, state directory), and what is deliberately **out of scope**. Worth a
+  read before opening an issue or a PR for a feature; a few of the obvious ones
+  were considered and turned down for reasons recorded there.
+- [`docs/adr/`](./docs/adr/) — architecture decision records. If a piece of the
+  design looks arbitrary, the reasoning is probably there. If you want to
+  contradict one, say so in the PR rather than changing it quietly.
+
 ## Tests
 
 ```bash
