@@ -10,17 +10,19 @@
  * "Nothing configured" and "reset" are the same state: the document does not
  * exist on the server, and this is what renders instead.
  *
- * **The arrangement is three bands, one question each**: what the GPU is doing,
- * what it is serving, and what else the host is up to. Within a band the leading
+ * **The arrangement is three bands, one question each**: what the machine is
+ * serving, what the GPU is doing, and what else the host is up to. Within a band the leading
  * panel is double width, because a default that gives ten metrics the same area
  * says none of them matters more than the others — which is the flaw this rework
  * exists to fix. It is deliberately not a reproduction of the fixed dashboard it
  * replaced: that layout was eight equal hardware cards under an engine block,
  * and reproducing it would have carried its lack of hierarchy across.
  *
- * The engine band sits in the **middle**, not on top, so a host running no
- * engines opens on GPU utilization rather than on a placeholder, and the band it
- * cannot fill has working panels above and below it.
+ * The engine band leads, because what the machine is serving is what an
+ * operator opens the dashboard to see; the GPU band under it is the answer to
+ * "why". The cost is accepted deliberately: on a host running no engines the
+ * first band is three placeholders, and the hardware an operator can still use
+ * starts one band down.
  *
  * **One page**, not several. A second preset page could only be another
  * arrangement of the same panels — the pages worth having are the ones an
@@ -59,24 +61,22 @@ export function defaultDashboardDocument(): DashboardDocument {
         id: 'overview',
         name: 'Overview',
         panels: [
-          // ── What the GPU is doing ───────────────────────────────────────
-          // Utilization leads at double width and is the first thing on the
-          // page, because it is the one panel that resolves on every host the
-          // dashboard runs on. Power and temperature flank it: the two numbers
-          // that say whether the GPU can keep doing it.
-          panel('gpu-util', 'gpu-utilization', { x: 0, y: 0, w: 6, h: 3 }),
-          panel('gpu-power', 'gpu-power', { x: 6, y: 0, w: 3, h: 3 }),
-          panel('gpu-temp', 'gpu-temperature', { x: 9, y: 0, w: 3, h: 3 }),
-
           // ── What it is serving ──────────────────────────────────────────
           // Decode throughput is the number an operator quotes for an
-          // inference host, so it leads the band; latency and the request
-          // queue are what explain it when it drops. All three degrade to a
-          // placeholder where no engine is running, which is why the band is
-          // here rather than at the top of the page.
-          panel('decode', 'engine-decode-throughput', { x: 0, y: 3, w: 6, h: 3 }),
-          panel('latency', 'engine-latency', { x: 6, y: 3, w: 3, h: 3 }),
-          panel('requests', 'engine-requests', { x: 9, y: 3, w: 3, h: 3 }),
+          // inference host, so it leads the page at double width; latency and
+          // the request queue are what explain it when it drops.
+          panel('decode', 'engine-decode-throughput', { x: 0, y: 0, w: 6, h: 3 }),
+          panel('latency', 'engine-latency', { x: 6, y: 0, w: 3, h: 3 }),
+          panel('requests', 'engine-requests', { x: 9, y: 0, w: 3, h: 3 }),
+
+          // ── What the GPU is doing ───────────────────────────────────────
+          // Utilization leads its band at double width — it is the panel that
+          // resolves on every host the dashboard runs on. Power and
+          // temperature flank it: the two numbers that say whether the GPU can
+          // keep doing it.
+          panel('gpu-util', 'gpu-utilization', { x: 0, y: 3, w: 6, h: 3 }),
+          panel('gpu-power', 'gpu-power', { x: 6, y: 3, w: 3, h: 3 }),
+          panel('gpu-temp', 'gpu-temperature', { x: 9, y: 3, w: 3, h: 3 }),
 
           // ── What else the host is up to ─────────────────────────────────
           // Equal and short: these are glanced at to rule something out, not

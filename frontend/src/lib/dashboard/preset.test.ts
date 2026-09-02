@@ -69,16 +69,6 @@ describe('the default preset', () => {
     }
   })
 
-  it('opens on a panel that resolves on every host it can land on', () => {
-    // A stock install must not greet an operator with an explanation of what is
-    // unavailable. Engine panels are the only ones in the preset that can fail
-    // to resolve on a working host — a machine running no engines — so the
-    // panel the eye lands on first must not be one of them.
-    const [first] = readingOrder(defaultDashboardDocument().pages[0])
-
-    expect(panelBindingKind(first.type)).not.toBe('engine')
-  })
-
   it('keeps each band together in the order a phone stacks them', () => {
     // The phone layout is derived, not authored: panels collapse into one
     // column in desktop reading order. A preset that interleaved hardware and

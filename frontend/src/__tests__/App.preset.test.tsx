@@ -223,14 +223,4 @@ describe('the default preset on the hosts it ships to', () => {
     }
   })
 
-  it('opens on a panel with data on it, not on one explaining what is missing', async () => {
-    // The engineless host is the one that can greet an operator with a notice.
-    // The band that can carry one is deliberately not the first thing read.
-    await openFreshInstall()
-    receive(makeSnapshot([makeGpu(0)], []))
-
-    const first = screen.getAllByRole('region')[0]
-    expect(first).toHaveAccessibleName('GPU Utilization')
-    expect(within(first).queryByText(/No inference engine/)).not.toBeInTheDocument()
-  })
 })
