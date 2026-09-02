@@ -3,12 +3,11 @@ import type { LogStream } from '@/lib/logStreamStore'
 
 interface LogConsoleProps {
   /** The lines and connection state to render. Where they come from is the
-   *  caller's business — a log panel's binding, or the pre-grid drawer. */
+   *  caller's business — today, a log panel's binding. */
   stream: LogStream
   /** Names the container being streamed. Null keeps the label out entirely. */
   label?: string | null
-  /** Chrome belonging to the caller, placed first in the header row — the
-   *  pre-grid console's collapse toggle. */
+  /** Chrome belonging to the caller, placed first in the header row. */
   leading?: ReactNode
 }
 

@@ -14,11 +14,6 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / KIB).toFixed(1)} KB`
 }
 
-/** Format bytes as binary GiB, labelled "GB" to match OS conventions. */
-export function formatGiB(bytes: number, decimals = 0): string {
-  return `${(bytes / GIB).toFixed(decimals)} GB`
-}
-
 /** Format bytes/sec to human-readable rate string */
 export function formatRate(bytesPerSec: number): string {
   return `${formatBytes(bytesPerSec)}/s`
@@ -134,14 +129,6 @@ export function formatCompactTokens(n: number | null): string {
 export function formatAcceptanceLength(n: number | null): string {
   if (n === null || !Number.isFinite(n) || n < 0) return '--'
   return n.toFixed(2)
-}
-
-/** Label for an engine's GPU badge: "GPU 0", or "GPU 0+1" when the engine
- *  spans multiple GPUs (tensor parallel). Empty string when no indexes are
- *  known — callers hide the badge entirely in that case. */
-export function formatGpuIndexes(indexes: number[]): string {
-  if (indexes.length === 0) return ''
-  return `GPU ${indexes.join('+')}`
 }
 
 /** Map EngineType enum to human-readable display name. */

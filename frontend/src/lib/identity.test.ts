@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest'
 import {
   engineKey,
   findEngineByEndpoint,
-  findEngineByKey,
   findGpuByIndex,
   gpuIndexOf,
   snapshotGpus,
@@ -55,23 +54,6 @@ describe('engineKey', () => {
     expect(engineKey({ engine_type: 'Vllm', endpoint: 'http://host:1' })).toBe(
       'Vllm-http://host:1',
     )
-  })
-})
-
-describe('findEngineByKey', () => {
-  const engines = [engine('http://localhost:8000'), engine('http://localhost:8001')]
-
-  it('finds the engine whose key matches', () => {
-    expect(findEngineByKey(engines, 'Vllm-http://localhost:8001')).toBe(engines[1])
-  })
-
-  it('returns undefined for a key no engine carries', () => {
-    expect(findEngineByKey(engines, 'Vllm-http://localhost:9999')).toBeUndefined()
-  })
-
-  it('returns undefined for an absent key rather than guessing', () => {
-    expect(findEngineByKey(engines, null)).toBeUndefined()
-    expect(findEngineByKey(engines, undefined)).toBeUndefined()
   })
 })
 

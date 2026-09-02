@@ -1,14 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, render, screen } from '@testing-library/react'
-import { useState, type ReactNode } from 'react'
+import { render, screen } from '@testing-library/react'
+import type { ReactNode } from 'react'
 import { AnimatedCounter } from '@/components/engines/AnimatedCounter'
 import { LiveMotionContext, useHeldWhileFrozen } from '@/hooks/useLiveMotion'
-import { useTabRotation } from '@/hooks/useTabRotation'
 
-// What "the dashboard holds still" means, at the three places motion comes
-// from. Edit mode is what freezes them in the product (#83); here each is
-// driven directly, because the point is that any page can hold still and none
-// of them knows what an edit session is.
+// What "the dashboard holds still" means, at both places motion comes from.
+// Edit mode is what freezes them in the product (#83); here each is driven
+// directly, because the point is that any page can hold still and neither of
+// them knows what an edit session is.
 
 function Motion({ live, children }: { live: boolean; children: ReactNode }) {
   return <LiveMotionContext.Provider value={live}>{children}</LiveMotionContext.Provider>
@@ -63,48 +62,6 @@ describe('a frozen counter', () => {
     )
 
     expect(screen.getByText('9000')).toBeInTheDocument()
-  })
-})
-
-describe('frozen tab rotation', () => {
-  function Rotation({ intervalMs = 1000 }: { intervalMs?: number }) {
-    const [tab, setTab] = useState('a')
-    useTabRotation({
-      order: ['a', 'b'],
-      activeTab: tab,
-      onAdvance: setTab,
-      intervalMs,
-      enabled: true,
-    })
-    return <span>{tab}</span>
-  }
-
-  beforeEach(() => {
-    vi.useFakeTimers()
-  })
-
-  afterEach(() => {
-    vi.useRealTimers()
-  })
-
-  it('does not advance while the dashboard is held still, and picks up again after', () => {
-    const { rerender } = render(
-      <Motion live={false}>
-        <Rotation />
-      </Motion>,
-    )
-
-    act(() => void vi.advanceTimersByTime(5000))
-    expect(screen.getByText('a')).toBeInTheDocument()
-
-    rerender(
-      <Motion live>
-        <Rotation />
-      </Motion>,
-    )
-    act(() => void vi.advanceTimersByTime(1000))
-
-    expect(screen.getByText('b')).toBeInTheDocument()
   })
 })
 

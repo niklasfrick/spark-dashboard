@@ -47,7 +47,7 @@ export type GpuSeriesMetric = 'gpuUtil' | 'gpuTemp' | 'gpuPower' | 'gpuClockGrap
  * The series key for one GPU's metric. Multi-GPU hosts read the
  * `gpu:<index>:<metric>` series; single-GPU hosts keep the legacy un-prefixed
  * keys so the pre-multi-GPU rendering stays byte-identical. One definition,
- * because a panel and the pre-grid dashboard must agree on it.
+ * because the writer and every panel reading it must agree on it.
  */
 export function gpuSeries(metric: GpuSeriesMetric, gpuIndex: number, multiGpu: boolean): string {
   return multiGpu ? `gpu:${gpuIndex}:${metric}` : metric
@@ -355,10 +355,6 @@ export class MetricsHistoryStore {
     if (!buffer) return []
     const cutoff = this.cutoff(window)
     return buffer.toArray().filter((dp) => dp.timestamp >= cutoff)
-  }
-
-  getSparklineData(metric: string, count = 30): number[] {
-    return this.resolveBuffer(metric)?.last(count).map((dp) => dp.value) ?? []
   }
 
   getEvents(window: TimeWindow = DEFAULT_TIME_WINDOW): GpuEventData[] {

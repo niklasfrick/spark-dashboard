@@ -64,10 +64,9 @@ function readFromStorage(key: string | null): SloThresholds | null {
 }
 
 /**
- * Per-model SLO threshold state. Mirrors the localStorage pattern used by
- * the engine rotation, latency mode, and active tab settings (see
- * `EngineSection.tsx`). When there is no engine, or it has no loaded model,
- * returns the defaults and a no-op setter — nothing to persist.
+ * Per-model SLO threshold state, kept in localStorage on the same pattern as
+ * the latency mode beside it. When there is no engine, or it has no loaded
+ * model, returns the defaults and a no-op setter — nothing to persist.
  *
  * A null engine key is how a panel calls this before it knows whether its
  * binding resolved: the hook has to run above that early return, so "no engine

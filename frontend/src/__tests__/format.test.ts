@@ -1,30 +1,14 @@
 import { describe, it, expect } from 'vitest'
 import {
   formatBytes,
-  formatGiB,
   formatCompactTokens,
   formatAcceptanceLength,
   formatEndpoint,
-  formatGpuIndexes,
   engineDescription,
 } from '../lib/format'
 
 const GIB = 1_073_741_824
 const MIB = 1_048_576
-
-describe('formatGiB', () => {
-  it('renders 128 GiB as "128 GB" (matches DGX Spark unified pool)', () => {
-    expect(formatGiB(128 * GIB)).toBe('128 GB')
-  })
-
-  it('rounds to integer by default', () => {
-    expect(formatGiB(127.6 * GIB)).toBe('128 GB')
-  })
-
-  it('respects the decimals argument', () => {
-    expect(formatGiB(2.5 * GIB, 1)).toBe('2.5 GB')
-  })
-})
 
 describe('formatBytes', () => {
   it('uses binary GiB under the "GB" label', () => {
@@ -74,21 +58,6 @@ describe('formatAcceptanceLength', () => {
     expect(formatAcceptanceLength(3)).toBe('3.00')
     expect(formatAcceptanceLength(3.4167)).toBe('3.42')
     expect(formatAcceptanceLength(0)).toBe('0.00')
-  })
-})
-
-describe('formatGpuIndexes', () => {
-  it('renders a single index as "GPU N"', () => {
-    expect(formatGpuIndexes([0])).toBe('GPU 0')
-    expect(formatGpuIndexes([3])).toBe('GPU 3')
-  })
-
-  it('joins multiple indexes with "+" (tensor parallel)', () => {
-    expect(formatGpuIndexes([0, 1])).toBe('GPU 0+1')
-  })
-
-  it('renders an empty string when no indexes are known', () => {
-    expect(formatGpuIndexes([])).toBe('')
   })
 })
 

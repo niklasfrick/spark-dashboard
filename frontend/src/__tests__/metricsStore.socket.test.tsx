@@ -4,12 +4,12 @@ import { useEffect } from 'react'
 import { MetricsStoreProvider } from '../hooks/MetricsStoreProvider'
 import { useMetricSeries } from '../hooks/useMetricsStore'
 import { useMetrics } from '../hooks/useMetrics'
-import { useMetricsHistory } from '../hooks/useMetricsHistory'
+import { useMetricsIngest } from '../hooks/useMetricsIngest'
 import { MockWebSocket, substituteWebSocket } from '../test/websocket'
 import type { MetricsSnapshot } from '../types/metrics'
 
 // The store is deliberately tested through the substituted WebSocket — the
-// same seam the log viewer spec uses — so the real ingest and subscription
+// same seam the log panel spec uses — so the real ingest and subscription
 // logic runs end to end instead of being mocked away.
 substituteWebSocket()
 
@@ -49,7 +49,7 @@ function snapshot(ts: number, util: number, temp: number | null): MetricsSnapsho
 /** The app's real wiring: the socket hook feeding the store, as App does. */
 function Feed() {
   const { metrics } = useMetrics()
-  useMetricsHistory(metrics)
+  useMetricsIngest(metrics)
   return null
 }
 

@@ -19,8 +19,8 @@ export interface MemorySplit {
 /**
  * How the dashboard divides the host's memory pool for display: the GPU's
  * estimated share, the CPU remainder, reclaimable cache, and truly free —
- * one definition, so the memory panel and the pre-grid dashboard cannot
- * disagree about the split or its colors.
+ * one definition, so nothing rendering the pool can disagree about the split
+ * or its colors.
  */
 export function memorySplit(memory: MemoryMetrics): MemorySplit {
   const usedPercent =

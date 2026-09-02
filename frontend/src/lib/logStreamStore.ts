@@ -47,14 +47,6 @@ export interface LogStream {
  *  constant, so an unwatched endpoint never looks like it changed. */
 const NO_STREAM: LogStream = { status: 'connecting', lines: [] }
 
-/**
- * The endpoint that asks the backend for whichever container it would pick
- * itself — the first Docker engine. Sending no `?engine=` at all is how the
- * `/ws/logs` route spells that, so the empty endpoint is a real address here
- * rather than a missing one.
- */
-export const BACKEND_DEFAULT_ENGINE = ''
-
 /** One endpoint's socket, buffer and subscribers. */
 interface Connection {
   socket: WebSocket | null
@@ -73,9 +65,9 @@ export class LogStreamStore {
    * Watch one engine's logs, holding the connection open for as long as the
    * returned release function has not been called.
    *
-   * The endpoint is the engine's, exactly as the metrics snapshot reports it,
-   * or `BACKEND_DEFAULT_ENGINE` to let the backend pick — which is what the
-   * pre-grid console does on a host it has not been pointed at.
+   * The endpoint is the engine's, exactly as the metrics snapshot reports it:
+   * a log panel binds to an engine like any other engine panel, so there is
+   * no unaddressed connection for the backend to guess at.
    */
   subscribe(endpoint: string, listener: () => void): () => void {
     let connection = this.connections.get(endpoint)
