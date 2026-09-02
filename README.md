@@ -311,6 +311,33 @@ curl -X DELETE localhost:3000/api/dashboard                # reset
 
 Unmatched paths under `/api` return `404` rather than the app shell.
 
+### Dashboard pages and kiosk URLs
+
+A configuration holds any number of named **pages** — separate arrangements of
+panels, kept side by side rather than one being chosen permanently. They are
+created, renamed and deleted from the **Pages** menu in the header, and switched
+between from the tabs beside it; tabs that do not fit the header move into an
+overflow menu rather than pushing it out of shape.
+
+Each page has its own URL, built from a stable id plus a readable slug:
+
+```
+/pages/<id>            e.g. /pages/overview
+/pages/<id>/<slug>     e.g. /pages/p-7f3a/training-view
+```
+
+**Only the id is matched** — the slug is decoration. Renaming a page rewrites
+the slug and leaves the id alone, so a kiosk browser or a bookmark pointed at
+the old URL still lands on the same page. Pointing a wall display at one page's
+URL is what makes it come back to that page after a reboot with no interaction.
+
+Resetting is two-tiered: deleting a single page from the Pages menu takes that
+page only, while **Reset everything** asks for confirmation and then removes the
+stored document outright — which is the same `DELETE /api/dashboard` above, and
+leaves the dashboard rendering its default preset. The dashboard always keeps at
+least one page, so the last one cannot be deleted; resetting is the way to start
+over.
+
 ### Log viewer (`--enable-log-viewer`, Linux only, opt-in)
 
 `--enable-log-viewer` (or the `SPARK_DASHBOARD_ENABLE_LOG_VIEWER=1` env var)
