@@ -17,10 +17,11 @@ export function GpuUtilizationPanel({ panel }: PanelContentProps) {
 
   return (
     <HardwarePanelBody
+      device={resolution.gpu.name}
       compact={<HBar value={value} label={label} unit="%" />}
       gauge={(sizePx) => <ArcGauge value={value} label={label} unit="%" size={sizePx} />}
       chart={
-        <TimeSeriesChart data={data} yDomain={[0, 100]} unit="%" seriesLabel="GPU" height="100%" />
+        <TimeSeriesChart data={data} yDomain={[0, 100]} unit="%" seriesLabel="GPU" />
       }
     />
   )

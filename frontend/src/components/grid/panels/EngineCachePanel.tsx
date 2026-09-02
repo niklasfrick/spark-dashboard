@@ -72,7 +72,6 @@ export function EngineCachePanel({ panel }: PanelContentProps) {
           ]}
           yDomain={[0, 100]}
           unit="%"
-          height="100%"
         />
       }
     />

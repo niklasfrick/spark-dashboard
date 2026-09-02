@@ -102,7 +102,6 @@ export function EngineLatencyPanel({ panel }: PanelContentProps) {
             { data: tpotSeries, label: 'TPOT', color: '#ec4899', axis: 'right' },
           ]}
           unit="ms"
-          height="100%"
         />
       }
     />

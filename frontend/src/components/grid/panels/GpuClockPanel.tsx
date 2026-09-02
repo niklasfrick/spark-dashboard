@@ -17,6 +17,7 @@ export function GpuClockPanel({ panel }: PanelContentProps) {
 
   return (
     <HardwarePanelBody
+      device={resolution.gpu.name}
       compact={
         <MetricRow label={label} value={mhz === null ? null : String(Math.round(mhz))} unit="MHz" />
       }
@@ -30,7 +31,7 @@ export function GpuClockPanel({ panel }: PanelContentProps) {
           </span>
         </div>
       )}
-      chart={<TimeSeriesChart data={data} unit="MHz" seriesLabel="Clock" height="100%" />}
+      chart={<TimeSeriesChart data={data} unit="MHz" seriesLabel="Clock" />}
     />
   )
 }

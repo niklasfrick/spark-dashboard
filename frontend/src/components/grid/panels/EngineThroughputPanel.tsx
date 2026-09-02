@@ -98,7 +98,6 @@ function ThroughputPanel({ panel, fields }: PanelContentProps & { fields: Throug
             { data: perRequest, label: 'Per-req', color: '#a855f7' },
           ]}
           unit="tok/s"
-          height="100%"
         />
       }
     />

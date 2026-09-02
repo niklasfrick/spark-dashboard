@@ -49,7 +49,6 @@ export function EngineRequestsPanel({ panel }: PanelContentProps) {
             { data: series('totalRequests'), label: 'Total', color: '#3b82f6', axis: 'right' },
           ]}
           unit=""
-          height="100%"
         />
       }
     />

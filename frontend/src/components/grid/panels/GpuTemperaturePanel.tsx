@@ -18,12 +18,13 @@ export function GpuTemperaturePanel({ panel }: PanelContentProps) {
 
   return (
     <HardwarePanelBody
+      device={resolution.gpu.name}
       compact={<HBar value={value} label={label} unit="°C" thresholds={THRESHOLDS.gpuTemp} />}
       gauge={(sizePx) => (
         <ArcGauge value={value} label={label} unit="°C" thresholds={THRESHOLDS.gpuTemp} size={sizePx} />
       )}
       chart={
-        <TimeSeriesChart data={data} yDomain={[0, 100]} unit="°C" seriesLabel="Temp" height="100%" />
+        <TimeSeriesChart data={data} yDomain={[0, 100]} unit="°C" seriesLabel="Temp" />
       }
     />
   )
