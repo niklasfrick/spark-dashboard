@@ -34,9 +34,15 @@ async function configurationSettles(fetchMock: FetchMock) {
   await act(() => configurationResponse(fetchMock))
 }
 
-/** The dashboard itself, proving a banner never replaced it with a dead screen. */
+/**
+ * The dashboard itself, proving a banner never replaced it with a dead screen.
+ *
+ * The page navigation is the marker because it renders only once a document has
+ * resolved — stored, preset, or fallback — so every branch this file drives ends
+ * up either here or on nothing at all.
+ */
 function dashboardIsRendered() {
-  expect(screen.getByText('Waiting for metrics')).toBeInTheDocument()
+  expect(screen.getByRole('navigation', { name: 'Pages' })).toBeInTheDocument()
 }
 
 beforeEach(() => {

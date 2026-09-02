@@ -12,15 +12,20 @@
  * like something — it is ignored on the way in, which is what keeps a kiosk
  * bookmark working after the page is renamed.
  *
- * Every path that names nothing renders the root dashboard, exactly as the
- * whole site did before these routes existed.
+ * Every path that names nothing renders the first page, exactly as the whole
+ * site rendered the dashboard before these routes existed.
+ *
+ * The root is a route of its own rather than a redirect to the first page's
+ * URL. An operator who bookmarked `/` asked for "this dashboard", not for the
+ * page that happened to be first the day they bookmarked it — so the root
+ * follows the page list, and only a `/pages/` URL pins one.
  */
 
 import type { DashboardPage } from './schema'
 
 export type Route =
-  /** The pre-grid dashboard at the root — today's view, untouched until the #86 cutover. */
-  | { kind: 'dashboard' }
+  /** The root: whichever page the configuration lists first. */
+  | { kind: 'first-page' }
   /** One grid page, named by its stable id. */
   | { kind: 'page'; pageId: string }
 
@@ -32,7 +37,7 @@ export function parseRoute(pathname: string): Route {
     return { kind: 'page', pageId: decodeURIComponent(segments[1]) }
   }
 
-  return { kind: 'dashboard' }
+  return { kind: 'first-page' }
 }
 
 /**

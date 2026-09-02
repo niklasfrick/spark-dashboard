@@ -64,9 +64,6 @@ describe('the grid page route', () => {
 
     expect(screen.getByRole('region', { name: 'CPU' })).toBeInTheDocument()
     expect(screen.getByRole('region', { name: 'Memory' })).toBeInTheDocument()
-    // The root dashboard did not render underneath the grid page. (Its marker
-    // is the waiting *heading*; the panels' own waiting notices share the text.)
-    expect(screen.queryByRole('heading', { name: 'Waiting for metrics' })).not.toBeInTheDocument()
   })
 
   it('matches the page by id alone, so a stale slug from before a rename still lands', async () => {
@@ -207,14 +204,56 @@ describe('the grid page route', () => {
     expect(screen.getByRole('region', { name: 'CPU' })).toBeInTheDocument()
   })
 
-  it('leaves the root URL exactly as it was — the existing dashboard, no grid', async () => {
-    const fetchMock = serveConfiguration({ document: storedDocument([]) })
+  it('serves the first page at the root, so an operator needs no URL to start', async () => {
+    const fetchMock = serveConfiguration({
+      document: JSON.stringify({
+        version: DASHBOARD_SCHEMA_VERSION,
+        pages: [
+          { id: 'watch', name: 'Watch', panels: [{ id: 'a', type: 'cpu-utilization' }] },
+          { id: 'later', name: 'Later', panels: [{ id: 'b', type: 'memory' }] },
+        ],
+      }),
+    })
     visit('/')
 
     render(<App />)
     await configurationSettles(fetchMock)
 
-    expect(screen.getByText('Waiting for metrics')).toBeInTheDocument()
-    expect(screen.queryByTestId('grid-stack')).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'CPU' })).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Memory' })).not.toBeInTheDocument()
+    // The root follows the page list rather than redirecting into it: an
+    // operator who bookmarked “this dashboard” did not bookmark whichever page
+    // happened to be first the day they did.
+    expect(window.location.pathname).toBe('/')
+  })
+
+  it('opens a fresh install on the default preset', async () => {
+    // The acceptance test for a stock install: no stored configuration, no URL,
+    // and the redesigned preset on screen with nothing unavailable in it.
+    const fetchMock = serveConfiguration({ document: null })
+    visit('/')
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+
+    expect(screen.getByRole('region', { name: 'GPU Utilization' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Decode Throughput' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'CPU' })).toBeInTheDocument()
+    expect(screen.queryByText('This panel is not available yet.')).not.toBeInTheDocument()
+  })
+
+  it('has a page to serve at the root even when the stored document has none', async () => {
+    // The root has no page id to fall back on, so it leans on the loader's rule
+    // that an empty page list resolves to the preset. If that ever stopped
+    // holding, the root would be the blank screen rather than the dashboard.
+    const fetchMock = serveConfiguration({
+      document: JSON.stringify({ version: DASHBOARD_SCHEMA_VERSION, pages: [] }),
+    })
+    visit('/')
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+
+    expect(screen.getByRole('region', { name: 'GPU Utilization' })).toBeInTheDocument()
   })
 })

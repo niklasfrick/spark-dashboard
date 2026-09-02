@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { pagePath, pageSlug, parseRoute } from './routes'
 
 describe('parseRoute', () => {
-  it('routes the root to the dashboard', () => {
-    expect(parseRoute('/')).toEqual({ kind: 'dashboard' })
+  it('routes the root to whichever page comes first', () => {
+    expect(parseRoute('/')).toEqual({ kind: 'first-page' })
   })
 
   it('routes a page URL to that page by id', () => {
@@ -26,11 +26,11 @@ describe('parseRoute', () => {
     expect(parseRoute('/pages/page%202')).toEqual({ kind: 'page', pageId: 'page 2' })
   })
 
-  it('routes every path that names nothing to the dashboard, as the server-side shell always did', () => {
-    expect(parseRoute('/pages')).toEqual({ kind: 'dashboard' })
-    expect(parseRoute('/pages/')).toEqual({ kind: 'dashboard' })
-    expect(parseRoute('/settings')).toEqual({ kind: 'dashboard' })
-    expect(parseRoute('/index.html')).toEqual({ kind: 'dashboard' })
+  it('routes every path that names nothing to the first page, as the server-side shell always did', () => {
+    expect(parseRoute('/pages')).toEqual({ kind: 'first-page' })
+    expect(parseRoute('/pages/')).toEqual({ kind: 'first-page' })
+    expect(parseRoute('/settings')).toEqual({ kind: 'first-page' })
+    expect(parseRoute('/index.html')).toEqual({ kind: 'first-page' })
   })
 })
 

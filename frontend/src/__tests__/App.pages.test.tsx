@@ -141,10 +141,19 @@ describe('the page tabs', () => {
     await waitFor(() => expect(screen.getByRole('region', { name: 'CPU' })).toBeInTheDocument())
   })
 
-  it('shows no tabs on the root dashboard, which the grid has not taken over yet', async () => {
+  it('marks the first page as the one being viewed at the root', async () => {
+    // The root has no page id in it, so the strip has to take the tab from the
+    // page that resolved — otherwise an operator who has not navigated anywhere
+    // yet sees a row of tabs with none of them selected.
     await openPage(serveConfiguration({ document: twoPages() }), '/')
 
-    expect(screen.queryByRole('navigation', { name: 'Pages' })).not.toBeInTheDocument()
+    expect(within(tabs()).getByRole('link', { name: 'Watch' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    )
+    expect(within(tabs()).getByRole('link', { name: 'Wall Display' })).not.toHaveAttribute(
+      'aria-current',
+    )
   })
 })
 
