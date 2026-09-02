@@ -10,10 +10,28 @@
  * "Nothing configured" and "reset" are the same state: the document does not
  * exist on the server, and this is what renders instead.
  *
- * The arrangement below is a working default, not the final design. The preset
- * redesign — including the second page for logs and the cutover from the current
- * fixed layout — is its own change (#86). What is settled here is the shape: one
- * page that tiles the grid exactly, so the desktop layout fits the viewport.
+ * **The arrangement is three bands, one question each**: what the GPU is doing,
+ * what it is serving, and what else the host is up to. Within a band the leading
+ * panel is double width, because a default that gives ten metrics the same area
+ * says none of them matters more than the others — which is the flaw this rework
+ * exists to fix. It is deliberately not a reproduction of the fixed dashboard it
+ * replaced: that layout was eight equal hardware cards under an engine block,
+ * and reproducing it would have carried its lack of hierarchy across.
+ *
+ * The engine band sits in the **middle**, not on top, so a host running no
+ * engines opens on GPU utilization rather than on a placeholder, and the band it
+ * cannot fill has working panels above and below it.
+ *
+ * **One page**, not several. A second preset page could only be another
+ * arrangement of the same panels — the pages worth having are the ones an
+ * operator builds for their own workload, and a page they did not ask for is a
+ * tab they have to delete. The one page tiles the grid exactly, so the desktop
+ * layout fills the viewport without scrolling.
+ *
+ * **No log panel**, on any page. The log viewer is off by default in every
+ * deployment, so a preset that placed one would open a stock install on a panel
+ * explaining that a feature is unavailable. Logs are placed by the operator who
+ * turned them on.
  */
 
 import { FOLLOW } from './bindings'
@@ -41,20 +59,30 @@ export function defaultDashboardDocument(): DashboardDocument {
         id: 'overview',
         name: 'Overview',
         panels: [
-          // Engines across the top — the numbers an operator watches while a
-          // model is serving. They degrade to a placeholder on a host running
-          // no engines, leaving the hardware rows below still useful.
-          panel('decode', 'engine-decode-throughput', { x: 0, y: 0, w: 4, h: 3 }),
-          panel('latency', 'engine-latency', { x: 4, y: 0, w: 4, h: 3 }),
-          panel('requests', 'engine-requests', { x: 8, y: 0, w: 4, h: 3 }),
+          // ── What the GPU is doing ───────────────────────────────────────
+          // Utilization leads at double width and is the first thing on the
+          // page, because it is the one panel that resolves on every host the
+          // dashboard runs on. Power and temperature flank it: the two numbers
+          // that say whether the GPU can keep doing it.
+          panel('gpu-util', 'gpu-utilization', { x: 0, y: 0, w: 6, h: 3 }),
+          panel('gpu-power', 'gpu-power', { x: 6, y: 0, w: 3, h: 3 }),
+          panel('gpu-temp', 'gpu-temperature', { x: 9, y: 0, w: 3, h: 3 }),
 
-          // The GPU band, following the page's GPU selection.
-          panel('gpu-util', 'gpu-utilization', { x: 0, y: 3, w: 3, h: 3 }),
-          panel('gpu-temp', 'gpu-temperature', { x: 3, y: 3, w: 3, h: 3 }),
-          panel('gpu-power', 'gpu-power', { x: 6, y: 3, w: 3, h: 3 }),
-          panel('gpu-clock', 'gpu-clock', { x: 9, y: 3, w: 3, h: 3 }),
+          // ── What it is serving ──────────────────────────────────────────
+          // Decode throughput is the number an operator quotes for an
+          // inference host, so it leads the band; latency and the request
+          // queue are what explain it when it drops. All three degrade to a
+          // placeholder where no engine is running, which is why the band is
+          // here rather than at the top of the page.
+          panel('decode', 'engine-decode-throughput', { x: 0, y: 3, w: 6, h: 3 }),
+          panel('latency', 'engine-latency', { x: 6, y: 3, w: 3, h: 3 }),
+          panel('requests', 'engine-requests', { x: 9, y: 3, w: 3, h: 3 }),
 
-          // Host-wide hardware, shorter because it is glanced at rather than read.
+          // ── What else the host is up to ─────────────────────────────────
+          // Equal and short: these are glanced at to rule something out, not
+          // read. GPU clock belongs to this tier of interest too, but it is a
+          // consequence of the power and thermal state directly above rather
+          // than a signal of its own, so the default leaves it to the palette.
           panel('cpu', 'cpu-utilization', { x: 0, y: 6, w: 3, h: 2 }),
           panel('memory', 'memory', { x: 3, y: 6, w: 3, h: 2 }),
           panel('disk', 'disk-io', { x: 6, y: 6, w: 3, h: 2 }),

@@ -1,8 +1,24 @@
 import { describe, it, expect } from 'vitest'
 import { defaultDashboardDocument } from './preset'
 import { GRID_COLUMNS, GRID_MAX_ROWS, isOutOfRoom } from './grid'
-import { isKnownPanelType } from './panels'
-import { DASHBOARD_SCHEMA_VERSION, parseDashboardDocument, serializeDashboardDocument } from './schema'
+import { isKnownPanelType, panelBindingKind } from './panels'
+import {
+  DASHBOARD_SCHEMA_VERSION,
+  parseDashboardDocument,
+  serializeDashboardDocument,
+  type DashboardPage,
+  type DashboardPanel,
+} from './schema'
+
+/**
+ * The page's panels the way the eye crosses them — and the way a phone stacks
+ * them, since the single-column layout is derived from this same order.
+ */
+function readingOrder(page: DashboardPage): DashboardPanel[] {
+  return [...page.panels].sort(
+    (a, b) => a.geometry.y - b.geometry.y || a.geometry.x - b.geometry.x,
+  )
+}
 
 describe('the default preset', () => {
   it('parses as a document of the current version', () => {
@@ -51,6 +67,30 @@ describe('the default preset', () => {
         expect(panel.type, panel.id).not.toBe('logs')
       }
     }
+  })
+
+  it('opens on a panel that resolves on every host it can land on', () => {
+    // A stock install must not greet an operator with an explanation of what is
+    // unavailable. Engine panels are the only ones in the preset that can fail
+    // to resolve on a working host — a machine running no engines — so the
+    // panel the eye lands on first must not be one of them.
+    const [first] = readingOrder(defaultDashboardDocument().pages[0])
+
+    expect(panelBindingKind(first.type)).not.toBe('engine')
+  })
+
+  it('keeps each band together in the order a phone stacks them', () => {
+    // The phone layout is derived, not authored: panels collapse into one
+    // column in desktop reading order. A preset that interleaved hardware and
+    // engine panels across the grid would therefore read as an unsorted list on
+    // a phone, and would scatter the placeholders on an engineless host through
+    // the whole scroll rather than leaving them in one run.
+    const kinds = readingOrder(defaultDashboardDocument().pages[0]).map((panel) =>
+      panelBindingKind(panel.type),
+    )
+    const runs = kinds.filter((kind, index) => kind !== kinds[index - 1])
+
+    expect(runs).toEqual([...new Set(runs)])
   })
 
   it('gives every panel on a page a distinct identifier', () => {
