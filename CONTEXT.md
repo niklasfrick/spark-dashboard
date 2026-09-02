@@ -23,7 +23,14 @@ An inference server on the host, detected by process scan or the Docker API and
 polled for Prometheus metrics. Identified to the backend by its **endpoint**;
 identified in the UI by type and endpoint together, since a host can run several
 of the same type.
-_Avoid_: server, model, provider, backend (the backend is the Rust process)
+_Avoid_: server, model, backend (the backend is the Rust process)
+
+**Provider**:
+The organization that published a model, taken from its HuggingFace-style org
+prefix and used to pick the logo beside it. Not a synonym for engine — one engine
+serves models from many providers, though the older
+`SPARK_DASHBOARD_PROVIDER_API_KEY` flag uses the word that way.
+_Avoid_: vendor, org, publisher
 
 **GPU index**:
 The integer NVML reports for a device, and the identity a panel pins to. GPUs
