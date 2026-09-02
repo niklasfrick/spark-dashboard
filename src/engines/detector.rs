@@ -30,6 +30,10 @@ pub struct DetectedEngine {
 const ENGINE_BINARIES: &[(&str, EngineType, &str)] =
     &[("vllm", EngineType::Vllm, "http://localhost:8000")];
 
+/// The port vLLM serves on when it is not told otherwise. Used wherever a
+/// candidate is found but its port cannot be read off the command line.
+const VLLM_DEFAULT_PORT: u16 = 8000;
+
 // ---------------------------------------------------------------------------
 // Public detection entry point
 // ---------------------------------------------------------------------------
@@ -105,6 +109,38 @@ fn merge_docker_candidates(
             seen.insert(key);
             candidates.push(dc);
         }
+    }
+}
+
+/// Whether a process command line is a vLLM server rather than something that
+/// merely mentions it.
+///
+/// Matches the entrypoint forms the process scanner already recognizes, so a
+/// container is judged by the same evidence a host process is: the binary being
+/// run, not a name somebody chose.
+fn is_vllm_process(command: &str) -> bool {
+    command
+        .split_whitespace()
+        .any(|arg| arg == "vllm" || arg.ends_with("/vllm") || arg.contains("vllm.entrypoints"))
+}
+
+/// The endpoint to probe a container's vLLM on, and whether the port had to be
+/// assumed.
+///
+/// No port anywhere — no published binding, no `--port` in the command, none in
+/// the container's process list — means vLLM is on its own default. That is the
+/// normal shape of a host-networked container: it publishes nothing, because it
+/// is already on the host's ports.
+///
+/// Assuming is safe and dropping the container is not. The health probe rejects
+/// a candidate whose `/health` does not answer, so a wrong assumption costs one
+/// request and corrects itself — while a container dropped for having no
+/// readable port is invisible to the dashboard for good, engine, metrics and
+/// logs alike.
+fn docker_endpoint(port: Option<&str>) -> (String, bool) {
+    match port {
+        Some(p) => (format!("http://localhost:{}", p), false),
+        None => (format!("http://localhost:{}", VLLM_DEFAULT_PORT), true),
     }
 }
 
@@ -424,14 +460,25 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
             .unwrap_or_default()
             .to_lowercase();
 
-        // Match on image name OR container command only. Container *names*
-        // are operator-chosen and commonly include "vllm" for unrelated
-        // sidecars (e.g. an OpenResty reverse proxy named "vllm-proxy"),
-        // so they are not a reliable signal and are deliberately excluded
-        // to prevent false-positive engine detection.
+        // The image and the container's entrypoint are trustworthy signals on
+        // their own. A container *name* is not: names are operator-chosen and
+        // commonly include "vllm" for unrelated sidecars (an OpenResty reverse
+        // proxy called "vllm-proxy"), so a name match is only a candidate —
+        // confirmed below by finding an actual vLLM process inside it.
+        //
+        // The name has to count for something, though: a container built from a
+        // private image, started with `sleep infinity` and given vLLM by hand is
+        // otherwise invisible to the dashboard entirely, however plainly it is
+        // named.
+        let named_vllm = container
+            .names
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .any(|n| n.to_lowercase().contains("vllm"));
         let is_vllm = image.contains("vllm") || command.contains("vllm");
 
-        if !is_vllm {
+        if !is_vllm && !named_vllm {
             continue;
         }
 
@@ -456,6 +503,7 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
         //    argument, since `container.command` is just the container's
         //    *entrypoint* and often omits the child vllm-serve args.
         let mut pids: Vec<u32> = Vec::new();
+        let mut saw_vllm_process = false;
         let (port, served_model) = {
             let container_id = container.id.as_deref().unwrap_or_default();
             if container_id.is_empty() {
@@ -472,6 +520,9 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
                                     pids.push(pid);
                                 }
                                 let line = row.join(" ");
+                                if is_vllm_process(&line) {
+                                    saw_vllm_process = true;
+                                }
                                 if found_port.is_none() {
                                     if let Some(p) = parse_port_from_command_str(&line) {
                                         tracing::debug!(
@@ -506,29 +557,42 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
         pids.sort_unstable();
         pids.dedup();
 
-        if let Some(p) = port {
-            let endpoint = format!("http://localhost:{}", p);
+        // A container that only matched by name has to prove itself. Nothing
+        // that merely calls itself vllm becomes an engine.
+        if !is_vllm && !saw_vllm_process {
             tracing::debug!(
-                "Docker vLLM candidate: image={}, port={}, endpoint={}, model={:?}",
-                container.image.as_deref().unwrap_or("?"),
-                p,
-                endpoint,
-                served_model,
-            );
-            detected.push(DetectedEngine {
-                engine_type: EngineType::Vllm,
-                endpoint,
-                deployment_mode: DeploymentMode::Docker,
-                served_model,
-                pids,
-                container_id: container.id.clone(),
-            });
-        } else {
-            tracing::debug!(
-                "Docker vLLM container found (image={}) but could not determine port",
+                "Container named like vLLM (image={}) runs no vLLM process; skipping",
                 container.image.as_deref().unwrap_or("?"),
             );
+            continue;
         }
+
+        // No port anywhere — no published binding, no `--port` in the command,
+        // none in the container's process list — means vLLM is on its own
+        // default. That is the normal shape of a host-networked container: it
+        // publishes nothing, because it is already on the host's ports.
+        //
+        // Guessing is safe here and dropping the container is not. The health
+        // probe below rejects a candidate whose `/health` does not answer, so a
+        // wrong guess costs one request and corrects itself, while a container
+        // dropped for having no port is invisible to the dashboard for good —
+        // engine, metrics and logs alike.
+        let (endpoint, guessed) = docker_endpoint(port.as_deref());
+        tracing::debug!(
+            "Docker vLLM candidate: image={}, endpoint={}{}, model={:?}",
+            container.image.as_deref().unwrap_or("?"),
+            endpoint,
+            if guessed { " (default port)" } else { "" },
+            served_model,
+        );
+        detected.push(DetectedEngine {
+            engine_type: EngineType::Vllm,
+            endpoint,
+            deployment_mode: DeploymentMode::Docker,
+            served_model,
+            pids,
+            container_id: container.id.clone(),
+        });
     }
 
     detected
@@ -728,6 +792,47 @@ mod tests {
             pids: pids.to_vec(),
             container_id: None,
         }
+    }
+
+    #[test]
+    fn a_vllm_server_process_is_recognized_in_its_several_launch_forms() {
+        assert!(is_vllm_process(
+            "/usr/bin/python3 /usr/local/bin/vllm serve Qwen/Qwen3-8B"
+        ));
+        assert!(is_vllm_process("vllm serve mistralai/Mistral-7B"));
+        assert!(is_vllm_process(
+            "python -m vllm.entrypoints.openai.api_server --port 8001"
+        ));
+    }
+
+    #[test]
+    fn a_process_that_merely_mentions_vllm_is_not_a_server() {
+        // What the container-name signal has to be protected against: a proxy
+        // or a shell that has the word in its arguments but serves nothing.
+        assert!(!is_vllm_process("nginx: master process /usr/sbin/nginx"));
+        assert!(!is_vllm_process("sleep infinity"));
+        assert!(!is_vllm_process("/bin/sh -c echo starting vllm-proxy"));
+        assert!(!is_vllm_process("tail -f /var/log/vllm.log"));
+    }
+
+    #[test]
+    fn docker_endpoint_uses_the_port_detection_found() {
+        assert_eq!(
+            docker_endpoint(Some("8001")),
+            ("http://localhost:8001".to_string(), false)
+        );
+    }
+
+    #[test]
+    fn docker_endpoint_assumes_vllms_default_when_no_port_is_readable() {
+        // The host-networked container: it publishes no ports because it is
+        // already on the host's, and it was started without an explicit
+        // --port. Before this it was dropped from detection entirely, which
+        // took its metrics and its logs with it.
+        assert_eq!(
+            docker_endpoint(None),
+            ("http://localhost:8000".to_string(), true)
+        );
     }
 
     #[test]
