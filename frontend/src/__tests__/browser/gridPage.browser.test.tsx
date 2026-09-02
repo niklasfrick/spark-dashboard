@@ -4,6 +4,7 @@ import { GridPage } from '@/components/grid/GridPage'
 import { MetricsStoreProvider } from '@/hooks/MetricsStoreProvider'
 import { FOLLOW } from '@/lib/dashboard/bindings'
 import type { PanelGeometry } from '@/lib/dashboard/grid'
+import { defaultDashboardDocument } from '@/lib/dashboard/preset'
 import { DEFAULT_TIME_WINDOW, type DashboardPage } from '@/lib/dashboard/schema'
 import type { PanelType } from '@/lib/dashboard/panels'
 
@@ -107,6 +108,41 @@ describe('the grid page in a real layout engine', () => {
       const items = itemGeometry(container)
       expect(items.get('left')).toMatchObject({ x: 0, y: 0, w: 6, h: 5 })
       expect(items.get('right')).toMatchObject({ x: 6, y: 0, w: 6, h: 5 })
+    })
+  })
+
+  it('lays the shipped preset out to fill a desktop, and stacks it in reading order on a phone', async () => {
+    // The preset's own acceptance criteria (#86), which only a layout engine
+    // can answer: a fresh install fits the viewport without scrolling, and the
+    // same document collapses to one readable column on a phone.
+    const [preset] = defaultDashboardDocument().pages
+    const { container, rerender } = render(<Harness width={1440} height={800} content={preset} />)
+
+    await waitFor(() => {
+      const items = [...container.querySelectorAll('.grid-stack-item')]
+      expect(items).toHaveLength(preset.panels.length)
+      const outer = container.querySelector('.grid-stack')!.getBoundingClientRect()
+      const filled = Math.max(...items.map((el) => el.getBoundingClientRect().bottom)) - outer.top
+      // Reaches the bottom row and does not pass it: the preset tiles the grid
+      // exactly, so "fills the viewport" and "does not scroll" are one check.
+      expect(filled).toBeLessThanOrEqual(801)
+      expect(filled).toBeGreaterThan(720)
+    })
+
+    rerender(<Harness width={390} height={800} content={preset} />)
+    await waitFor(() => {
+      const items = itemGeometry(container)
+      expect(items.size).toBe(preset.panels.length)
+      for (const [id, geometry] of items) {
+        expect(geometry, id).toMatchObject({ x: 0, w: 1 })
+      }
+      // Desktop reading order — left to right, then down — is the order the
+      // column is in, so the phone reads as the same dashboard.
+      const stacked = [...items.entries()].sort((a, b) => a[1].y - b[1].y).map(([id]) => id)
+      const authored = [...preset.panels]
+        .sort((a, b) => a.geometry.y - b.geometry.y || a.geometry.x - b.geometry.x)
+        .map((panel) => panel.id)
+      expect(stacked).toEqual(authored)
     })
   })
 
