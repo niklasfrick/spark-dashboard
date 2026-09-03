@@ -23,5 +23,16 @@ Thumbs.db
 .claude/
 .gstack/
 
+# VS Code workspaces
+*.code-workspace
+
 # Splunk stuff
 SplunkHEC-spec.md
+
+# Local tooling
+deploy-local.sh
+
+# SPLUNK STUFF
+Splunk-App/
+# Generated knowledge graph (local, not versioned)
+graphify-out/

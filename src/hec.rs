@@ -324,6 +324,136 @@ pub fn build_metric_event(snapshot: &MetricsSnapshot, host: &str, index: &str) -
             &format!("{prefix}inter_token_latency_ms"),
             metrics.inter_token_latency_ms,
         );
+        // Requests card: cumulative and scheduling counters.
+        push_opt(
+            &mut fields,
+            &format!("{prefix}total_requests"),
+            metrics.total_requests.map(|v| v as f64),
+        );
+        push_opt(
+            &mut fields,
+            &format!("{prefix}swapped_requests"),
+            metrics.swapped_requests.map(|v| v as f64),
+        );
+        push_opt(
+            &mut fields,
+            &format!("{prefix}preemptions_total"),
+            metrics.preemptions_total.map(|v| v as f64),
+        );
+        // Cache & Speculative Decoding card.
+        push_opt(
+            &mut fields,
+            &format!("{prefix}kv_cache_percent"),
+            metrics.kv_cache_percent,
+        );
+        push_opt(
+            &mut fields,
+            &format!("{prefix}prefix_cache_hit_rate"),
+            metrics.prefix_cache_hit_rate,
+        );
+        push_opt(
+            &mut fields,
+            &format!("{prefix}prefix_cache_queries_total"),
+            metrics.prefix_cache_queries_total.map(|v| v as f64),
+        );
+        push_opt(
+            &mut fields,
+            &format!("{prefix}spec_decode_acceptance_rate"),
+            metrics.spec_decode_acceptance_rate,
+        );
+        push_opt(
+            &mut fields,
+            &format!("{prefix}spec_decode_acceptance_rate_live"),
+            metrics.spec_decode_acceptance_rate_live,
+        );
+        push_opt(
+            &mut fields,
+            &format!("{prefix}spec_decode_mean_acceptance_length"),
+            metrics.spec_decode_mean_acceptance_length,
+        );
+        push_opt(
+            &mut fields,
+            &format!("{prefix}spec_decode_accepted_tokens_total"),
+            metrics.spec_decode_accepted_tokens_total.map(|v| v as f64),
+        );
+        push_opt(
+            &mut fields,
+            &format!("{prefix}spec_decode_draft_tokens_total"),
+            metrics.spec_decode_draft_tokens_total.map(|v| v as f64),
+        );
+        // Throughput cards: prefill (prompt) and decode (generation) live
+        // rates, running averages, per-request averages, and cumulative totals
+        // ("Processed" / "Generated" on the cards). The totals are raw
+        // engine-lifetime counters: they reset only when the engine restarts.
+        push_opt(
+            &mut fields,
+            &format!("{prefix}prompt_tokens_per_sec"),
+            metrics.prompt_tokens_per_sec,
+        );
+        push_opt(
+            &mut fields,
+            &format!("{prefix}avg_prompt_tokens_per_sec"),
+            metrics.avg_prompt_tokens_per_sec,
+        );
+        push_opt(
+            &mut fields,
+            &format!("{prefix}per_request_prompt_tps"),
+            metrics.per_request_prompt_tps,
+        );
+        push_opt(
+            &mut fields,
+            &format!("{prefix}total_prompt_tokens"),
+            metrics.total_prompt_tokens.map(|v| v as f64),
+        );
+        push_opt(
+            &mut fields,
+            &format!("{prefix}avg_tokens_per_sec"),
+            metrics.avg_tokens_per_sec,
+        );
+        push_opt(
+            &mut fields,
+            &format!("{prefix}per_request_tps"),
+            metrics.per_request_tps,
+        );
+        push_opt(
+            &mut fields,
+            &format!("{prefix}total_generation_tokens"),
+            metrics.total_generation_tokens.map(|v| v as f64),
+        );
+        // Latency card fields not covered by the original six, plus the
+        // SLO goodput card. Percentile and raw histogram fields stay UI-only
+        // (the frontend recomputes goodput/latency mode from them).
+        push_opt(
+            &mut fields,
+            &format!("{prefix}queue_time_ms"),
+            metrics.queue_time_ms,
+        );
+        push_opt(&mut fields, &format!("{prefix}tpot_ms"), metrics.tpot_ms);
+        push_opt(
+            &mut fields,
+            &format!("{prefix}avg_batch_size"),
+            metrics.avg_batch_size,
+        );
+        push_opt(
+            &mut fields,
+            &format!("{prefix}ttft_goodput_pct"),
+            metrics.ttft_goodput_pct,
+        );
+        push_opt(
+            &mut fields,
+            &format!("{prefix}itl_goodput_pct"),
+            metrics.itl_goodput_pct,
+        );
+        push_opt(
+            &mut fields,
+            &format!("{prefix}tpot_goodput_pct"),
+            metrics.tpot_goodput_pct,
+        );
+        push_opt(
+            &mut fields,
+            &format!("{prefix}e2e_goodput_pct"),
+            metrics.e2e_goodput_pct,
+        );
     }
 
     json!({
@@ -1095,6 +1225,154 @@ mod tests {
         assert_eq!(inner["metric_name:engine.vllm.req_waiting"], 0.0);
         assert_eq!(inner["metric_name:engine.vllm.tokens_per_sec"], 120.0);
         assert_eq!(inner["metric_name:engine.vllm.e2e_latency_ms"], 900.0);
+    }
+
+    /// The Requests and Cache & Speculative Decoding cards are now part of
+    /// the exported surface: every field they display must be present in the
+    /// metric event when the engine reports it.
+    #[test]
+    fn requests_and_cache_spec_decode_fields_are_exported() {
+        let snap = snapshot(|s| {
+            s.engines = vec![EngineSnapshot {
+                metrics: Some(EngineMetrics {
+                    total_requests: Some(412),
+                    swapped_requests: Some(0),
+                    preemptions_total: Some(3),
+                    kv_cache_percent: Some(72.5),
+                    prefix_cache_hit_rate: Some(58.0),
+                    prefix_cache_queries_total: Some(900),
+                    spec_decode_acceptance_rate: Some(74.0),
+                    spec_decode_acceptance_rate_live: Some(81.0),
+                    spec_decode_mean_acceptance_length: Some(1.9),
+                    spec_decode_accepted_tokens_total: Some(1500),
+                    spec_decode_draft_tokens_total: Some(2000),
+                    ..EngineMetrics::default()
+                }),
+                ..engine_with(Some(4), Some(0))
+            }];
+        });
+
+        let event = build_metric_event(&snap, "dgx-01", "metrics");
+        let inner = &event["fields"];
+        assert_eq!(inner["metric_name:engine.vllm.total_requests"], 412.0);
+        assert_eq!(inner["metric_name:engine.vllm.swapped_requests"], 0.0);
+        assert_eq!(inner["metric_name:engine.vllm.preemptions_total"], 3.0);
+        assert_eq!(inner["metric_name:engine.vllm.kv_cache_percent"], 72.5);
+        assert_eq!(inner["metric_name:engine.vllm.prefix_cache_hit_rate"], 58.0);
+        assert_eq!(
+            inner["metric_name:engine.vllm.prefix_cache_queries_total"],
+            900.0
+        );
+        assert_eq!(
+            inner["metric_name:engine.vllm.spec_decode_acceptance_rate"],
+            74.0
+        );
+        assert_eq!(
+            inner["metric_name:engine.vllm.spec_decode_acceptance_rate_live"],
+            81.0
+        );
+        assert_eq!(
+            inner["metric_name:engine.vllm.spec_decode_mean_acceptance_length"],
+            1.9
+        );
+        assert_eq!(
+            inner["metric_name:engine.vllm.spec_decode_accepted_tokens_total"],
+            1500.0
+        );
+        assert_eq!(
+            inner["metric_name:engine.vllm.spec_decode_draft_tokens_total"],
+            2000.0
+        );
+    }
+
+    /// The Prefill/Decode throughput, Latency, and SLO Goodput cards are part
+    /// of the exported surface too: live rates, running averages, per-request
+    /// averages, cumulative totals, queue/TPOT/batch, and per-SLO goodput.
+    #[test]
+    fn throughput_latency_and_goodput_fields_are_exported() {
+        let snap = snapshot(|s| {
+            s.engines = vec![EngineSnapshot {
+                metrics: Some(EngineMetrics {
+                    prompt_tokens_per_sec: Some(1200.0),
+                    avg_prompt_tokens_per_sec: Some(950.0),
+                    per_request_prompt_tps: Some(1100.0),
+                    total_prompt_tokens: Some(480_000),
+                    avg_tokens_per_sec: Some(60.0),
+                    per_request_tps: Some(72.0),
+                    total_generation_tokens: Some(190_000),
+                    queue_time_ms: Some(4.5),
+                    tpot_ms: Some(15.2),
+                    avg_batch_size: Some(3.5),
+                    ttft_goodput_pct: Some(91.0),
+                    itl_goodput_pct: Some(84.0),
+                    tpot_goodput_pct: Some(96.0),
+                    e2e_goodput_pct: Some(77.0),
+                    ..EngineMetrics::default()
+                }),
+                ..engine_with(Some(4), Some(0))
+            }];
+        });
+
+        let event = build_metric_event(&snap, "dgx-01", "metrics");
+        let inner = &event["fields"];
+        assert_eq!(
+            inner["metric_name:engine.vllm.prompt_tokens_per_sec"],
+            1200.0
+        );
+        assert_eq!(
+            inner["metric_name:engine.vllm.avg_prompt_tokens_per_sec"],
+            950.0
+        );
+        assert_eq!(
+            inner["metric_name:engine.vllm.per_request_prompt_tps"],
+            1100.0
+        );
+        assert_eq!(
+            inner["metric_name:engine.vllm.total_prompt_tokens"],
+            480_000.0
+        );
+        assert_eq!(inner["metric_name:engine.vllm.avg_tokens_per_sec"], 60.0);
+        assert_eq!(inner["metric_name:engine.vllm.per_request_tps"], 72.0);
+        assert_eq!(
+            inner["metric_name:engine.vllm.total_generation_tokens"],
+            190_000.0
+        );
+        assert_eq!(inner["metric_name:engine.vllm.queue_time_ms"], 4.5);
+        assert_eq!(inner["metric_name:engine.vllm.tpot_ms"], 15.2);
+        assert_eq!(inner["metric_name:engine.vllm.avg_batch_size"], 3.5);
+        assert_eq!(inner["metric_name:engine.vllm.ttft_goodput_pct"], 91.0);
+        assert_eq!(inner["metric_name:engine.vllm.itl_goodput_pct"], 84.0);
+        assert_eq!(inner["metric_name:engine.vllm.tpot_goodput_pct"], 96.0);
+        assert_eq!(inner["metric_name:engine.vllm.e2e_goodput_pct"], 77.0);
+    }
+
+    /// vLLM only emits `vllm:spec_decode_*` counters when speculative decoding
+    /// is configured; the exporter must omit those fields (not send zeros) so
+    /// a spec-decode-less engine does not fabricate data in the index.
+    #[test]
+    fn spec_decode_fields_are_omitted_when_the_engine_has_no_spec_decode() {
+        let snap = snapshot(|s| {
+            s.engines = vec![engine_with(Some(1), Some(0))];
+        });
+
+        let event = build_metric_event(&snap, "dgx-01", "metrics");
+        let inner = &event["fields"];
+        for key in [
+            "spec_decode_acceptance_rate",
+            "spec_decode_acceptance_rate_live",
+            "spec_decode_mean_acceptance_length",
+            "spec_decode_accepted_tokens_total",
+            "spec_decode_draft_tokens_total",
+        ] {
+            assert!(
+                inner
+                    .as_object()
+                    .unwrap()
+                    .get(&format!("metric_name:engine.vllm.{key}"))
+                    .is_none(),
+                "{key} must be absent when the engine has no spec decode"
+            );
+        }
     }
 
     #[test]
