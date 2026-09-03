@@ -1,4 +1,4 @@
-import { MetricTile } from '@/components/engines/EnginePanelPrimitives'
+import { MetricTile, TILE_GRID } from '@/components/engines/EnginePanelPrimitives'
 import { useLatestSnapshot } from '@/hooks/useMetricsStore'
 import { formatAge, formatTps, formatTtft } from '@/lib/format'
 import {
@@ -55,8 +55,10 @@ export function InferenceTimelinePanel({ panel }: PanelContentProps) {
   return (
     <EnginePanelBody
       identity={engineIdentity(target)}
+      // One row; the requests themselves take the rest of the box.
+      tileRows={1}
       tiles={
-        <div className="grid grid-cols-3 gap-1.5">
+        <div className={`${TILE_GRID} grid-cols-3`}>
           <MetricTile label="Requests" value={String(count)} />
           {/* Medians, because one cold start drags a mean far enough to
               misreport the engine — and the bars below already show it. */}

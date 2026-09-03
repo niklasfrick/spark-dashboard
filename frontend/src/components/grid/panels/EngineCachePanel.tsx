@@ -4,6 +4,7 @@ import {
   KvBar,
   MetricTile,
   NotReported,
+  TILE_GRID,
   TrendArrow,
 } from '@/components/engines/EnginePanelPrimitives'
 import { computeTrend } from '@/lib/engineStats'
@@ -45,45 +46,49 @@ export function EngineCachePanel({ panel }: PanelContentProps) {
   return (
     <EnginePanelBody
       identity={engineIdentity(resolution)}
+      // The KV/prefix pair, then the query counter across the width.
+      tileRows={2}
       tiles={
-        <div className="flex flex-col gap-2">
-          <div className="grid grid-cols-2 gap-1.5">
-            <div role="group" aria-label="KV Cache" className="flex flex-col gap-0.5 min-w-0">
-              <span className="text-[10px] font-medium text-zinc-400 uppercase tracking-wider truncate">
-                KV Cache
-              </span>
-              {kvCache ? (
-                <>
-                  <div className="flex items-baseline">
-                    <span className="text-lg xl:text-xl 2xl:text-2xl min-[1920px]:text-3xl font-bold text-zinc-100 font-mono tabular-nums leading-none">
-                      {kvPercent !== null ? Math.round(kvPercent) : '--'}
-                    </span>
-                    <span className="text-xs text-zinc-500 ml-1">%</span>
-                    {/* A filling cache is bad news, so the arrow's colours invert. */}
-                    <TrendArrow trend={computeTrend(kvSeries)} invertColor />
-                  </div>
-                  {kvPercent !== null && <KvBar percent={kvPercent} />}
-                </>
-              ) : (
-                <NotReported />
-              )}
-            </div>
-            <MetricTile
-              label="Prefix Hit"
-              value={prefixHit !== null ? `${Math.round(prefixHit)}` : '--'}
-              unit="%"
-              notReported={!prefixCache}
-            />
+        <div className={`${TILE_GRID} grid-cols-2`}>
+          <div role="group" aria-label="KV Cache" className="flex flex-col justify-center gap-[0.15em] min-w-0">
+            <span className="text-[0.8em] font-medium text-zinc-400 uppercase tracking-wider truncate">
+              KV Cache
+            </span>
+            {kvCache ? (
+              <>
+                <div className="flex items-baseline">
+                  <span className="text-[1.7em] font-bold text-zinc-100 font-mono tabular-nums leading-none">
+                    {kvPercent !== null ? Math.round(kvPercent) : '--'}
+                  </span>
+                  <span className="text-[0.72em] text-zinc-500 ml-[0.35em]">%</span>
+                  {/* A filling cache is bad news, so the arrow's colours invert. */}
+                  <TrendArrow trend={computeTrend(kvSeries)} invertColor />
+                </div>
+                {kvPercent !== null && <KvBar percent={kvPercent} />}
+              </>
+            ) : (
+              <NotReported />
+            )}
           </div>
-          <div role="group" aria-label="Prefix Queries" className="flex flex-col gap-0.5 min-w-0">
-            <span className="text-[10px] 2xl:text-xs font-medium text-zinc-400 uppercase tracking-wider truncate">
+          <MetricTile
+            label="Prefix Hit"
+            value={prefixHit !== null ? `${Math.round(prefixHit)}` : '--'}
+            unit="%"
+            notReported={!prefixCache}
+          />
+          <div
+            role="group"
+            aria-label="Prefix Queries"
+            className="col-span-2 flex flex-col justify-center gap-[0.15em] min-w-0"
+          >
+            <span className="text-[0.8em] font-medium text-zinc-400 uppercase tracking-wider truncate">
               Prefix Queries
             </span>
             {prefixCache ? (
               <AnimatedCounter
                 value={metric('prefix_cache_queries_total')}
                 format={formatCompactTokens}
-                className="text-lg xl:text-xl 2xl:text-2xl min-[1920px]:text-3xl font-bold text-zinc-100 font-mono tabular-nums leading-none"
+                className="text-[1.7em] font-bold text-zinc-100 font-mono tabular-nums leading-none"
               />
             ) : (
               <NotReported />

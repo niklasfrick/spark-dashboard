@@ -1,5 +1,5 @@
 import { TimeSeriesChart } from '@/components/charts/TimeSeriesChart'
-import { LiveWithTotal, MetricTile } from '@/components/engines/EnginePanelPrimitives'
+import { LiveWithTotal, MetricTile, TILE_GRID } from '@/components/engines/EnginePanelPrimitives'
 import { computeTrend } from '@/lib/engineStats'
 import { formatTps, fmtVal } from '@/lib/format'
 import type { NumericEngineMetric } from '@/lib/engineMetrics'
@@ -85,8 +85,10 @@ function ThroughputPanel({ panel, fields }: PanelContentProps & { fields: Throug
   return (
     <EnginePanelBody
       identity={engineIdentity(resolution)}
+      // The live/total pair, then the two averages.
+      tileRows={3}
       tiles={
-        <div className="grid grid-cols-1 gap-1.5">
+        <div className={`${TILE_GRID} grid-cols-1`}>
           <LiveWithTotal
             liveValue={fmtVal(metric(fields.live), formatTps)}
             liveUnit="tok/s"

@@ -1,4 +1,4 @@
-import { GoodputTile } from '@/components/engines/EnginePanelPrimitives'
+import { GoodputTile, TILE_GRID } from '@/components/engines/EnginePanelPrimitives'
 import { SloSettingsControl } from '@/components/engines/SloSettingsControl'
 import { useSloSettings } from '@/hooks/useSloSettings'
 import { engineKey } from '@/lib/identity'
@@ -75,8 +75,10 @@ export function EngineSloGoodputPanel({ panel }: PanelContentProps) {
           onReset={reset}
         />
       }
+      // Two rows of objectives under a headline that is half again as tall.
+      tileRows={3.5}
       tiles={
-        <div className="grid grid-cols-2 gap-1.5">
+        <div className={`${TILE_GRID} grid-cols-2`}>
           <div className="col-span-2">
             <GoodputTile
               label="Combined"

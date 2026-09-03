@@ -1,5 +1,5 @@
 import { TimeSeriesChart } from '@/components/charts/TimeSeriesChart'
-import { MetricTile } from '@/components/engines/EnginePanelPrimitives'
+import { MetricTile, TILE_GRID } from '@/components/engines/EnginePanelPrimitives'
 import { fmtInt } from '@/lib/format'
 import { reportedLines } from './reportedLines'
 import { EnginePanelBody } from './EnginePanelBody'
@@ -27,12 +27,21 @@ export function EngineRequestsPanel({ panel }: PanelContentProps) {
   const active = reports('ActiveRequests')
   const total = reports('RequestTotal')
   const preemptions = reports('Preemptions')
+  const swapped = metric('swapped_requests')
+  const preempted = metric('preemptions_total')
   /** A memory-pressure tile: shown once its count is above zero, or — on an
    *  engine that keeps no such counter — to say it is not reported. */
+  const showsPressure = (count: number | null) =>
+    !preemptions || (count !== null && count > 0)
   const pressure = (label: string, count: number | null) => {
+    if (!showsPressure(count)) return null
     if (!preemptions) return <MetricTile label={label} value={fmtInt(count)} notReported />
-    return count !== null && count > 0 && <MetricTile label={label} value={fmtInt(count)} warn />
+    return <MetricTile label={label} value={fmtInt(count)} warn />
   }
+  // The two pressure tiles appear only once they have something to say, so the
+  // row count is counted, not assumed: three tiles fill two rows, five fill
+  // three, and the type scale follows.
+  const shown = 3 + (showsPressure(swapped) ? 1 : 0) + (showsPressure(preempted) ? 1 : 0)
 
   const chartSeries = reportedLines([
     active && { data: series('activeRequests'), label: 'Active', color: '#76B900', axis: 'left' },
@@ -45,8 +54,9 @@ export function EngineRequestsPanel({ panel }: PanelContentProps) {
   return (
     <EnginePanelBody
       identity={engineIdentity(resolution)}
+      tileRows={Math.ceil(shown / 2)}
       tiles={
-        <div className="grid grid-cols-2 gap-1.5">
+        <div className={`${TILE_GRID} grid-cols-2`}>
           <MetricTile
             label="Active"
             value={fmtInt(metric('active_requests'))}
@@ -58,8 +68,8 @@ export function EngineRequestsPanel({ panel }: PanelContentProps) {
             notReported={!active}
           />
           <MetricTile label="Total" value={fmtInt(metric('total_requests'))} notReported={!total} />
-          {pressure('Swapped', metric('swapped_requests'))}
-          {pressure('Preempt', metric('preemptions_total'))}
+          {pressure('Swapped', swapped)}
+          {pressure('Preempt', preempted)}
         </div>
       }
       chart={
