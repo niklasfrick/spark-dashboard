@@ -29,7 +29,9 @@ export function GpuMemoryPanel({ panel }: PanelContentProps) {
     return <PanelNotice>This GPU does not report its own memory pool.</PanelNotice>
   }
 
-  // Narrowed into locals: the guard above does not reach the render callbacks.
+  // `percent` being non-null already means both of these are present, but the
+  // guard is on the derived value, so nothing propagates that back to the
+  // fields — hence the defaults rather than a narrowing.
   const used = gpu.memory_used_bytes ?? 0
   const total = gpu.memory_total_bytes ?? 0
   // A single filled segment rather than a threshold gauge: the legend is where

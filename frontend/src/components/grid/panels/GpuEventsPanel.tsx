@@ -1,9 +1,10 @@
 import { useGpuEvents, useLatestSnapshot } from '@/hooks/useMetricsStore'
 import { formatAge } from '@/lib/format'
 import { gpuIndexOf } from '@/lib/identity'
-import { NVIDIA_THEME } from '@/lib/theme'
+import { gpuEventColor } from '@/lib/theme'
 import { usePanelDevice } from '../panelDevice'
-import { GpuPanelNotice } from './PanelNotice'
+import { PanelList } from './PanelList'
+import { GpuPanelNotice, PanelNotice } from './PanelNotice'
 import { useGpuPanel } from './useGpuPanel'
 import type { GpuEventData } from '@/types/metrics'
 import type { PanelContentProps } from '../panelRegistry'
@@ -16,10 +17,6 @@ import type { PanelContentProps } from '../panelRegistry'
  * happened or it did not, and the thing an operator needs is which one and how
  * long ago. It reads beside the temperature and power panels: those say the GPU
  * is at 88°C, this says the driver has started clipping its clocks over it.
- *
- * Sizes itself by scrolling rather than by dropping content the way the gauge
- * panels do. There is no reduced rendering of an event that is still an event,
- * and the newest are at the top, so a 1×1 cell shows the one that matters.
  */
 export function GpuEventsPanel({ panel }: PanelContentProps) {
   const resolution = useGpuPanel(panel)
@@ -42,35 +39,25 @@ export function GpuEventsPanel({ panel }: PanelContentProps) {
   const now = snapshot?.timestamp_ms ?? 0
 
   if (mine.length === 0) {
-    return (
-      <div className="h-full flex items-center justify-center text-center">
-        <p className="text-xs text-zinc-500">Nothing reported in the last {panel.window}.</p>
-      </div>
-    )
+    return <PanelNotice>Nothing reported in the last {panel.window}.</PanelNotice>
   }
 
+  // Sorted rather than reversed: a poll that detected three throttle reasons at
+  // once stamps them all with the same time, and a stable sort leaves those in
+  // the order the collector found them instead of inverting it.
+  const newestFirst = [...mine].sort((a, b) => b.timestamp_ms - a.timestamp_ms)
+
   return (
-    <ul className="h-full min-h-0 min-w-0 overflow-y-auto flex flex-col gap-0.5 pr-0.5">
-      {[...mine].reverse().map((event, i) => (
+    <PanelList label="GPU events">
+      {newestFirst.map((event, i) => (
         <EventRow key={`${event.timestamp_ms}-${event.event_type}-${i}`} event={event} now={now} />
       ))}
-    </ul>
+    </PanelList>
   )
 }
 
-/**
- * How serious an event is. Thermal slowdowns and Xid errors are the two the
- * operator has to act on — a hardware failure or a cooling problem — where a
- * power cap is the machine working as configured.
- */
-function eventColor(eventType: string): string {
-  return eventType === 'thermal' || eventType === 'xid'
-    ? NVIDIA_THEME.critical
-    : NVIDIA_THEME.warning
-}
-
 function EventRow({ event, now }: { event: GpuEventData; now: number }) {
-  const color = eventColor(event.event_type)
+  const color = gpuEventColor(event.event_type)
 
   return (
     <li className="flex items-baseline gap-1.5 min-w-0 leading-tight">

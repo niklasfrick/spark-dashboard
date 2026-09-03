@@ -43,8 +43,24 @@ export function thresholdColor(
  */
 export function coreUsageColor(usagePercent: number): string {
   if (usagePercent >= 90) return NVIDIA_THEME.critical
-  if (usagePercent >= 70) return '#eab308'
+  if (usagePercent >= 70) return NVIDIA_THEME.warning
   if (usagePercent >= 40) return NVIDIA_THEME.accent
+  // Below the accent, two shades the theme has no name for: a dim green for a
+  // core doing something, and the card's own surface for one doing nothing.
   if (usagePercent >= 10) return '#365314'
   return '#27272a'
+}
+
+/**
+ * How serious a GPU event is, by the driver's name for it.
+ *
+ * Thermal slowdowns and Xid errors are the two an operator has to act on — a
+ * cooling problem or a hardware fault. A power cap is the machine working as
+ * it was configured to, so it warns rather than alarms; colouring the two the
+ * same would spend the alarm on the ordinary case.
+ */
+export function gpuEventColor(eventType: string): string {
+  return eventType === 'thermal' || eventType === 'xid'
+    ? NVIDIA_THEME.critical
+    : NVIDIA_THEME.warning
 }

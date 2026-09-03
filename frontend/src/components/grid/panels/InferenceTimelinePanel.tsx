@@ -11,7 +11,8 @@ import {
 import { NVIDIA_THEME } from '@/lib/theme'
 import { EnginePanelBody } from './EnginePanelBody'
 import { engineIdentity } from './engineLabel'
-import { EnginePanelNotice } from './PanelNotice'
+import { PanelList } from './PanelList'
+import { EnginePanelNotice, PanelNotice } from './PanelNotice'
 import { useEngineRequests } from './useEnginePanel'
 import type { InferenceRequestData } from '@/types/metrics'
 import type { PanelContentProps } from '../panelRegistry'
@@ -28,6 +29,13 @@ import type { PanelContentProps } from '../panelRegistry'
  *
  * The bars are positioned against the panel's window, so the axis is the same
  * one the charts beside it use and two panels can be read together.
+ *
+ * **No shipped backend fills `recent_requests` yet.** `EngineSnapshot` carries
+ * the field and the wire format is settled, but both construction sites in
+ * `src/engines/mod.rs` pass an empty vector — per-request metrics wait on the
+ * engine adapters. Until one lands, this panel is correct and empty on a real
+ * host, which is why the no-requests state is worded as a quiet window rather
+ * than as a fault.
  */
 export function InferenceTimelinePanel({ panel }: PanelContentProps) {
   const { target, requests } = useEngineRequests(panel)
@@ -53,16 +61,9 @@ export function InferenceTimelinePanel({ panel }: PanelContentProps) {
       }
       chart={
         count === 0 ? (
-          <div className="h-full flex items-center justify-center text-center">
-            <p className="text-xs text-zinc-500">
-              No requests finished in the last {panel.window}.
-            </p>
-          </div>
+          <PanelNotice>No requests finished in the last {panel.window}.</PanelNotice>
         ) : (
-          <ul
-            aria-label="Inference requests"
-            className="h-full min-h-0 min-w-0 overflow-y-auto flex flex-col gap-0.5 pr-0.5"
-          >
+          <PanelList label="Inference requests">
             {newestFirst(requests).map((request, i) => (
               <RequestRow
                 key={`${request.start_ms}-${request.end_ms}-${i}`}
@@ -70,7 +71,7 @@ export function InferenceTimelinePanel({ panel }: PanelContentProps) {
                 axis={axis}
               />
             ))}
-          </ul>
+          </PanelList>
         )
       }
     />
