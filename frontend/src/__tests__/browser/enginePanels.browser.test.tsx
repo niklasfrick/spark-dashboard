@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { render, waitFor } from '@testing-library/react'
-import { useEffect } from 'react'
+import { useEffect, type ReactNode } from 'react'
+import { EngineSpecDecodePanel } from '@/components/grid/panels/EngineSpecDecodePanel'
 import { EngineDecodeThroughputPanel } from '@/components/grid/panels/EngineThroughputPanel'
 import { MetricsStoreProvider } from '@/hooks/MetricsStoreProvider'
 import { useMetricsStore } from '@/hooks/useMetricsStore'
@@ -18,7 +19,7 @@ import type { EngineMetrics, EngineSnapshot, MetricsSnapshot } from '@/types/met
 // project), so assertions use structural hooks — the chart container's
 // [data-chart] attribute — never the product styling.
 
-function engine(): EngineSnapshot {
+function engine(extra: Partial<EngineMetrics> = {}): EngineSnapshot {
   return {
     engine_type: 'Vllm',
     endpoint: 'http://localhost:8000',
@@ -37,13 +38,14 @@ function engine(): EngineSnapshot {
       avg_tokens_per_sec: 100,
       per_request_tps: 40,
       total_generation_tokens: 500_000,
+      ...extra,
     } as EngineMetrics,
     recent_requests: [],
     deployment_mode: 'Native',
   }
 }
 
-function snapshot(): MetricsSnapshot {
+function snapshot(extra: Partial<EngineMetrics> = {}): MetricsSnapshot {
   return {
     timestamp_ms: 1000,
     gpu: {
@@ -73,7 +75,7 @@ function snapshot(): MetricsSnapshot {
     },
     disk: { name: 'disk', read_bytes_per_sec: 1, write_bytes_per_sec: 2 },
     network: { name: 'net', rx_bytes_per_sec: 3, tx_bytes_per_sec: 4 },
-    engines: [engine()],
+    engines: [engine(extra)],
     gpu_events: [],
   }
 }
@@ -86,23 +88,39 @@ const panel: DashboardPanel = {
   window: DEFAULT_TIME_WINDOW,
 }
 
-function Ingest() {
+function Ingest({ metrics }: { metrics: Partial<EngineMetrics> }) {
   const store = useMetricsStore()
   useEffect(() => {
-    store.ingest(snapshot())
-  }, [store])
+    store.ingest(snapshot(metrics))
+  }, [store, metrics])
   return null
 }
 
-function Harness({ width, height }: { width: number; height: number }) {
+function Harness({
+  width,
+  height,
+  metrics = {},
+  children = <EngineDecodeThroughputPanel panel={panel} />,
+}: {
+  width: number
+  height: number
+  metrics?: Partial<EngineMetrics>
+  children?: ReactNode
+}) {
   return (
     <MetricsStoreProvider>
-      <Ingest />
-      <div style={{ width, height }}>
-        <EngineDecodeThroughputPanel panel={panel} />
-      </div>
+      <Ingest metrics={metrics} />
+      <div style={{ width, height }}>{children}</div>
     </MetricsStoreProvider>
   )
+}
+
+/** The tile block's base font size in px — what `engineTileScale` decided for
+ *  the box this panel got. Everything inside a tile is an em of it. */
+function tileScale(container: HTMLElement): number {
+  const tiles = container.querySelector('[data-panel-tiles]')
+  if (!(tiles instanceof HTMLElement)) throw new Error('no tile block rendered')
+  return Number.parseFloat(getComputedStyle(tiles).fontSize)
 }
 
 describe('an engine panel in a real layout engine', () => {
@@ -123,6 +141,61 @@ describe('an engine panel in a real layout engine', () => {
     await waitFor(() => {
       expect(getByText('120.0')).toBeTruthy()
       expect(container.querySelector('[data-chart]')).toBeTruthy()
+    })
+  })
+})
+
+// The tiles sizing to their own box. Same reasoning: only a real layout
+// engine measures anything, and only the base font size is assertable here —
+// the ems that hang off it are Tailwind classes, which this project does not
+// build. `engineTileScale` is unit-tested in mode.test.ts.
+
+const SPEC_METRICS: Partial<EngineMetrics> = {
+  spec_decode_draft_tokens_total: 400_000,
+  spec_decode_accepted_tokens_total: 300_000,
+  spec_decode_acceptance_rate: 75,
+  spec_decode_acceptance_rate_live: 71,
+  spec_decode_mean_acceptance_length: 2.4,
+}
+
+const specPanel: DashboardPanel = {
+  id: 'spec',
+  type: 'engine-spec-decode',
+  geometry: { x: 0, y: 0, w: 3, h: 3 },
+  binding: FOLLOW,
+  window: DEFAULT_TIME_WINDOW,
+}
+
+function specHarness(width: number, height: number) {
+  return (
+    <Harness width={width} height={height} metrics={SPEC_METRICS}>
+      <EngineSpecDecodePanel panel={specPanel} />
+    </Harness>
+  )
+}
+
+describe('engine tiles in a real layout engine', () => {
+  it('grows the numbers when the panel is given more box', async () => {
+    // The panel an operator drags out to half the page: it used to keep the
+    // numbers it had in a quarter of it and leave the rest empty.
+    const small = render(specHarness(280, 110))
+    const large = render(specHarness(620, 430))
+
+    await waitFor(() => {
+      expect(tileScale(large.container)).toBeGreaterThan(tileScale(small.container))
+    })
+  })
+
+  it('shrinks them to what a small panel can hold', async () => {
+    // Dragged down to a 2×1 cell, where the old fixed sizes ran past the frame
+    // and were cut off by it.
+    const { container, getByText } = render(specHarness(240, 90))
+
+    await waitFor(() => {
+      // The values are still there and still the panel's point…
+      expect(getByText('75')).toBeTruthy()
+      // …at a base small enough for two rows of them to fit the box.
+      expect(tileScale(container)).toBeLessThan(13)
     })
   })
 })

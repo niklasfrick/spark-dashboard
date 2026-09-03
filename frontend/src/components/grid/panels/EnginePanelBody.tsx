@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { useElementSize } from '@/hooks/useElementSize'
 import type { EngineIdentity } from './engineLabel'
 import { ProviderMark } from './engineIdentity'
-import { enginePanelMode } from './mode'
+import { engineTileScale, enginePanelMode } from './mode'
 
 interface EnginePanelBodyProps {
   /** Which engine this panel is showing — its name, and the provider of the
@@ -14,20 +14,36 @@ interface EnginePanelBodyProps {
   actions?: ReactNode
   /** The values. Always rendered: they are what the panel is for. */
   tiles: ReactNode
+  /** How many rows the tiles stack into — what the type scale is divided by.
+   *  Panels count their own, because only they know how many tiles they drew;
+   *  see `engineTileScale`. */
+  tileRows?: number
   /** The trend chart, given the room the tiles leave. Omitted by panels that
    *  have no series worth charting. */
   chart?: ReactNode
 }
 
 /**
- * The shared body of every engine panel: measures its own box and drops the
- * chart when the tiles have taken the height.
+ * The shared body of every engine panel: measures its own box, sizes the tiles
+ * to it, and drops the chart when the tiles have taken the height.
+ *
+ * Both halves of "adapt to the box" live here. The chart goes when there is no
+ * height for it, and the tiles that remain are scaled and spread to fill what
+ * is left — a panel resized small shrinks its numbers instead of cutting them
+ * off, and one resized large grows them instead of leaving the box empty under
+ * them.
  *
  * The label row is how a panel keeps its promise not to show one engine's
  * numbers under another's name — with several engines on a host, "Latency"
  * alone does not say whose.
  */
-export function EnginePanelBody({ identity, actions, tiles, chart }: EnginePanelBodyProps) {
+export function EnginePanelBody({
+  identity,
+  actions,
+  tiles,
+  tileRows = 2,
+  chart,
+}: EnginePanelBodyProps) {
   const { label, model, logo, modelWarning, coverage } = identity ?? {
     label: null,
     model: null,
@@ -36,7 +52,11 @@ export function EnginePanelBody({ identity, actions, tiles, chart }: EnginePanel
     coverage: null,
   }
   const [ref, size] = useElementSize<HTMLDivElement>()
-  const mode = enginePanelMode(size)
+  // A panel that hands over no chart is in the same position as one whose box
+  // is too short to hold it: the tiles have the whole box, so they are sized
+  // and spread against all of it.
+  const charted = enginePanelMode(size) === 'full' && Boolean(chart)
+  const scale = engineTileScale(size, tileRows, charted ? 'full' : 'tiles')
 
   return (
     <div
@@ -84,8 +104,23 @@ export function EnginePanelBody({ identity, actions, tiles, chart }: EnginePanel
           {actions}
         </div>
       )}
-      <div className="shrink-0 min-w-0">{tiles}</div>
-      {mode === 'full' && chart && <div className="flex-1 min-h-0 min-w-0">{chart}</div>}
+      <div
+        // The scale is the tile block's own font size, and every size inside a
+        // tile is an em of it. Inline for the same reason the height is: the
+        // measurement has to reach the tiles wherever this renders.
+        data-panel-tiles
+        style={{ fontSize: `${scale}px` }}
+        className={
+          charted
+            ? 'shrink-0 min-w-0'
+            : // Uncharted: the tiles are the panel, so they take the box. The
+              // child is whatever grid the panel drew, stretched to fill it.
+              'flex-1 min-h-0 min-w-0 flex flex-col [&>*]:flex-1 [&>*]:min-h-0'
+        }
+      >
+        {tiles}
+      </div>
+      {charted && <div className="flex-1 min-h-0 min-w-0">{chart}</div>}
     </div>
   )
 }

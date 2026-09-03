@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { MetricTile } from '@/components/engines/EnginePanelPrimitives'
+import { MetricTile, TILE_GRID } from '@/components/engines/EnginePanelPrimitives'
 import { TimeSeriesChart } from '@/components/charts/TimeSeriesChart'
 import { useLatestSnapshot, useMetricsStore } from '@/hooks/useMetricsStore'
 import { aggregateEngines, groupRunningByProvider } from '@/lib/engineAggregate'
@@ -51,9 +51,11 @@ export function EnginesOverviewPanel({ panel }: PanelContentProps) {
 
   return (
     <EnginePanelBody
+      // The chip row, then three rows of totals.
+      tileRows={4}
       tiles={
-        <div className="flex flex-col gap-1.5 min-w-0">
-          <div className="flex items-center gap-1.5 flex-wrap">
+        <div className="flex flex-col gap-[0.4em] min-w-0">
+          <div className="shrink-0 flex items-center gap-1.5 flex-wrap">
             <EngineChip label={`${totals.running_count}/${totals.total_count} running`} />
             {/* One chip per provider being served, so a page of engines can be
                 read as "two Qwen and a Llama" without counting panels. */}
@@ -65,7 +67,7 @@ export function EnginesOverviewPanel({ panel }: PanelContentProps) {
               />
             ))}
           </div>
-          <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 min-w-0">
+          <div className={`flex-1 min-h-0 ${TILE_GRID} grid-cols-2 gap-x-[0.9em]`}>
             <MetricTile label="Decode" value={fmtVal(totals.tokens_per_sec, formatTps)} unit="tok/s" />
             <MetricTile
               label="Prefill"

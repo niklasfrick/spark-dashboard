@@ -57,6 +57,77 @@ export function enginePanelMode({ height }: ElementSize): EnginePanelMode {
   return height > 0 && height < TILES_ONLY_BELOW_PX ? 'tiles' : 'full'
 }
 
+/**
+ * What one tile row costs, in ems of the base: the label line, the gap under
+ * it, the value line, and the gap to the next row. Everything inside a tile is
+ * sized in `em`, so this ratio holds at every scale.
+ */
+const ROW_EM = 3.2
+
+/** In `full` mode the chart shares the box, so the tiles size to this much of
+ *  it rather than to all of it. */
+const TILES_SHARE = 0.55
+
+/** The identity row above the tiles: fixed-size chrome, not part of the scale. */
+const LABEL_ROW_PX = 16
+
+/** Width the tile block wants, in ems of the base — two columns of a value and
+ *  its unit, with room for the longest label above them. Below this the base
+ *  comes off the width instead of the height, so a tall sliver of a panel does
+ *  not render numbers wider than itself. */
+const WIDTH_EM = 20
+
+/**
+ * The size range for the base, which everything in a tile is an em of. The two
+ * ends are set by the value — the headline number at 1.7em, the thing an
+ * operator actually reads across the room — with the label above it at 0.8em
+ * coming along for the ride:
+ *
+ *   - 10px  → a 17px value, 8px label. The floor is what a 1×2 cell can hold
+ *             two rows of; higher and the panels that only just fit today start
+ *             clipping a row, which costs a whole value rather than some of its
+ *             stroke weight.
+ *   - 18px  → a 31px value, 14px label: what the old breakpoints gave a 1920px
+ *             display, which is the size these numbers have always been read
+ *             at. Past it a panel given a quarter of the page reads as signage
+ *             rather than as a dashboard.
+ */
+const MIN_TILE_PX = 10
+const MAX_TILE_PX = 18
+
+/** The base for an unmeasured box (jsdom, the frame before ResizeObserver
+ *  fires): what the tiles used to render at on a 1080p display, the same
+ *  richest-layout fallback the modes take. */
+const UNMEASURED_TILE_PX = 13
+
+/**
+ * The base font size (px) for an engine panel's tiles, from the box they have
+ * to live in.
+ *
+ * Tile typography used to key off *viewport* breakpoints, which says nothing
+ * about the panel it is inside: a 2×1 cell on a 4K display got the largest
+ * numbers in the set and cut them off, while a panel given a quarter of the
+ * page kept its 1080p numbers and left the rest of the box empty. One base
+ * here scales the whole block, because every size inside a tile is an `em`.
+ *
+ * `rows` is what the panel stacks vertically — the row count of its tile grid,
+ * passed in because only the panel knows it. Fractional is meaningful: a
+ * headline tile half again as tall as the ones under it costs 1.5.
+ */
+export function engineTileScale(
+  { width, height }: ElementSize,
+  rows: number,
+  mode: EnginePanelMode,
+): number {
+  if (width <= 0 || height <= 0) return UNMEASURED_TILE_PX
+
+  const forTiles = Math.max(0, height - LABEL_ROW_PX) * (mode === 'full' ? TILES_SHARE : 1)
+  const byHeight = forTiles / (Math.max(rows, 1) * ROW_EM)
+  const byWidth = width / WIDTH_EM
+
+  return Math.min(Math.max(Math.min(byHeight, byWidth), MIN_TILE_PX), MAX_TILE_PX)
+}
+
 /** How the CPU-cores panel tiles its box. */
 export interface CoreGridLayout {
   /** Cells per row. */

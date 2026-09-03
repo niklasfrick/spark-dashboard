@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { coreGridLayout, enginePanelMode, gaugeSizePx, hardwarePanelMode } from './mode'
+import {
+  coreGridLayout,
+  engineTileScale,
+  enginePanelMode,
+  gaugeSizePx,
+  hardwarePanelMode,
+} from './mode'
 
 describe('hardwarePanelMode', () => {
   it('renders the richest layout while the box is unmeasured', () => {
@@ -45,6 +51,52 @@ describe('enginePanelMode', () => {
     // Engine panels have no gauge column competing for the width, so narrow is
     // not a reason to drop anything.
     expect(enginePanelMode({ width: 120, height: 300 })).toBe('full')
+  })
+})
+
+describe('engineTileScale', () => {
+  it('renders at the reference size while the box is unmeasured', () => {
+    expect(engineTileScale({ width: 0, height: 0 }, 2, 'tiles')).toBe(13)
+  })
+
+  it('grows the numbers to fill a panel given half the page', () => {
+    // The complaint this exists for: a 4×4 cell used to render 1080p-sized
+    // numbers with the rest of the box empty under them.
+    const big = engineTileScale({ width: 620, height: 430 }, 2, 'tiles')
+    const small = engineTileScale({ width: 310, height: 200 }, 2, 'tiles')
+    expect(big).toBeGreaterThan(small)
+    expect(big).toBe(18)
+  })
+
+  it('shrinks them rather than letting a short box cut them off', () => {
+    // A 2×1 cell: two rows of tiles have ~70px between them.
+    const scale = engineTileScale({ width: 310, height: 85 }, 2, 'tiles')
+    expect(scale).toBeLessThan(13)
+    // Two rows at 3.2em of the base still fit the box they were sized against.
+    expect(2 * 3.2 * scale).toBeLessThanOrEqual(85)
+  })
+
+  it('stops shrinking at the size numbers stop being readable', () => {
+    // Past this the box is clipped instead: an unreadable tile is not a tile.
+    expect(engineTileScale({ width: 310, height: 20 }, 3, 'tiles')).toBe(10)
+  })
+
+  it('gives more rows a smaller base than fewer in the same box', () => {
+    // Six latency tiles and four cache ones cannot be the same size in the
+    // same cell: the row count is what the height is divided by.
+    const box = { width: 600, height: 160 }
+    expect(engineTileScale(box, 3, 'tiles')).toBeLessThan(engineTileScale(box, 2, 'tiles'))
+  })
+
+  it('sizes off the width when the box is a tall sliver', () => {
+    // Height alone would say the maximum; numbers that big would not fit across
+    // a panel one column wide.
+    expect(engineTileScale({ width: 288, height: 600 }, 2, 'tiles')).toBe(14.4 /* 288 / 20 */)
+  })
+
+  it('leaves the chart its room when the panel has one', () => {
+    const box = { width: 900, height: 250 }
+    expect(engineTileScale(box, 3, 'full')).toBeLessThan(engineTileScale(box, 3, 'tiles'))
   })
 })
 
