@@ -34,3 +34,5 @@ deploy-local.sh
 
 # SPLUNK STUFF
 Splunk-App/
+# Generated knowledge graph (local, not versioned)
+graphify-out/
