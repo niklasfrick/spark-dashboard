@@ -32,3 +32,19 @@ export function thresholdColor(
   if (value >= warning) return NVIDIA_THEME.warning
   return NVIDIA_THEME.healthy
 }
+
+/**
+ * The fill of one CPU core cell at a given load.
+ *
+ * More bands than `thresholdColor` gives, and dimmer at the bottom of the
+ * scale: a core grid is read as a texture — which of them are hot, and whether
+ * the load is spread or piled on a few — so an idle core has to recede rather
+ * than sit at full green beside a saturated one.
+ */
+export function coreUsageColor(usagePercent: number): string {
+  if (usagePercent >= 90) return NVIDIA_THEME.critical
+  if (usagePercent >= 70) return '#eab308'
+  if (usagePercent >= 40) return NVIDIA_THEME.accent
+  if (usagePercent >= 10) return '#365314'
+  return '#27272a'
+}

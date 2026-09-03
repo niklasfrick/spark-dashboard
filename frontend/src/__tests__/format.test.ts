@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  formatAge,
   formatBytes,
   formatCompactTokens,
   formatAcceptanceLength,
@@ -78,6 +79,26 @@ describe('formatEndpoint', () => {
     // whatever shape the endpoint came in.
     expect(formatEndpoint('localhost:8000')).toBe('localhost:8000')
     expect(formatEndpoint('')).toBe('')
+  })
+})
+
+describe('formatAge', () => {
+  it('reads in the coarsest unit that still says when', () => {
+    expect(formatAge(59_000, 60_000)).toBe('1s')
+    expect(formatAge(0, 59_000)).toBe('59s')
+    expect(formatAge(0, 60_000)).toBe('1m')
+    expect(formatAge(0, 59 * 60_000)).toBe('59m')
+    expect(formatAge(0, 60 * 60_000)).toBe('1h')
+  })
+
+  it('rounds down, so nothing reads as older than it is', () => {
+    expect(formatAge(0, 1999)).toBe('1s')
+  })
+
+  it('does not go negative on an event stamped past the newest sample', () => {
+    // Snapshots coalesce, so an event can carry a timestamp the reference
+    // reading has not caught up to yet.
+    expect(formatAge(5000, 1000)).toBe('0s')
   })
 })
 

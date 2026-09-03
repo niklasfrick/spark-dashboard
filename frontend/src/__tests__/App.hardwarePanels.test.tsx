@@ -8,7 +8,7 @@ import {
 } from '../test/configurationServer'
 import { MockWebSocket, substituteWebSocket } from '../test/websocket'
 import { DASHBOARD_SCHEMA_VERSION } from '../lib/dashboard/schema'
-import type { GpuMetrics, MetricsSnapshot } from '../types/metrics'
+import type { GpuEventData, GpuMetrics, MetricsSnapshot } from '../types/metrics'
 
 // The hardware panels through the application seam (#80): real routing, real
 // configuration loading, real registry, store and subscriptions, with the
@@ -81,7 +81,11 @@ function makeGpu(index: number, overrides: Partial<GpuMetrics> = {}): GpuMetrics
   }
 }
 
-function makeSnapshot(ts: number, gpus?: GpuMetrics[]): MetricsSnapshot {
+function makeSnapshot(
+  ts: number,
+  gpus?: GpuMetrics[],
+  gpuEvents: GpuEventData[] = [],
+): MetricsSnapshot {
   return {
     timestamp_ms: ts,
     gpu: gpus?.[0] ?? makeGpu(0),
@@ -108,7 +112,7 @@ function makeSnapshot(ts: number, gpus?: GpuMetrics[]): MetricsSnapshot {
     disk: { name: 'nvme0n1', read_bytes_per_sec: 12 * MIB, write_bytes_per_sec: 3.5 * MIB },
     network: { name: 'enp1s0', rx_bytes_per_sec: 900 * KIB, tx_bytes_per_sec: 2 * MIB },
     engines: [],
-    gpu_events: [],
+    gpu_events: gpuEvents,
   }
 }
 
@@ -292,5 +296,192 @@ describe('the hardware panels on a grid page', () => {
       within(region('GPU Temp')).getByText('GPU 3 is not on this host.'),
     ).toBeInTheDocument()
     expect(within(region('Memory')).getByText('50')).toBeInTheDocument()
+  })
+})
+
+// The four hardware types the palette offered and no build rendered (#110),
+// through the same seam as the eight above. They are grouped apart because the
+// eight are #80's block and these round it out — nothing about the seam differs.
+describe('the hardware panels the palette offered before anything rendered them', () => {
+  /** All four, tiled inside the 12×8 grid. */
+  function remainingHardwarePanels(): unknown[] {
+    return [
+      { id: 'vram', type: 'gpu-memory', geometry: { x: 0, y: 0, w: 3, h: 4 } },
+      { id: 'fan', type: 'gpu-fan', geometry: { x: 3, y: 0, w: 3, h: 4 } },
+      { id: 'events', type: 'gpu-events', geometry: { x: 6, y: 0, w: 6, h: 4 } },
+      { id: 'cores', type: 'cpu-cores', geometry: { x: 0, y: 4, w: 6, h: 4 } },
+    ]
+  }
+
+  const THROTTLING: GpuEventData = {
+    timestamp_ms: 1000,
+    gpu_index: 0,
+    event_type: 'thermal',
+    detail: 'Thermal throttling active',
+  }
+
+  it('renders every one of them from the live snapshot', async () => {
+    const fetchMock = serveConfiguration({ document: storedDocument(remainingHardwarePanels()) })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, undefined, [THROTTLING]))
+
+    // VRAM: the used share, and the two figures it is a share of — a
+    // percentage alone does not say whether the next model fits.
+    const vram = region('GPU Memory')
+    expect(within(vram).getByText('50')).toBeInTheDocument()
+    expect(within(vram).getByText('24.0 GB / 48.0 GB')).toBeInTheDocument()
+
+    // Fan: the speed as a percentage of its maximum.
+    expect(within(region('GPU Fan')).getByText('30')).toBeInTheDocument()
+
+    // Events: what the driver reported, how serious, and how long ago.
+    const events = region('GPU Events')
+    expect(within(events).getByText('Thermal throttling active')).toBeInTheDocument()
+    expect(within(events).getByText('thermal')).toBeInTheDocument()
+    expect(within(events).getByText('0s ago')).toBeInTheDocument()
+
+    // Cores: every core's own load, not just the aggregate.
+    const cores = region('CPU Cores')
+    expect(within(cores).getByText('10%')).toBeInTheDocument()
+    expect(within(cores).getByText('95%')).toBeInTheDocument()
+    expect(within(cores).getAllByRole('listitem')).toHaveLength(2)
+
+    // All four are implemented — no slot-keeping placeholders left.
+    expect(screen.queryByText('This panel is not available yet.')).not.toBeInTheDocument()
+  })
+
+  it('names the hardware each of them is reading', async () => {
+    const fetchMock = serveConfiguration({ document: storedDocument(remainingHardwarePanels()) })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, undefined, [THROTTLING]))
+
+    for (const panel of ['GPU Memory', 'GPU Fan', 'GPU Events']) {
+      expect(within(region(panel)).getByText('NVIDIA Alpha 0'), panel).toBeInTheDocument()
+    }
+    expect(within(region('CPU Cores')).getByText('Grace CPU')).toBeInTheDocument()
+  })
+
+  it('waits quietly before the first snapshot, then fills in when it arrives', async () => {
+    const fetchMock = serveConfiguration({ document: storedDocument(remainingHardwarePanels()) })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+
+    // Every one keeps its slot; none crashes on a metrics-null first render.
+    expect(screen.getAllByText('Waiting for metrics')).toHaveLength(4)
+
+    // The first snapshot must not trip the changed-hook-count trap.
+    receive(makeSnapshot(1000, undefined, [THROTTLING]))
+    expect(screen.queryByText('Waiting for metrics')).not.toBeInTheDocument()
+    expect(within(region('GPU Memory')).getByText('50')).toBeInTheDocument()
+  })
+
+  it('says so rather than drawing a zero when the device reports neither', async () => {
+    // The unified-memory SoCs: NVML has no device pool and no fan for them, so
+    // a gauge at 0% would report hardware that is not there.
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        { id: 'vram', type: 'gpu-memory', geometry: { x: 0, y: 0, w: 6, h: 4 } },
+        { id: 'fan', type: 'gpu-fan', geometry: { x: 6, y: 0, w: 6, h: 4 } },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(
+      makeSnapshot(1000, [
+        makeGpu(0, { memory_total_bytes: null, memory_used_bytes: null, fan_speed_percent: null }),
+      ]),
+    )
+
+    expect(
+      within(region('GPU Memory')).getByText('This GPU does not report its own memory pool.'),
+    ).toBeInTheDocument()
+    expect(within(region('GPU Fan')).getByText('This GPU has no fan to report.')).toBeInTheDocument()
+  })
+
+  it('shows each GPU only its own events, and keeps a pin to a GPU that is gone', async () => {
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        { id: 'first', type: 'gpu-events', geometry: { x: 0, y: 0, w: 4, h: 4 } },
+        {
+          id: 'second',
+          type: 'gpu-events',
+          title: 'Second GPU events',
+          binding: { kind: 'gpu', index: 1 },
+          geometry: { x: 4, y: 0, w: 4, h: 4 },
+        },
+        {
+          id: 'gone',
+          type: 'gpu-events',
+          title: 'Absent GPU events',
+          binding: { kind: 'gpu', index: 3 },
+          geometry: { x: 8, y: 0, w: 4, h: 4 },
+        },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(
+      makeSnapshot(1000, [makeGpu(0), makeGpu(1, { name: 'NVIDIA Beta 1' })], [
+        THROTTLING,
+        { timestamp_ms: 1000, gpu_index: 1, event_type: 'power_brake', detail: 'Power brake engaged' },
+      ]),
+    )
+
+    // Each panel shows the events of the GPU it resolved to — never the
+    // neighbour's, which would read as this GPU throttling.
+    const first = region('GPU Events')
+    expect(within(first).getByText('Thermal throttling active')).toBeInTheDocument()
+    expect(within(first).queryByText('Power brake engaged')).not.toBeInTheDocument()
+
+    const second = region('Second GPU events')
+    expect(within(second).getByText('Power brake engaged')).toBeInTheDocument()
+    expect(within(second).queryByText('Thermal throttling active')).not.toBeInTheDocument()
+
+    // The pinned-but-absent GPU keeps its slot and names what it lost.
+    expect(
+      within(region('Absent GPU events')).getByText('GPU 3 is not on this host.'),
+    ).toBeInTheDocument()
+  })
+
+  it('says the window was quiet rather than showing an empty list', async () => {
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        { id: 'events', type: 'gpu-events', geometry: { x: 0, y: 0, w: 6, h: 4 } },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000))
+
+    // A healthy GPU reports nothing, which is the common case and has to read
+    // as good news rather than as a panel that failed to load.
+    expect(
+      within(region('GPU Events')).getByText('Nothing reported in the last 5m.'),
+    ).toBeInTheDocument()
+  })
+
+  it('says so when the host reports no per-core load', async () => {
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        { id: 'cores', type: 'cpu-cores', geometry: { x: 0, y: 0, w: 6, h: 4 } },
+      ]),
+    })
+    const snapshot = makeSnapshot(1000)
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive({ ...snapshot, cpu: { ...snapshot.cpu, per_core: [] } })
+
+    expect(
+      within(region('CPU Cores')).getByText('This host reports no per-core load.'),
+    ).toBeInTheDocument()
   })
 })

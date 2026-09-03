@@ -30,8 +30,12 @@ export type GpuPanelResolution =
  * A following panel resolves to the page-level GPU selection, which is the
  * primary GPU until the operator points the page somewhere else — so a page of
  * following panels moves to another GPU coherently, all at once.
+ *
+ * Exported for the panels that bind to a GPU without charting one of its
+ * series — the event list. Panels that do chart one take
+ * `useGpuPanelSeries`, which resolves and subscribes together.
  */
-function useGpuPanel(panel: DashboardPanel): GpuPanelResolution {
+export function useGpuPanel(panel: DashboardPanel): GpuPanelResolution {
   const snapshot = useLatestSnapshot()
   const { chosen } = usePageSelection()
 

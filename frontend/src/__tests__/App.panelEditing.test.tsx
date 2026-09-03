@@ -170,8 +170,8 @@ afterEach(() => {
 describe('the panel palette', () => {
   it('offers every panel type the dashboard can show', async () => {
     // Including the log panel, which is a panel here rather than a fixed
-    // drawer, and the types this build renders as placeholders — a palette
-    // that hid them would make the vocabulary unreachable.
+    // drawer. A palette that hid part of the vocabulary would make it
+    // unreachable; that the whole of it renders is `panelRegistry.test`.
     const fetchMock = serveConfiguration({ document: storedDocument(onePanel()) })
     await editPage(fetchMock)
     await openPalette()

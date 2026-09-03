@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { enginePanelMode, gaugeSizePx, hardwarePanelMode } from './mode'
+import { coreGridLayout, enginePanelMode, gaugeSizePx, hardwarePanelMode } from './mode'
 
 describe('hardwarePanelMode', () => {
   it('renders the richest layout while the box is unmeasured', () => {
@@ -45,6 +45,42 @@ describe('enginePanelMode', () => {
     // Engine panels have no gauge column competing for the width, so narrow is
     // not a reason to drop anything.
     expect(enginePanelMode({ width: 120, height: 300 })).toBe('full')
+  })
+})
+
+describe('coreGridLayout', () => {
+  it('renders the richest layout while the box is unmeasured', () => {
+    // jsdom reports 0×0, and so does the first frame before ResizeObserver
+    // fires — the same fallback the panel modes take.
+    expect(coreGridLayout({ width: 0, height: 0 }, 8)).toEqual({ columns: 4, labelled: true })
+  })
+
+  it('tiles a wide box in more columns than a square one', () => {
+    // Square cells are the goal: a row of slivers says nothing about which
+    // cores are busy.
+    expect(coreGridLayout({ width: 400, height: 100 }, 8).columns).toBe(6)
+    expect(coreGridLayout({ width: 200, height: 200 }, 8).columns).toBe(3)
+  })
+
+  it('never asks for more columns than there are cores', () => {
+    expect(coreGridLayout({ width: 400, height: 100 }, 2).columns).toBe(2)
+  })
+
+  it('labels the cells once they are big enough to read', () => {
+    // A 6×3 panel on a desktop viewport, on a 16-core host.
+    expect(coreGridLayout({ width: 480, height: 200 }, 16).labelled).toBe(true)
+  })
+
+  it('drops the labels when the cells come out as texture', () => {
+    // 96 cores in a 1×1 cell: a block of colour is all that fits, and it is
+    // still worth showing — the load is legible as a pattern.
+    const layout = coreGridLayout({ width: 100, height: 55 }, 96)
+    expect(layout.labelled).toBe(false)
+    expect(layout.columns).toBeGreaterThan(1)
+  })
+
+  it('survives a host that reports no cores at all', () => {
+    expect(coreGridLayout({ width: 400, height: 100 }, 0)).toEqual({ columns: 1, labelled: true })
   })
 })
 

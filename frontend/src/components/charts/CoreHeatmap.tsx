@@ -1,16 +1,9 @@
 import React, { useState, useCallback } from 'react'
+import { coreUsageColor } from '@/lib/theme'
 import type { CoreMetrics } from '@/types/metrics'
 
 interface CoreHeatmapProps {
   cores: CoreMetrics[]
-}
-
-function coreColor(usage: number): string {
-  if (usage >= 90) return '#ef4444'
-  if (usage >= 70) return '#eab308'
-  if (usage >= 40) return '#76B900'
-  if (usage >= 10) return '#365314'
-  return '#27272a'
 }
 
 export const CoreHeatmap = React.memo(function CoreHeatmap({ cores }: CoreHeatmapProps) {
@@ -40,7 +33,7 @@ export const CoreHeatmap = React.memo(function CoreHeatmap({ cores }: CoreHeatma
           <div
             key={core.id}
             className="h-[6px] lg:h-[10px] 2xl:h-[12px] rounded-[1px] transition-colors duration-300"
-            style={{ backgroundColor: coreColor(core.usage_percent) }}
+            style={{ backgroundColor: coreUsageColor(core.usage_percent) }}
             onMouseEnter={(e) => handleMouseEnter(core, e)}
             onMouseLeave={handleMouseLeave}
           />

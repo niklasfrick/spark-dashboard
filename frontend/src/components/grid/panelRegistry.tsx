@@ -7,13 +7,15 @@
  * that keeps its grid slot. That is what lets the panel tickets land one at a
  * time against a preset that already names every type.
  *
- * The hardware panels (#80), the engine metric panels (#81) and the log panel
- * (#82) are implemented; the remaining types still render as placeholders.
+ * Nothing is lagging today — every type in the vocabulary has a component, and
+ * `panelRegistry.test` holds it that way. The lag is kept as an affordance for
+ * the next type to be named, not as a description of this build.
  */
 
 import type { ComponentType, ReactElement } from 'react'
 import { isKnownPanelType, type PanelType } from '@/lib/dashboard/panels'
 import type { DashboardPanel } from '@/lib/dashboard/schema'
+import { CpuCoresPanel } from './panels/CpuCoresPanel'
 import { CpuUtilizationPanel } from './panels/CpuUtilizationPanel'
 import { DiskIoPanel } from './panels/DiskIoPanel'
 import { EngineCachePanel } from './panels/EngineCachePanel'
@@ -28,9 +30,13 @@ import {
   EnginePrefillThroughputPanel,
 } from './panels/EngineThroughputPanel'
 import { GpuClockPanel } from './panels/GpuClockPanel'
+import { GpuEventsPanel } from './panels/GpuEventsPanel'
+import { GpuFanPanel } from './panels/GpuFanPanel'
+import { GpuMemoryPanel } from './panels/GpuMemoryPanel'
 import { GpuPowerPanel } from './panels/GpuPowerPanel'
 import { GpuTemperaturePanel } from './panels/GpuTemperaturePanel'
 import { GpuUtilizationPanel } from './panels/GpuUtilizationPanel'
+import { InferenceTimelinePanel } from './panels/InferenceTimelinePanel'
 import { LogsPanel } from './panels/LogsPanel'
 import { MemoryPanel } from './panels/MemoryPanel'
 import { NetworkIoPanel } from './panels/NetworkIoPanel'
@@ -46,7 +52,11 @@ const PANEL_CONTENT: Partial<Record<PanelType, ComponentType<PanelContentProps>>
   'gpu-temperature': GpuTemperaturePanel,
   'gpu-power': GpuPowerPanel,
   'gpu-clock': GpuClockPanel,
+  'gpu-memory': GpuMemoryPanel,
+  'gpu-fan': GpuFanPanel,
+  'gpu-events': GpuEventsPanel,
   'cpu-utilization': CpuUtilizationPanel,
+  'cpu-cores': CpuCoresPanel,
   memory: MemoryPanel,
   'disk-io': DiskIoPanel,
   'network-io': NetworkIoPanel,
@@ -59,7 +69,17 @@ const PANEL_CONTENT: Partial<Record<PanelType, ComponentType<PanelContentProps>>
   'engine-spec-decode': EngineSpecDecodePanel,
   'engine-status': EngineStatusPanel,
   'engines-overview': EnginesOverviewPanel,
+  'inference-timeline': InferenceTimelinePanel,
   logs: LogsPanel,
+}
+
+/**
+ * The panel types this build renders. Exported for the spec that holds the
+ * registry against the vocabulary: a type the palette offers and no component
+ * renders is a gap an operator only finds by adding an empty box (#110).
+ */
+export function implementedPanelTypes(): PanelType[] {
+  return Object.keys(PANEL_CONTENT) as PanelType[]
 }
 
 /**

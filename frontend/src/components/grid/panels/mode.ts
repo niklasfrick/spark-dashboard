@@ -57,6 +57,51 @@ export function enginePanelMode({ height }: ElementSize): EnginePanelMode {
   return height > 0 && height < TILES_ONLY_BELOW_PX ? 'tiles' : 'full'
 }
 
+/** How the CPU-cores panel tiles its box. */
+export interface CoreGridLayout {
+  /** Cells per row. */
+  columns: number
+  /** Whether a cell has room for the core's own number and load, or is only
+   *  big enough to be a block of colour in the texture. */
+  labelled: boolean
+}
+
+/** The aspect ratio assumed for a box nothing has measured yet — wider than
+ *  tall, which is what a grid cell is at every preset size. */
+const UNMEASURED_ASPECT = 2
+
+/** A cell narrower than this cannot hold "63" and "100%" beside each other. */
+const LABEL_MIN_WIDTH_PX = 44
+/** A cell shorter than this cannot hold the two lines a label needs. */
+const LABEL_MIN_HEIGHT_PX = 26
+
+/**
+ * How to lay `cores` core cells out in a measured box: the column count that
+ * gets the cells closest to square, and whether they came out big enough to
+ * label.
+ *
+ * Square cells are the goal because the grid is read as a texture — a row of
+ * slivers says nothing about which cores are busy. A 96-core host in a 1×1
+ * cell therefore gets an unlabelled block of colour, and the same host across a
+ * 6×4 panel gets a labelled one, from the same component.
+ *
+ * Unmeasured boxes get the richest layout, the same fallback rule as
+ * `hardwarePanelMode`.
+ */
+export function coreGridLayout({ width, height }: ElementSize, cores: number): CoreGridLayout {
+  if (cores <= 0) return { columns: 1, labelled: true }
+
+  const measured = width > 0 && height > 0
+  const aspect = measured ? width / height : UNMEASURED_ASPECT
+  const columns = Math.min(cores, Math.max(1, Math.round(Math.sqrt(cores * aspect))))
+  if (!measured) return { columns, labelled: true }
+
+  const rows = Math.ceil(cores / columns)
+  const labelled =
+    width / columns >= LABEL_MIN_WIDTH_PX && height / rows >= LABEL_MIN_HEIGHT_PX
+  return { columns, labelled }
+}
+
 /**
  * The gauge column's square size for a measured content height: fill the row
  * up to the size the pre-grid dashboard capped its gauges at. Unmeasured

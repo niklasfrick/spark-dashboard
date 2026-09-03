@@ -62,6 +62,9 @@ export const PANEL_TYPES = {
   'gpu-clock': { binds: 'gpu', title: 'GPU Clock' },
   'gpu-memory': { binds: 'gpu', title: 'GPU Memory' },
   'gpu-fan': { binds: 'gpu', title: 'GPU Fan' },
+  // A discrete list rather than a series — but still windowed, unlike `logs`
+  // below: the history store keeps a bounded ring of events and filters it by
+  // the window, so choosing 15m over 5m genuinely shows the operator more.
   'gpu-events': { binds: 'gpu', title: 'GPU Events' },
 
   // ── Host-wide hardware ──────────────────────────────────────────────────
@@ -85,6 +88,9 @@ export const PANEL_TYPES = {
   'engine-requests': { binds: 'engine', title: 'Requests' },
   'engine-cache': { binds: 'engine', title: 'Cache' },
   'engine-spec-decode': { binds: 'engine', title: 'Speculative Decoding' },
+  // Windowed for the same reason as `gpu-events`, and it needs the window
+  // twice over: the requests are filtered by it, and the timeline draws each
+  // one against it as the axis it is positioned on.
   'inference-timeline': { binds: 'engine', title: 'Inference Requests' },
   // The log socket addresses an engine by endpoint, so logs bind like any
   // other engine panel instead of being a fixed drawer. A line of container

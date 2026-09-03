@@ -18,6 +18,8 @@ type MetricKey =
   | 'gpuTemp'
   | 'gpuPower'
   | 'gpuClockGraphics'
+  | 'gpuMemory'
+  | 'gpuFan'
   | 'cpuAggregate'
   | 'memoryUsedPercent'
   | 'diskRead'
@@ -30,6 +32,8 @@ const SYSTEM_METRIC_KEYS: MetricKey[] = [
   'gpuTemp',
   'gpuPower',
   'gpuClockGraphics',
+  'gpuMemory',
+  'gpuFan',
   'cpuAggregate',
   'memoryUsedPercent',
   'diskRead',
@@ -38,10 +42,23 @@ const SYSTEM_METRIC_KEYS: MetricKey[] = [
   'networkTx',
 ]
 
-const GPU_METRIC_KEYS: MetricKey[] = ['gpuUtil', 'gpuTemp', 'gpuPower', 'gpuClockGraphics']
+const GPU_METRIC_KEYS: MetricKey[] = [
+  'gpuUtil',
+  'gpuTemp',
+  'gpuPower',
+  'gpuClockGraphics',
+  'gpuMemory',
+  'gpuFan',
+]
 
 /** The per-GPU series. Narrower than `MetricKey`: only these exist per GPU. */
-export type GpuSeriesMetric = 'gpuUtil' | 'gpuTemp' | 'gpuPower' | 'gpuClockGraphics'
+export type GpuSeriesMetric =
+  | 'gpuUtil'
+  | 'gpuTemp'
+  | 'gpuPower'
+  | 'gpuClockGraphics'
+  | 'gpuMemory'
+  | 'gpuFan'
 
 /**
  * The series key for one GPU's metric. Multi-GPU hosts read the
@@ -139,9 +156,27 @@ function extractGpuValue(gpu: MetricsSnapshot['gpu'], key: MetricKey): number | 
       return gpu.power_watts
     case 'gpuClockGraphics':
       return gpu.clock_graphics_mhz
+    // Charted as a percentage of the device's own pool rather than as bytes:
+    // it is the reading the gauge shows, and it keeps the series comparable
+    // between GPUs of different sizes on one host.
+    case 'gpuMemory':
+      return gpuMemoryPercent(gpu)
+    case 'gpuFan':
+      return gpu.fan_speed_percent
     default:
       return null
   }
+}
+
+/**
+ * A GPU's used share of its own memory, 0–100. Null when the device reports
+ * no pool — NVML answers `NotSupported` for the unified-memory SoCs, where the
+ * host memory panel is the one that has the numbers.
+ */
+export function gpuMemoryPercent(gpu: MetricsSnapshot['gpu']): number | null {
+  const { memory_used_bytes: used, memory_total_bytes: total } = gpu
+  if (used === null || used === undefined || !total) return null
+  return (used / total) * 100
 }
 
 function extractValue(metrics: MetricsSnapshot, key: MetricKey): number | null {
@@ -150,6 +185,8 @@ function extractValue(metrics: MetricsSnapshot, key: MetricKey): number | null {
     case 'gpuTemp':
     case 'gpuPower':
     case 'gpuClockGraphics':
+    case 'gpuMemory':
+    case 'gpuFan':
       return extractGpuValue(metrics.gpu, key)
     case 'cpuAggregate':
       return metrics.cpu.aggregate_percent
@@ -335,7 +372,9 @@ export class MetricsHistoryStore {
     const systemBuffer = this.buffers[metric as MetricKey]
     if (systemBuffer) return systemBuffer
 
-    const gpuMatch = metric.match(/^gpu:(\d+):(gpuUtil|gpuTemp|gpuPower|gpuClockGraphics)$/)
+    const gpuMatch = metric.match(
+      /^gpu:(\d+):(gpuUtil|gpuTemp|gpuPower|gpuClockGraphics|gpuMemory|gpuFan)$/,
+    )
     if (gpuMatch) {
       return this.gpuBuffers[gpuMatch[1]]?.[gpuMatch[2] as MetricKey]
     }

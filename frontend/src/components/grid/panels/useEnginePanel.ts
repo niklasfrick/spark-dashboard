@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { useLatestSnapshot, useMetricsStore } from '@/hooks/useMetricsStore'
+import { useInferenceRequests, useLatestSnapshot, useMetricsStore } from '@/hooks/useMetricsStore'
 import { usePageSelection } from '@/hooks/usePageSelection'
 import { resolveEngineBinding } from '@/lib/dashboard/bindings'
 import { pageSelection } from '@/lib/dashboard/selection'
@@ -7,7 +7,7 @@ import { engineAvailability, engineMetricReader, type EngineMetricReader } from 
 import { engineKey } from '@/lib/identity'
 import { engineSeries, type DataPoint, type EngineSeriesName } from '@/lib/metricsHistoryStore'
 import type { DashboardPanel } from '@/lib/dashboard/schema'
-import type { EngineSnapshot } from '@/types/metrics'
+import type { EngineSnapshot, InferenceRequestData } from '@/types/metrics'
 
 /** Which engine a panel's binding names on this host, before anything is asked
  *  about whether that engine is serving. */
@@ -71,6 +71,28 @@ export function useEngineTarget(panel: DashboardPanel): EngineTargetResolution {
 
     return { status: 'resolved', engine: resolution.target, multiEngine: engines.length > 1 }
   }, [snapshot, chosen, panel.binding])
+}
+
+/**
+ * An inference-timeline panel's whole subscription in one call: the engine its
+ * binding names, and that engine's finished requests over the panel's own
+ * window. Every hook lives in here, above the caller's unresolved early return
+ * — the same shape as `useGpuPanelSeries`; while unresolved, the all-engines
+ * key keeps the subscription alive until a binding names one.
+ *
+ * Deliberately the raw target rather than `useEnginePanel`: requests are the
+ * engine's own record of what it served, and they stay worth reading when it
+ * has stopped serving — an engine that fell over an hour into a run is exactly
+ * when an operator wants to see what it was doing beforehand.
+ */
+export function useEngineRequests(panel: DashboardPanel): {
+  target: EngineTargetResolution
+  requests: InferenceRequestData[]
+} {
+  const target = useEngineTarget(panel)
+  const key = target.status === 'resolved' ? engineKey(target.engine) : undefined
+  const requests = useInferenceRequests(key, panel.window)
+  return { target, requests }
 }
 
 /**

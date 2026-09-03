@@ -98,30 +98,11 @@ describe('the grid page route', () => {
     expect(screen.queryByText('This panel is not available yet.')).not.toBeInTheDocument()
   })
 
-  it('keeps the slot of a panel type this build has not implemented yet', async () => {
-    // The vocabulary names more panels than the registry implements — the
-    // inference timeline is still to come — and a preset written by a newer
-    // build can place one this build has never rendered. It keeps its slot
-    // rather than reflowing the arrangement around it.
-    const fetchMock = serveConfiguration({
-      document: storedDocument([
-        { id: 'a', type: 'inference-timeline', geometry: { x: 0, y: 0, w: 6, h: 4 } },
-        { id: 'b', type: 'memory', geometry: { x: 6, y: 0, w: 6, h: 4 } },
-      ]),
-    })
-    visit('/pages/watch')
-
-    render(<App />)
-    await configurationSettles(fetchMock)
-
-    expect(
-      within(screen.getByRole('region', { name: 'Inference Requests' })).getByText(
-        'This panel is not available yet.',
-      ),
-    ).toBeInTheDocument()
-    expect(screen.getByRole('region', { name: 'Memory' })).toBeInTheDocument()
-  })
-
+  // The spec that stood here placed an `inference-timeline` panel to watch a
+  // known-but-unimplemented type keep its slot. Every type in the vocabulary
+  // has a component now (#110), so there is none left to place; the registry
+  // is held against the vocabulary in `panelRegistry.test` instead, and the
+  // spec below covers the one placeholder a build can still reach.
   it('keeps an unknown panel type’s slot with a placeholder naming the type', async () => {
     const fetchMock = serveConfiguration({
       document: storedDocument([

@@ -56,6 +56,23 @@ export function formatMhz(mhz: number | null): string {
   return `${Math.round(mhz)} MHz`
 }
 
+/**
+ * How long before `now` something happened, as the coarsest unit that still
+ * says it: `12s`, `3m`, `2h`.
+ *
+ * An age rather than a wall-clock time, because that is the question an
+ * operator is asking of a live dashboard — and because a clock time would have
+ * to be read against the viewer's own timezone, which the rest of the metrics
+ * on the page are free of. Anything not yet in the past reads as `0s`.
+ */
+export function formatAge(timestampMs: number, nowMs: number): string {
+  const seconds = Math.max(0, Math.floor((nowMs - timestampMs) / 1000))
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m`
+  return `${Math.floor(minutes / 60)}h`
+}
+
 /** Get temperature color class: green <70, yellow 70-85, red >85 */
 export function tempColor(celsius: number | null): string {
   if (celsius === null) return 'text-zinc-500'

@@ -8,7 +8,13 @@ import {
 } from '../test/configurationServer'
 import { MockWebSocket, substituteWebSocket } from '../test/websocket'
 import { DASHBOARD_SCHEMA_VERSION } from '../lib/dashboard/schema'
-import type { EngineMetrics, EngineSnapshot, MetricsSnapshot, ModelInfo } from '../types/metrics'
+import type {
+  EngineMetrics,
+  EngineSnapshot,
+  InferenceRequestData,
+  MetricsSnapshot,
+  ModelInfo,
+} from '../types/metrics'
 
 // The engine panels through the application seam (#81): real routing, real
 // configuration loading, real registry, store and binding resolution, with the
@@ -596,5 +602,119 @@ describe('the engine panels on a grid page', () => {
     receive(makeSnapshot(1000, [makeEngine(ALPHA)]))
     expect(screen.queryByText('Waiting for metrics')).not.toBeInTheDocument()
     expect(within(region('Decode Throughput')).getByText('120.0')).toBeInTheDocument()
+  })
+})
+
+// The engine type the palette offered and no build rendered (#110), through the
+// same seam as the seven above.
+describe('the inference-request timeline', () => {
+  /** Four finished requests, including a cold start that a mean would hide
+   *  behind — the outlier is the point of showing them individually. */
+  const REQUESTS: InferenceRequestData[] = [
+    { start_ms: 590_000, end_ms: 600_000, tokens_per_sec: 100, ttft_ms: 200 },
+    { start_ms: 595_000, end_ms: 599_000, tokens_per_sec: 120, ttft_ms: 300 },
+    { start_ms: 400_000, end_ms: 410_000, tokens_per_sec: 1, ttft_ms: 2400 },
+    { start_ms: 560_000, end_ms: 570_000, tokens_per_sec: 140, ttft_ms: 400 },
+  ]
+
+  /** The timeline's own rows inside one panel, in the order they are drawn. */
+  function requestRows(panelName: string): HTMLElement[] {
+    const list = within(region(panelName)).getByRole('list', { name: 'Inference requests' })
+    return within(list).getAllByRole('listitem')
+  }
+
+  function timelinePanel(extra: Record<string, unknown> = {}): unknown {
+    return { id: 'timeline', type: 'inference-timeline', geometry: { x: 0, y: 0, w: 6, h: 4 }, ...extra }
+  }
+
+  it('draws every request in the window, and summarizes them by median', async () => {
+    const fetchMock = serveConfiguration({ document: storedDocument([timelinePanel()]) })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(600_000, [makeEngine(ALPHA, { recent_requests: REQUESTS })]))
+
+    const timeline = region('Inference Requests')
+    expect(within(timeline).getByText('Requests')).toBeInTheDocument()
+    expect(within(timeline).getByText('4')).toBeInTheDocument()
+    // Medians, not means: the cold start at 1 tok/s would drag a mean to 90.
+    expect(within(timeline).getByText('110.0')).toBeInTheDocument()
+    expect(within(timeline).getByText('350')).toBeInTheDocument()
+
+    // One row per request, newest first — the only place in the dashboard the
+    // requests themselves are visible rather than an aggregate over them.
+    const rows = requestRows('Inference Requests')
+    expect(rows).toHaveLength(4)
+    expect(rows.map((row) => row.textContent)).toEqual(['100.0', '120.0', '140.0', '1.0'])
+
+    expect(screen.queryByText('This panel is not available yet.')).not.toBeInTheDocument()
+  })
+
+  it('shows a pinned engine only its own requests', async () => {
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        timelinePanel({ id: 'alpha', title: 'Alpha timeline' }),
+        {
+          id: 'beta',
+          type: 'inference-timeline',
+          title: 'Beta timeline',
+          binding: { kind: 'engine', endpoint: BETA },
+          geometry: { x: 6, y: 0, w: 6, h: 4 },
+        },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(
+      makeSnapshot(600_000, [
+        makeEngine(ALPHA, { recent_requests: REQUESTS }),
+        makeEngine(BETA, {
+          recent_requests: [
+            { start_ms: 599_000, end_ms: 600_000, tokens_per_sec: 7, ttft_ms: 50 },
+          ],
+        }),
+      ]),
+    )
+
+    // Never the other engine's requests under this engine's name.
+    expect(within(region('Alpha timeline')).getByText('4')).toBeInTheDocument()
+    expect(within(region('Beta timeline')).getByText('1')).toBeInTheDocument()
+    expect(requestRows('Beta timeline').map((row) => row.textContent)).toEqual(['7.0'])
+    expect(within(region('Alpha timeline')).queryByText('7.0')).not.toBeInTheDocument()
+  })
+
+  it('says the window was quiet rather than drawing an empty axis', async () => {
+    const fetchMock = serveConfiguration({ document: storedDocument([timelinePanel()]) })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(600_000, [makeEngine(ALPHA)]))
+
+    const timeline = region('Inference Requests')
+    expect(within(timeline).getByText('No requests finished in the last 5m.')).toBeInTheDocument()
+    // The tiles still stand, saying nothing happened rather than nothing loaded.
+    expect(within(timeline).getByText('0')).toBeInTheDocument()
+    expect(within(timeline).getAllByText('N/A')).toHaveLength(2)
+  })
+
+  it('keeps the slot of a panel pinned to an engine that is gone, naming it', async () => {
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        timelinePanel({ binding: { kind: 'engine', endpoint: 'http://localhost:9999' } }),
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(600_000, [makeEngine(ALPHA, { recent_requests: REQUESTS })]))
+
+    // Named, never silently substituted — another engine's requests under this
+    // panel's title would be worse than no requests at all.
+    expect(
+      within(region('Inference Requests')).getByText(
+        'No engine at http://localhost:9999 — repoint this panel.',
+      ),
+    ).toBeInTheDocument()
   })
 })

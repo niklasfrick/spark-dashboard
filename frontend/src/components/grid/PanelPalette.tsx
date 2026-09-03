@@ -6,8 +6,10 @@ import { BarButton } from './BarButton'
  * Every panel type the dashboard can show, as a list to add from.
  *
  * This is where the full vocabulary becomes reachable rather than only
- * preset-placed — including the types this build renders as a placeholder,
- * which are still real panels an operator may want a slot kept for.
+ * preset-placed. It lists the whole of it unconditionally, which is only safe
+ * because the registry covers the whole of it — a type offered here and
+ * rendered as an empty box is the bug #110 was; `panelRegistry.test` is what
+ * holds the two together.
  *
  * **Click-to-add, not drag-from-palette.** The chosen panel is placed in the
  * first free slot and dragged into position from there, so nothing has to be

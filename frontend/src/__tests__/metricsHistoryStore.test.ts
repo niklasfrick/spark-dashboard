@@ -1,6 +1,22 @@
 import { describe, expect, it, vi } from 'vitest'
-import { gpuSeries, MetricsHistoryStore } from '../lib/metricsHistoryStore'
-import type { EngineSnapshot, MetricsSnapshot } from '../types/metrics'
+import { gpuMemoryPercent, gpuSeries, MetricsHistoryStore } from '../lib/metricsHistoryStore'
+import type { EngineSnapshot, GpuMetrics, MetricsSnapshot } from '../types/metrics'
+
+/** The GPU the snapshots below carry, for the specs that read one field of it. */
+const GPU: GpuMetrics = {
+  index: 0,
+  name: 'GPU 0',
+  utilization_percent: 11,
+  memory_total_bytes: 24,
+  memory_used_bytes: 6,
+  temperature_celsius: 40,
+  power_watts: 100,
+  power_limit_watts: 300,
+  clock_graphics_mhz: 1800,
+  clock_sm_mhz: 1800,
+  clock_memory_mhz: 9000,
+  fan_speed_percent: 30,
+}
 
 /** A snapshot at `ts` whose per-series values can be nulled out selectively. */
 function makeSnapshot(
@@ -15,20 +31,7 @@ function makeSnapshot(
   const { util = 11, temp = 40, engines = [], gpu_events = [] } = overrides
   return {
     timestamp_ms: ts,
-    gpu: {
-      index: 0,
-      name: 'GPU 0',
-      utilization_percent: util,
-      memory_total_bytes: 24,
-      memory_used_bytes: 6,
-      temperature_celsius: temp,
-      power_watts: 100,
-      power_limit_watts: 300,
-      clock_graphics_mhz: 1800,
-      clock_sm_mhz: 1800,
-      clock_memory_mhz: 9000,
-      fan_speed_percent: 30,
-    },
+    gpu: { ...GPU, utilization_percent: util, temperature_celsius: temp },
     cpu: { name: 'CPU', aggregate_percent: 25, per_core: [] },
     memory: {
       total_bytes: 128,
@@ -245,5 +248,36 @@ describe('gpuSeries', () => {
 
     expect(store.getChartData(gpuSeries('gpuUtil', 0, true)).map((p) => p.value)).toEqual([11])
     expect(store.getChartData(gpuSeries('gpuUtil', 0, false)).map((p) => p.value)).toEqual([11])
+  })
+
+  it('charts a GPU’s own memory and fan on both key shapes', () => {
+    // The two series behind the GPU Memory and GPU Fan panels (#110), which
+    // resolve their keys through `gpuSeries` like every other GPU panel.
+    const store = new MetricsHistoryStore()
+    store.ingest(makeSnapshot(1000))
+
+    // 6 of 24 bytes used, charted as the percentage the gauge shows.
+    expect(store.getChartData('gpuMemory').map((p) => p.value)).toEqual([25])
+    expect(store.getChartData(gpuSeries('gpuMemory', 0, true)).map((p) => p.value)).toEqual([25])
+    expect(store.getChartData('gpuFan').map((p) => p.value)).toEqual([30])
+    expect(store.getChartData(gpuSeries('gpuFan', 0, true)).map((p) => p.value)).toEqual([30])
+  })
+})
+
+describe('gpuMemoryPercent', () => {
+  it('is the used share of the device’s own pool', () => {
+    expect(gpuMemoryPercent({ ...GPU, memory_used_bytes: 6, memory_total_bytes: 24 })).toBe(25)
+  })
+
+  it('is absent on a GPU that reports no pool of its own', () => {
+    // The unified-memory SoCs: NVML answers NotSupported, and the host memory
+    // panel is the one with the numbers. A zero here would be a lie.
+    expect(gpuMemoryPercent({ ...GPU, memory_total_bytes: null })).toBeNull()
+    expect(gpuMemoryPercent({ ...GPU, memory_used_bytes: null })).toBeNull()
+    expect(gpuMemoryPercent({ ...GPU, memory_total_bytes: undefined })).toBeNull()
+  })
+
+  it('does not divide by a pool of zero bytes', () => {
+    expect(gpuMemoryPercent({ ...GPU, memory_total_bytes: 0 })).toBeNull()
   })
 })
