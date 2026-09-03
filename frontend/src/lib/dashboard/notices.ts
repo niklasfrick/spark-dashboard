@@ -25,3 +25,5 @@ export type ConfigurationNotice =
   | { kind: 'save-failed' }
   /** The last save was refused for the document's size; retrying will not help. */
   | { kind: 'too-large' }
+  /** The last reset did not remove the stored document, which is still there. */
+  | { kind: 'reset-failed' }

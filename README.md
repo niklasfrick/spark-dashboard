@@ -89,14 +89,14 @@ for details on what each script does.
 
 **Multi-Engine Support**
 - Run and monitor any number of inference engines side by side — each
-  vLLM process or container is detected automatically and gets its own tab
-- **All Engines** overview tab with running-engine count, summed
-  throughput, and weighted-mean latencies across every detected engine
-- Per-engine drill-down tabs with provider chips showing the engine type
-  (vLLM) and source (Docker / host process)
-- Auto-rotating tab carousel with a configurable interval (default 3 s);
-  rotation pauses automatically the moment you interact with a tab so you
-  can focus on a single engine without fighting the UI
+  vLLM process or container is detected automatically
+- Every engine panel follows the page's engine selection by default, so one
+  layout works whether the host runs one engine or four
+- Pin a panel to a specific engine to watch two of them at once; a pinned
+  panel whose engine is gone says so and keeps its place rather than
+  silently showing a different one
+- With several engines on a host, each panel names the one it is showing and
+  marks the provider of the model it is serving
 
 **Splunk HEC Export** (opt-in)
 - Pushes each active snapshot to a HEC endpoint in the multiple-measurement
@@ -105,8 +105,15 @@ for details on what each script does.
   probe against the in-progress (unsaved) edit
 
 **Dashboard**
-- Arc gauges, time-series charts, sparklines, per-core heatmap
+- A grid of panels you arrange yourself: drag, resize, add from a palette of
+  every metric, remove what you do not want, save or discard
+- Multiple named pages with their own URLs, so a wall display can be pointed
+  at one arrangement and stay there across reboots
+- Fits the viewport on desktop with no scrolling; stacks into one column on
+  a phone, derived from your desktop arrangement
+- Per-panel time window, arc gauges, time-series charts, per-core heatmap
 - 15-minute rolling history with circular buffers
+- Layout saved on the server, shared by everyone who opens the instance
 - Connection status badge, staleness detection, auto-reconnect
 
 ## Architecture
@@ -292,6 +299,32 @@ Override the location with `--state-dir` / `SPARK_DASHBOARD_STATE_DIR` — under
 systemd that also needs a unit override, since `ProtectSystem=strict` leaves the
 granted state directory the only writable path.
 
+**Backing it up is copying the file.** There is deliberately no import/export
+feature; the location is documented instead, so an operator can copy a
+configuration to another host or keep a snapshot before experimenting:
+
+```bash
+# systemd
+sudo cp /var/lib/spark-dashboard/dashboards.json ~/dashboards.backup.json
+sudo systemctl stop spark-dashboard                                   # restore
+sudo install -o spark-dashboard -g spark-dashboard -m 644 \
+  ~/dashboards.backup.json /var/lib/spark-dashboard/dashboards.json
+sudo systemctl start spark-dashboard
+
+# Docker — see deploy/docker/docker.md for the volume commands
+```
+
+Stop the service first so the copy cannot land under a write, and **reload any
+open dashboard afterwards**: a browser still holding the pre-restore document
+would put it straight back on its next save.
+
+> **The document's format is internal and subject to change.** It is the
+> frontend's own versioned state, not a stable contract
+> ([ADR-0002](./docs/adr/0002-configuration-is-an-opaque-document.md)) — copy the
+> file whole, don't generate or hand-edit it. A document written by a newer build
+> is refused by an older one, which falls back to the default preset with a
+> banner rather than failing.
+
 ```
 GET    /api/dashboard   the document, or 204 when none is stored
 PUT    /api/dashboard   replaces it wholesale (204 on success)
@@ -316,6 +349,38 @@ curl -X DELETE localhost:3000/api/dashboard                # reset
 ```
 
 Unmatched paths under `/api` return `404` rather than the app shell.
+
+### Dashboard pages and kiosk URLs
+
+A configuration holds any number of named **pages** — separate arrangements of
+panels, kept side by side rather than one being chosen permanently. They are
+created, renamed and deleted from the **Pages** menu in the header, and switched
+between from the tabs beside it; tabs that do not fit the header move into an
+overflow menu rather than pushing it out of shape.
+
+Each page has its own URL, built from a stable id plus a readable slug:
+
+```
+/pages/<id>            e.g. /pages/overview
+/pages/<id>/<slug>     e.g. /pages/overview/wall-display
+```
+
+The id is fixed when the page is created and never changes again; the slug is
+whatever the page is called now, and is omitted when it would only repeat the
+id. The second example above is the page created as *Overview* and since
+renamed to *Wall Display*.
+
+**Only the id is matched** — the slug is decoration. Renaming a page rewrites
+the slug and leaves the id alone, so a kiosk browser or a bookmark pointed at
+the old URL still lands on the same page. Pointing a wall display at one page's
+URL is what makes it come back to that page after a reboot with no interaction.
+
+Resetting is two-tiered: deleting a single page from the Pages menu takes that
+page only, while **Reset everything** asks for confirmation and then removes the
+stored document outright — which is the same `DELETE /api/dashboard` above, and
+leaves the dashboard rendering its default preset. The dashboard always keeps at
+least one page, so the last one cannot be deleted; resetting is the way to start
+over.
 
 ### Log viewer (`--enable-log-viewer`, Linux only, opt-in)
 
@@ -486,14 +551,18 @@ real NVML/procfs parsing on Linux, with compile-time stubs on other platforms.
 │       └── prometheus.rs       Prometheus text-format parser
 ├── frontend/
 │   └── src/
-│       ├── hooks/              useMetrics, useMetricsHistory
+│       ├── hooks/              useMetrics, metrics store, configuration
 │       ├── components/
-│       │   ├── views/          Dashboard, GlanceableView, DetailedView
-│       │   ├── engines/        EngineSection, EngineCard
-│       │   ├── charts/         TimeSeriesChart, Sparkline, CoreHeatmap
-│       │   └── gauges/         ArcGauge
+│       │   ├── grid/           GridPage, palette, panel settings
+│       │   │   └── panels/     One component per panel type
+│       │   ├── pages/          Header page tabs and page settings
+│       │   ├── engines/        Engine tiles, gauges and per-panel controls
+│       │   ├── charts/         TimeSeriesChart, CoreHeatmap
+│       │   └── gauges/         ArcGauge, HBar
 │       ├── types/              TypeScript type definitions
-│       └── lib/                Circular buffer, formatting, theme
+│       └── lib/
+│           ├── dashboard/      Schema, migrations, preset, grid, routes
+│           └── …               Circular buffer, formatting, theme
 ├── deploy/                     Deployment & install artifacts, by type
 │   ├── docker/                 Container install
 │   │   ├── Dockerfile          Multi-stage container build
@@ -509,6 +578,10 @@ real NVML/procfs parsing on Linux, with compile-time stubs on other platforms.
 │   ├── docker-dev.sh           Containerized build/deploy harness
 │   ├── .env.example            Dev configuration template
 │   └── README.md               Operator docs
+├── docs/
+│   ├── adr/                    Architecture decision records
+│   └── agents/                 Agent-facing workflow docs
+├── CONTEXT.md                  Domain glossary, and what is out of scope
 ├── LICENSE                     MIT
 ├── CONTRIBUTING.md
 └── Cargo.toml

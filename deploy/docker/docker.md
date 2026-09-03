@@ -101,7 +101,18 @@ without a shell in the container (there isn't one):
 docker volume inspect spark-dashboard-state         # where it lives on the host
 docker run --rm -v spark-dashboard-state:/state -w /state \
   busybox cat dashboards.json > dashboards.backup.json
+
+# restore, keeping the runtime uid's ownership; reload open dashboards after
+docker compose stop spark-dashboard
+docker run --rm -i -v spark-dashboard-state:/state -u 65532:65532 \
+  busybox sh -c 'cat > /state/dashboards.json' < dashboards.backup.json
+docker compose start spark-dashboard
 ```
+
+**The document's format is internal and subject to change** — copy the file
+whole, don't generate or hand-edit it. There is no import/export feature, on
+purpose; see
+[ADR-0002](../../docs/adr/0002-configuration-is-an-opaque-document.md).
 
 With plain `docker run`, pass the volume yourself — otherwise the configuration
 lives on the container's writable layer and dies with the container:

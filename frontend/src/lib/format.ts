@@ -1,3 +1,4 @@
+import type { EngineIdentity } from '@/lib/identity'
 import type { EngineType } from '@/types/metrics'
 
 const KIB = 1024
@@ -13,7 +14,8 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / KIB).toFixed(1)} KB`
 }
 
-/** Format bytes as binary GiB, labelled "GB" to match OS conventions. */
+/** Format bytes as binary GiB, labelled "GB" to match OS conventions. Used
+ *  where a whole pool is named rather than a rate — the memory panel's caption. */
 export function formatGiB(bytes: number, decimals = 0): string {
   return `${(bytes / GIB).toFixed(decimals)} GB`
 }
@@ -52,6 +54,23 @@ export function formatPercent(value: number | null): string {
 export function formatMhz(mhz: number | null): string {
   if (mhz === null) return 'N/A'
   return `${Math.round(mhz)} MHz`
+}
+
+/**
+ * How long before `now` something happened, as the coarsest unit that still
+ * says it: `12s`, `3m`, `2h`.
+ *
+ * An age rather than a wall-clock time, because that is the question an
+ * operator is asking of a live dashboard — and because a clock time would have
+ * to be read against the viewer's own timezone, which the rest of the metrics
+ * on the page are free of. Anything not yet in the past reads as `0s`.
+ */
+export function formatAge(timestampMs: number, nowMs: number): string {
+  const seconds = Math.max(0, Math.floor((nowMs - timestampMs) / 1000))
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m`
+  return `${Math.floor(minutes / 60)}h`
 }
 
 /** Get temperature color class: green <70, yellow 70-85, red >85 */
@@ -135,9 +154,9 @@ export function formatAcceptanceLength(n: number | null): string {
   return n.toFixed(2)
 }
 
-/** Label for an engine's GPU badge: "GPU 0", or "GPU 0+1" when the engine
- *  spans multiple GPUs (tensor parallel). Empty string when no indexes are
- *  known — callers hide the badge entirely in that case. */
+/** Label for an engine's GPU chip: "GPU 0", or "GPU 0+1" when the engine spans
+ *  several GPUs (tensor parallel). Empty string when no indexes are known —
+ *  callers omit the chip entirely in that case. */
 export function formatGpuIndexes(indexes: number[]): string {
   if (indexes.length === 0) return ''
   return `GPU ${indexes.join('+')}`
@@ -149,6 +168,30 @@ export function engineDisplayName(engineType: EngineType): string {
     Vllm: 'vLLM',
   }
   return names[engineType]
+}
+
+/**
+ * The readable half of an engine endpoint — `host:port`, without the scheme or
+ * any path. Falls back to the endpoint as stored when it does not parse as a
+ * URL, because the operator has to be able to match it against what they
+ * configured.
+ */
+export function formatEndpoint(endpoint: string): string {
+  try {
+    return new URL(endpoint).host || endpoint
+  } catch {
+    return endpoint
+  }
+}
+
+/**
+ * How an engine reads in a panel label or a placeholder: its provider plus the
+ * host and port of the instance. Both halves are needed — a machine can run
+ * several engines of the same provider, which is exactly when a panel has to say
+ * which one it is showing.
+ */
+export function engineDescription(engine: EngineIdentity): string {
+  return `${engineDisplayName(engine.engine_type)} ${formatEndpoint(engine.endpoint)}`
 }
 
 /** Apply a formatter to a nullable metric, rendering '--' when absent.

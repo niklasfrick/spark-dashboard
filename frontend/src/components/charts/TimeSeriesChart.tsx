@@ -42,8 +42,6 @@ interface TimeSeriesChartProps {
   requests?: Array<{ start: number; end: number; tps: number; ttft: number }>
   yDomain?: [number, number]
   unit?: string
-  /** Pixel number, or any CSS length (`"clamp(80px, 13vh, 120px)"`, etc.). */
-  height?: number | string
   title?: string
   /**
    * Explicit tooltip header text. When omitted, the tooltip falls back to
@@ -133,7 +131,6 @@ export const TimeSeriesChart = React.memo(function TimeSeriesChart({
   color,
   yDomain,
   unit,
-  height = 160,
   title,
   tooltipLabel,
   hideTooltipLabel = false,
@@ -168,34 +165,43 @@ export const TimeSeriesChart = React.memo(function TimeSeriesChart({
   // edge — keeps chart lines roughly aligned with the title/legend above.
   const Y_AXIS_WIDTH = 32
 
+  const hasHeader = Boolean(title) || isMulti
+
   return (
-    <div className={className}>
-      {/* Reserve a fixed header band so charts with wrapping multi-series
-          legends (Prefill / Decode / Latency) line up with single-title
-          charts (KV / E2E) along the bottom. Legend always sits on its own
-          line below the title for consistent layout across charts. */}
-      <div className="flex flex-col gap-1 mb-1 min-h-[2.25rem]">
-        {title && (
-          <h3 className="text-xs font-medium text-zinc-500">{title}</h3>
-        )}
-        {isMulti && (
-          <div className="flex items-center gap-3 flex-wrap">
-            {series.map((s, i) => (
-              <div key={i} className="flex items-center gap-1.5">
-                <span
-                  className="inline-block w-2.5 h-[2px] rounded-full"
-                  style={{ backgroundColor: s.color }}
-                />
-                <span className="text-[11px] text-zinc-500">{s.label}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+    // The chart fills the box it is given and never asks for one of its own —
+    // a panel's height is the grid's to decide, and the panel below it is the
+    // one that pays for any extra.
+    <div className={`h-full min-h-0 flex flex-col ${className ?? ''}`}>
+      {hasHeader && (
+        // Only rendered when it has something in it. Reserving the band
+        // unconditionally cost every single-series panel a chart-height's worth
+        // of empty space, which is most of them.
+        <div className="shrink-0 flex flex-col gap-1 mb-1">
+          {title && (
+            <h3 className="text-xs font-medium text-zinc-500">{title}</h3>
+          )}
+          {isMulti && (
+            <div className="flex items-center gap-3 flex-wrap">
+              {series.map((s, i) => (
+                <div key={i} className="flex items-center gap-1.5">
+                  <span
+                    className="inline-block w-2.5 h-[2px] rounded-full"
+                    style={{ backgroundColor: s.color }}
+                  />
+                  <span className="text-[11px] text-zinc-500">{s.label}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       <ChartContainer
         config={chartConfig}
-        style={{ height: typeof height === 'number' ? `${height}px` : height }}
-        className="w-full"
+        // `aspect-auto` overrides the vendored container's `aspect-video`,
+        // which derived the chart's height from its own width: a wide panel
+        // grew a chart taller than the panel and had the bottom clipped off,
+        // and a narrow one left the room below it empty.
+        className="w-full flex-1 min-h-0 aspect-auto"
       >
         <LineChart data={chartData}>
           <CartesianGrid

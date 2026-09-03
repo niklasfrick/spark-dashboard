@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   combinedGoodput,
   DEFAULT_SLO,
+  formatSloThreshold,
   fractionLe,
   recomputeGoodputPct,
   SLO,
@@ -152,5 +153,24 @@ describe('combinedGoodput', () => {
     // combinedGoodput must still take exactly three dimensions.
     expect(combinedGoodput.length).toBe(3)
     expect(combinedGoodput(99, 95, 88)).toBe(88)
+  })
+})
+
+describe('formatSloThreshold', () => {
+  it('renders a whole number of seconds without a decimal', () => {
+    // The default E2E objective has always read "5s"; tuning another threshold
+    // must not change how this one looks.
+    expect(formatSloThreshold(5000)).toBe('5s')
+    expect(formatSloThreshold(1000)).toBe('1s')
+  })
+
+  it('renders a tuned value to one decimal', () => {
+    expect(formatSloThreshold(2500)).toBe('2.5s')
+    expect(formatSloThreshold(1250)).toBe('1.3s')
+  })
+
+  it('stays in milliseconds below a second', () => {
+    expect(formatSloThreshold(800)).toBe('800ms')
+    expect(formatSloThreshold(50)).toBe('50ms')
   })
 })

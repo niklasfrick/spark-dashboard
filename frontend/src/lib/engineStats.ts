@@ -1,7 +1,7 @@
 /**
  * Pure derivations over engine chart data and histogram percentiles.
  *
- * Lives here rather than beside `EngineCardPrimitives` so that file exports
+ * Lives here rather than beside `EnginePanelPrimitives` so that file exports
  * only components — a file mixing component and non-component exports breaks
  * Vite fast refresh (`react-refresh/only-export-components`).
  */

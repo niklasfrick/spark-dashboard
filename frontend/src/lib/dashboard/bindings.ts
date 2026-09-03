@@ -102,25 +102,29 @@ export function readBinding(raw: unknown): PanelBinding {
 /**
  * Resolves a GPU panel's binding against the GPUs on this host.
  *
- * `pageGpuIndex` is the page-level selection a following panel defers to. A
- * selection that is not on the host is reported as missing rather than nudged to
- * the primary GPU — the page label and the panel's data have to agree.
+ * `pageGpuIndex` is the page-level selection a following panel defers to, null
+ * when there is nothing selected. A selection that is not on the host is
+ * reported as missing rather than nudged to the primary GPU — the page label and
+ * the panel's data have to agree.
  */
 export function resolveGpuBinding<T extends GpuIdentity>(
   binding: PanelBinding,
   gpus: readonly T[],
-  pageGpuIndex: number,
+  pageGpuIndex: number | null,
 ): BindingResolution<T> {
   // Including a binding that names an engine: on a GPU panel that is a corrupt
   // document, and picking some GPU to show anyway is the prohibited failure.
   if (binding.kind !== 'follow' && binding.kind !== 'gpu') return { status: 'unreadable' }
 
+  const index = binding.kind === 'gpu' ? binding.index : pageGpuIndex
+
   // Only a following panel can have nothing to follow. A pin names a GPU, so an
   // empty host makes it missing rather than unselected — the operator asked for
   // something specific and it is not here.
-  if (binding.kind === 'follow' && gpus.length === 0) return { status: 'unselected' }
+  if (index === null || (binding.kind === 'follow' && gpus.length === 0)) {
+    return { status: 'unselected' }
+  }
 
-  const index = binding.kind === 'gpu' ? binding.index : pageGpuIndex
   const target = findGpuByIndex(gpus, index)
   return target ? { status: 'resolved', target } : { status: 'missing', requested: `GPU ${index}` }
 }

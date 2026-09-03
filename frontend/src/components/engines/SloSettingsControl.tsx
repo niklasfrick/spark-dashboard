@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
+import { useDismissablePopover } from '@/hooks/useDismissablePopover'
 import { DEFAULT_SLO, type SloThresholds } from '@/lib/slo'
 
 interface SloSettingsControlProps {
@@ -48,9 +49,8 @@ export function SloSettingsControl({
   onChange,
   onReset,
 }: SloSettingsControlProps) {
-  const [open, setOpen] = useState(false)
+  const { open, setOpen, toggle, containerRef } = useDismissablePopover<HTMLDivElement>()
   const [draft, setDraft] = useState<FieldDraft>(() => toDraft(thresholds))
-  const containerRef = useRef<HTMLDivElement | null>(null)
 
   // Sync the local draft when external thresholds change (e.g. user switches
   // model and the hook reloads stored values). The draft is derived from the
@@ -61,28 +61,6 @@ export function SloSettingsControl({
     setPrevThresholds(thresholds)
     setDraft(toDraft(thresholds))
   }
-
-  // Click-outside + Escape close the popover.
-  useEffect(() => {
-    if (!open) return
-    function onPointerDown(event: MouseEvent | TouchEvent) {
-      if (!containerRef.current) return
-      if (!containerRef.current.contains(event.target as Node)) {
-        setOpen(false)
-      }
-    }
-    function onKey(event: KeyboardEvent) {
-      if (event.key === 'Escape') setOpen(false)
-    }
-    document.addEventListener('mousedown', onPointerDown)
-    document.addEventListener('touchstart', onPointerDown)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onPointerDown)
-      document.removeEventListener('touchstart', onPointerDown)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [open])
 
   const parsed = parseDraft(draft)
   const dirty =
@@ -111,7 +89,7 @@ export function SloSettingsControl({
         aria-haspopup="dialog"
         aria-expanded={open}
         disabled={disabled}
-        onClick={() => setOpen((v) => !v)}
+        onClick={toggle}
         title="Edit SLO thresholds"
         className={`inline-flex items-center justify-center h-6 w-6 rounded-md border transition-colors focus:outline-none focus:ring-1 focus:ring-[#76B900]/60 ${
           disabled

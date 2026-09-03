@@ -288,4 +288,62 @@ describe('useDashboardConfiguration', () => {
 
     expect(result.current.document).toEqual(defaultDashboardDocument())
   })
+
+  it('renders the preset again the moment a reset is accepted', async () => {
+    serveConfiguration({ document: stored })
+    const { result } = await loaded()
+
+    await act(async () => {
+      expect(await result.current.reset()).toBe('reset')
+    })
+
+    expect(result.current.document).toEqual(defaultDashboardDocument())
+    expect(result.current.notices).toEqual([])
+  })
+
+  it('makes no request when asked to reset a read-only instance', async () => {
+    // The same reasoning as a save: the banner already says nothing can be
+    // written, and the request would only fail the same way.
+    const fetchMock = serveConfiguration({ document: stored, readOnly: true })
+    const { result } = await loaded()
+    const readsSoFar = fetchMock.mock.calls.length
+
+    await act(async () => {
+      expect(await result.current.reset()).toBe('read-only')
+    })
+
+    expect(fetchMock.mock.calls).toHaveLength(readsSoFar)
+  })
+
+  it('says so when the reset failed, and keeps showing the stored document', async () => {
+    // A different sentence from a failed save, because a different thing did
+    // not happen: nothing was removed, rather than nothing written.
+    serveConfiguration({ document: stored, deleteStatus: 500 })
+    const { result } = await loaded()
+    const before = result.current.document
+
+    await act(async () => {
+      expect(await result.current.reset()).toBe('failed')
+    })
+
+    expect(result.current.notices).toEqual([{ kind: 'reset-failed' }])
+    expect(result.current.document).toEqual(before)
+  })
+
+  it('is the way back from a document this build cannot read', async () => {
+    // The banner describes a stored document that a reset removed, so the
+    // complaint goes with it — which is what makes a rollback recoverable
+    // without hand-editing a file on the server.
+    serveConfiguration({
+      document: JSON.stringify({ version: DASHBOARD_SCHEMA_VERSION + 5, pages: [] }),
+    })
+    const { result } = await loaded()
+    expect(result.current.notices).not.toEqual([])
+
+    await act(async () => {
+      await result.current.reset()
+    })
+
+    expect(result.current.notices).toEqual([])
+  })
 })

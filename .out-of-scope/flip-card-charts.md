@@ -1,30 +1,44 @@
 # Flip-Card Chart Interaction
 
 The dashboard does not hide time-series charts behind per-card flip/tap
-interactions (card fronts showing values, backs showing charts), and it does
-not take piecemeal layout changes to the current frontend to make single
-screens mobile-friendly.
+interactions (panel fronts showing values, backs showing charts).
 
 ## Why this is out of scope
 
 **At-a-glance philosophy.** The dashboard is designed as a glanceable
 one-pager: every metric and its trend visible simultaneously, with the layout
 itself adapting to available space rather than asking the operator to
-interact. The codebase encodes this intent — `Dashboard.tsx` collapses charts
-and swaps gauges for compact bars specifically so "the dashboard stays a
-one-pager when vertical space is tight". A flip interaction inverts that
-model: chart data becomes invisible until each card is individually tapped,
-and only one face of a card can be seen at a time. This was not rejected on
-paper — the full implementation (PR #46) was built, brought up on the DGX
-Spark against live engines, and evaluated in the browser before the
-maintainer decided against the interaction.
+interact. The codebase still encodes this intent — a panel measures its own
+box and drops to a compact value-only rendering when there is no room to chart
+in (`components/grid/panels/mode.ts`), rather than hiding the chart behind a
+gesture. A flip interaction inverts that model: chart data becomes invisible
+until each panel is individually tapped, and only one face can be seen at a
+time. This was not rejected on paper — the full implementation (PR #46) was
+built, brought up on the DGX Spark against live engines, and evaluated in the
+browser before the maintainer decided against the interaction.
 
-**Superseded by the frontend rework.** A frontend rework is upcoming.
-Incremental interaction patterns and responsive-layout patches (e.g. scoping
-the viewport-filling flex constraints to `md:` so mobile scrolls) layered on
-the current component tree will be obsoleted by it, so they are not accepted
-in the meantime. Mobile usability itself is not rejected as a goal — it is
-expected to be addressed wholesale by the rework, not via spot fixes.
+**What changed in 2026-09: the layout is no longer fixed.** This record used
+to reject piecemeal layout and mobile patches on the grounds that a rework was
+coming and would obsolete them. The rework has landed (#68, spec #70, cutover
+#86): the fixed dashboard is gone, and the dashboard is now a grid of panels
+an operator arranges themselves, on pages they name, saved on the server.
+
+That reasoning is therefore spent, and **layout contributions are no longer
+turned away by this record**. Two things follow from the new design instead:
+
+- **Arrangement is configuration, not code.** Wanting different panels, sizes
+  or ordering is answered by editing the dashboard and saving it — including
+  a page with no log panel for a wall display, or one that gives temperature
+  and power the whole screen. A PR is only the answer when the panel or the
+  behavior does not exist yet.
+- **The mobile layout is derived, not authored.** Panels collapse into a
+  single column in desktop reading order below the breakpoint. Hand-authored
+  phone layouts remain out of scope (see the spec), but mobile usability
+  itself was delivered by the rework rather than deferred by it.
+
+The flip interaction above stays rejected on its own merits — it is a
+philosophy decision about glanceability, not a sequencing one, and nothing
+about the rework changed it.
 
 ## Prior requests
 

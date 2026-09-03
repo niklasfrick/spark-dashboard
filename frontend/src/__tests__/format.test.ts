@@ -1,28 +1,15 @@
 import { describe, it, expect } from 'vitest'
 import {
+  formatAge,
   formatBytes,
-  formatGiB,
   formatCompactTokens,
   formatAcceptanceLength,
-  formatGpuIndexes,
+  formatEndpoint,
+  engineDescription,
 } from '../lib/format'
 
 const GIB = 1_073_741_824
 const MIB = 1_048_576
-
-describe('formatGiB', () => {
-  it('renders 128 GiB as "128 GB" (matches DGX Spark unified pool)', () => {
-    expect(formatGiB(128 * GIB)).toBe('128 GB')
-  })
-
-  it('rounds to integer by default', () => {
-    expect(formatGiB(127.6 * GIB)).toBe('128 GB')
-  })
-
-  it('respects the decimals argument', () => {
-    expect(formatGiB(2.5 * GIB, 1)).toBe('2.5 GB')
-  })
-})
 
 describe('formatBytes', () => {
   it('uses binary GiB under the "GB" label', () => {
@@ -75,17 +62,52 @@ describe('formatAcceptanceLength', () => {
   })
 })
 
-describe('formatGpuIndexes', () => {
-  it('renders a single index as "GPU N"', () => {
-    expect(formatGpuIndexes([0])).toBe('GPU 0')
-    expect(formatGpuIndexes([3])).toBe('GPU 3')
+describe('formatEndpoint', () => {
+  it('keeps the host and port an operator configured', () => {
+    expect(formatEndpoint('http://localhost:8000')).toBe('localhost:8000')
+    expect(formatEndpoint('https://gpu-node-2.internal:8443/v1')).toBe('gpu-node-2.internal:8443')
   })
 
-  it('joins multiple indexes with "+" (tensor parallel)', () => {
-    expect(formatGpuIndexes([0, 1])).toBe('GPU 0+1')
+  it('keeps a default port that the URL leaves implicit', () => {
+    // Two engines can differ only by scheme, so dropping the host would be
+    // worse than showing no port.
+    expect(formatEndpoint('http://localhost')).toBe('localhost')
   })
 
-  it('renders an empty string when no indexes are known', () => {
-    expect(formatGpuIndexes([])).toBe('')
+  it('falls back to the endpoint as stored when it is not a URL', () => {
+    // The operator has to be able to match the label against their config,
+    // whatever shape the endpoint came in.
+    expect(formatEndpoint('localhost:8000')).toBe('localhost:8000')
+    expect(formatEndpoint('')).toBe('')
+  })
+})
+
+describe('formatAge', () => {
+  it('reads in the coarsest unit that still says when', () => {
+    expect(formatAge(59_000, 60_000)).toBe('1s')
+    expect(formatAge(0, 59_000)).toBe('59s')
+    expect(formatAge(0, 60_000)).toBe('1m')
+    expect(formatAge(0, 59 * 60_000)).toBe('59m')
+    expect(formatAge(0, 60 * 60_000)).toBe('1h')
+  })
+
+  it('rounds down, so nothing reads as older than it is', () => {
+    expect(formatAge(0, 1999)).toBe('1s')
+  })
+
+  it('does not go negative on an event stamped past the newest sample', () => {
+    // Snapshots coalesce, so an event can carry a timestamp the reference
+    // reading has not caught up to yet.
+    expect(formatAge(5000, 1000)).toBe('0s')
+  })
+})
+
+describe('engineDescription', () => {
+  it('names the provider and the instance', () => {
+    // Both halves are needed: a host can run several engines of one provider,
+    // which is exactly when a panel has to say which one it shows.
+    expect(engineDescription({ engine_type: 'Vllm', endpoint: 'http://localhost:8001' })).toBe(
+      'vLLM localhost:8001',
+    )
   })
 })

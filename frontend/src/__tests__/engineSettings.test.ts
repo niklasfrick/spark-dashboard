@@ -5,7 +5,6 @@ import {
   pickLatencyValue,
   latencyModeLabel,
 } from '@/lib/latencyMode'
-import { parseRotationState, serializeRotationState } from '@/lib/rotation'
 import { computeTrend, percentileSubline, type ChartDataPoint } from '@/lib/engineStats'
 import { fmtVal, fmtInt } from '@/lib/format'
 
@@ -56,29 +55,6 @@ describe('latencyModeLabel', () => {
   it('labels avg in lowercase and passes quantiles through', () => {
     expect(latencyModeLabel('avg')).toBe('avg')
     expect(latencyModeLabel('p99')).toBe('p99')
-  })
-})
-
-describe('parseRotationState', () => {
-  it("reads 'off' as disabled while keeping the default interval", () => {
-    expect(parseRotationState('off')).toEqual({ enabled: false, interval: 10000 })
-  })
-
-  it('reads a supported interval as enabled', () => {
-    expect(parseRotationState('3000')).toEqual({ enabled: true, interval: 3000 })
-    expect(parseRotationState('20000')).toEqual({ enabled: true, interval: 20000 })
-  })
-
-  it('falls back to the default interval for junk or absent values', () => {
-    expect(parseRotationState(null)).toEqual({ enabled: true, interval: 10000 })
-    expect(parseRotationState('7500')).toEqual({ enabled: true, interval: 10000 })
-  })
-
-  it('round-trips through serialization', () => {
-    const off = { enabled: false, interval: 5000 } as const
-    expect(parseRotationState(serializeRotationState(off)).enabled).toBe(false)
-    const on = { enabled: true, interval: 5000 } as const
-    expect(parseRotationState(serializeRotationState(on))).toEqual(on)
   })
 })
 

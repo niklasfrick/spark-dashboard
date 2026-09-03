@@ -28,11 +28,13 @@ Thumbs.db
 
 # Splunk stuff
 SplunkHEC-spec.md
+Splunk-App/
 
 # Local tooling
 deploy-local.sh
 
-# SPLUNK STUFF
-Splunk-App/
 # Generated knowledge graph (local, not versioned)
 graphify-out/
+
+# Playwright CLI output (may contain credentials)
+.playwright-cli/

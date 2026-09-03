@@ -33,25 +33,10 @@ export function engineKey(engine: EngineIdentity): string {
 }
 
 /**
- * Resolve an engine key back to its snapshot. Returns undefined when the key
- * names an engine that is not in the list — restored from localStorage before
- * any metrics arrived, or stopped since it was selected. Callers decide what
- * to fall back to; substituting a different engine here would silently show
- * one engine's numbers under another's label.
- */
-export function findEngineByKey<T extends EngineIdentity>(
-  engines: readonly T[],
-  key: string | null | undefined,
-): T | undefined {
-  if (!key) return undefined
-  return engines.find((engine) => engineKey(engine) === key)
-}
-
-/**
  * Resolve an endpoint to its engine snapshot — the direction panel bindings
  * and the log socket use, since the backend addresses engines by endpoint.
- * Undefined when the bound engine is absent, same contract as
- * `findEngineByKey`.
+ * Undefined when the bound engine is absent: substituting a different engine
+ * here would silently show one engine's numbers under another's label.
  */
 export function findEngineByEndpoint<T extends Pick<EngineSnapshot, 'endpoint'>>(
   engines: readonly T[],

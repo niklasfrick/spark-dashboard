@@ -31,6 +31,15 @@ export default defineConfig({
     projects: [
       {
         ...appPipeline,
+        resolve: {
+          alias: {
+            ...appPipeline.resolve.alias,
+            // The one shared grid-library substitute (seam 3): jsdom has no
+            // layout engine, so the unit project never loads the real thing.
+            // The browser project keeps the real library — that is its point.
+            'gridstack/dist/react': path.resolve(__dirname, './src/test/gridstack.tsx'),
+          },
+        },
         test: {
           ...shared,
           name: 'unit',

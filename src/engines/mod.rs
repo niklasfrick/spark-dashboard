@@ -464,6 +464,35 @@ pub fn create_adapter(
 // Engine collector loop
 // ---------------------------------------------------------------------------
 
+/// Attaches a newly discovered container to an engine that had none, reporting
+/// whether it changed anything.
+///
+/// The engine map assigns `container_id` only for a key it is inserting for the
+/// first time, and an engine can exist before its container is known: one
+/// configured with `--engine-url` is seeded before any detection has run at
+/// all, and a containerized one can be found by its host process before the
+/// Docker scan reaches it. Without this back-fill such an engine keeps
+/// `container_id: None` for its whole life, and the log viewer — which resolves
+/// an endpoint to a container through exactly this field — can never stream it.
+///
+/// An engine that already has a container keeps it: re-pointing a live log
+/// stream at a different container mid-session is not something a detection
+/// tick should do quietly.
+fn adopt_container(state: &mut EngineState, container_id: Option<&str>) -> bool {
+    if state.container_id.is_some() {
+        return false;
+    }
+    let Some(id) = container_id else {
+        return false;
+    };
+
+    state.container_id = Some(id.to_string());
+    // Learning the container also settles where the engine runs — a manual
+    // override is seeded as Native because nothing knew any better yet.
+    state.deployment_mode = DeploymentMode::Docker;
+    true
+}
+
 /// Runs the engine detection and metrics collection loop.
 ///
 /// This function is spawned as a background tokio task. It:
@@ -541,6 +570,14 @@ pub async fn engine_collector_loop(
                     // Refresh the PID set every detection tick — engines
                     // restart and fork workers over their lifetime.
                     state.pids = d.pids.clone();
+
+                    if adopt_container(state, d.container_id.as_deref()) {
+                        tracing::info!(
+                            "Engine at {} resolved to container {:?}",
+                            d.endpoint,
+                            d.container_id,
+                        );
+                    }
                 }
 
                 // Engines absent from this pass (stopped, restarting, probe
@@ -754,6 +791,43 @@ mod tests {
         let r =
             ApiKeyResolver::from_pairs(&["http://a:8000".into()], &["".into()], Some("".into()));
         assert_eq!(r.resolve("http://a:8000"), None);
+    }
+
+    #[test]
+    fn a_container_is_adopted_by_an_engine_that_had_none() {
+        // The manual-override case: an engine configured with --engine-url is
+        // seeded before detection has run, so it starts with no container and
+        // its logs cannot be resolved until one is attached.
+        let mut s = state();
+        assert_eq!(s.container_id, None);
+        assert_eq!(s.deployment_mode, DeploymentMode::Native);
+
+        assert!(adopt_container(&mut s, Some("abc123")));
+
+        assert_eq!(s.container_id.as_deref(), Some("abc123"));
+        // Learning the container settles where the engine runs, too.
+        assert_eq!(s.deployment_mode, DeploymentMode::Docker);
+    }
+
+    #[test]
+    fn an_engine_keeps_the_container_it_already_has() {
+        // Re-pointing a live log stream at another container mid-session is not
+        // something a detection tick should do quietly.
+        let mut s = state();
+        adopt_container(&mut s, Some("first"));
+
+        assert!(!adopt_container(&mut s, Some("second")));
+        assert_eq!(s.container_id.as_deref(), Some("first"));
+    }
+
+    #[test]
+    fn a_native_engine_is_left_alone_when_detection_reports_no_container() {
+        let mut s = state();
+
+        assert!(!adopt_container(&mut s, None));
+
+        assert_eq!(s.container_id, None);
+        assert_eq!(s.deployment_mode, DeploymentMode::Native);
     }
 
     #[test]

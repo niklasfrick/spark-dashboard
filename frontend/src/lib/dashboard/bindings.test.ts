@@ -119,6 +119,19 @@ describe('resolveGpuBinding', () => {
     expect(resolveGpuBinding(FOLLOW, [], 0)).toEqual({ status: 'unselected' })
   })
 
+  it('reports a page with no GPU selected as having nothing selected', () => {
+    expect(resolveGpuBinding(FOLLOW, gpus, null)).toEqual({ status: 'unselected' })
+  })
+
+  it('still resolves a pin on a page with no GPU selected', () => {
+    // A pinned panel does not follow, so it has nothing to lose by the page
+    // pointing nowhere.
+    expect(resolveGpuBinding({ kind: 'gpu', index: 1 }, gpus, null)).toEqual({
+      status: 'resolved',
+      target: gpus[1],
+    })
+  })
+
   it('still reports a pin against an empty host as missing', () => {
     // A pin named something specific, so it is missing rather than unselected —
     // "nothing to follow" is only a state a following panel can be in.
