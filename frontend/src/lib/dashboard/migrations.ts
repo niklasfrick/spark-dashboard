@@ -1,10 +1,12 @@
 /**
  * Bringing an older document forward to the version this build reads.
  *
- * There are no migrations yet, and there will not be one until a change is not
- * additive — this is the lazy half of the versioning decision. The eager half is
- * that the version field ships from day one, because it cannot be added later
- * without sniffing at a document's shape and guessing what wrote it.
+ * An additive change gets an identity migration — the bump is what protects the
+ * new field from an older build's lossy save, and the migration merely walks
+ * the version forward. Rewriting waits for a change that is not additive; this
+ * is the lazy half of the versioning decision. The eager half is that the
+ * version field ships from day one, because it cannot be added later without
+ * sniffing at a document's shape and guessing what wrote it.
  *
  * Two rules hold whatever the migrations end up doing:
  *
@@ -40,13 +42,23 @@ export interface MigrationPath {
 }
 
 /**
- * The real path: empty, targeting the current version.
+ * v1 → v2: the per-page `source` arrived. Additive — an absent source means
+ * automatic, which is exactly what every v1 page was — so nothing is rewritten;
+ * the runner stamps the version.
+ */
+const addPageSource: DashboardMigration = {
+  from: 1,
+  migrate: (document) => ({ ...document }),
+}
+
+/**
+ * The real path, targeting the current version.
  *
  * Adding a migration means appending it here, bumping
  * `DASHBOARD_SCHEMA_VERSION`, and adding a fixture to `migrations.test.ts`.
  */
 export const DASHBOARD_MIGRATION_PATH: MigrationPath = {
-  migrations: [],
+  migrations: [addPageSource],
   target: DASHBOARD_SCHEMA_VERSION,
 }
 

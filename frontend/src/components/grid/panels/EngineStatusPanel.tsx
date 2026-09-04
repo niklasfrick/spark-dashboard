@@ -1,9 +1,8 @@
 import { getProviderLogo } from '@/lib/providerLogo'
-import { engineDisplayName, formatEndpoint, formatGpuIndexes } from '@/lib/format'
+import { engineDisplayName, formatEndpoint, formatGpuIndexes, shortModelName } from '@/lib/format'
 import type { EngineSnapshot } from '@/types/metrics'
 import { DeploymentChip, EngineChip, ProviderMark } from './engineIdentity'
-import { shortModelName } from './engineLabel'
-import { EnginePanelNotice } from './PanelNotice'
+import { EnginePanelNotice, PanelNotice } from './PanelNotice'
 import { usePanelDevice } from '../panelDevice'
 import { useEngineTarget } from './useEnginePanel'
 import type { PanelContentProps } from '../panelRegistry'
@@ -27,6 +26,18 @@ export function EngineStatusPanel({ panel }: PanelContentProps) {
   // there are none.
   const target = useEngineTarget(panel)
   usePanelDevice(target.status === 'resolved' ? formatEndpoint(target.engine.endpoint) : null)
+
+  // The identity of "all models" is no identity at all: there is no one model,
+  // status or deployment to describe. The "All Engines" overview panel is the
+  // panel for that question, so the notice points at it rather than pretending.
+  if (target.status === 'aggregate') {
+    return (
+      <PanelNotice>
+        This page shows all models. Engine identity is per-engine — pin this panel to one engine,
+        or use the “All Engines” panel.
+      </PanelNotice>
+    )
+  }
 
   if (target.status !== 'resolved') return <EnginePanelNotice resolution={target} />
 

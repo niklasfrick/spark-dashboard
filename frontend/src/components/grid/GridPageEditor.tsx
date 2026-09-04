@@ -12,10 +12,12 @@ import {
   repointPanel,
   setPanelWindow,
 } from '@/lib/dashboard/editing'
+import type { PageSource } from '@/lib/dashboard/pageSource'
 import { defaultPanelTitle, type PanelType } from '@/lib/dashboard/panels'
 import type { DashboardPage, DashboardPanel } from '@/lib/dashboard/schema'
 import type { TimeWindow } from '@/types/events'
 import { EditModeBar, type Refusal } from './EditModeBar'
+import { PageConfig } from './PageConfig'
 import { PanelSettings } from './PanelSettings'
 import { isNarrow } from './breakpoint'
 import { GridPage, type GridEditing, type PanelChrome } from './GridPage'
@@ -39,6 +41,12 @@ interface GridPageEditorProps {
   /** Nothing can be written on this instance; the standing banner says why. */
   readOnly: boolean
   onSave: (panels: DashboardPanel[]) => Promise<SaveOutcome['status']>
+  /**
+   * Writes the page's source — what its following panels show by default.
+   * Immediate, like a page rename; not part of the edit session. Absent means
+   * nowhere to write it, and the control is withheld rather than dead.
+   */
+  onChangeSource?: (source: PageSource | null) => Promise<SaveOutcome['status']>
   /**
    * Whether a session is open, for the page list in the header. The session is a
    * working copy that dies with this component, so switching pages while one is
@@ -66,6 +74,7 @@ export function GridPageEditor({
   page,
   readOnly,
   onSave,
+  onChangeSource,
   onEditingChange,
 }: GridPageEditorProps) {
   const [session, setSession] = useState<EditSession | null>(null)
@@ -207,6 +216,11 @@ export function GridPageEditor({
         saving={saving}
         narrow={narrow}
         refused={refused}
+        pageConfig={
+          onChangeSource && (
+            <PageConfig source={page.source} readOnly={readOnly} onChange={onChangeSource} />
+          )
+        }
         onBegin={() => setSession({ panels: page.panels, refused: null, configuringId: null })}
         onAdd={add}
         onSave={() => void save()}

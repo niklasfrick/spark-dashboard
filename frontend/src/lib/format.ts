@@ -194,6 +194,16 @@ export function engineDescription(engine: EngineIdentity): string {
   return `${engineDisplayName(engine.engine_type)} ${formatEndpoint(engine.endpoint)}`
 }
 
+/**
+ * Strip the `Organization/` prefix off a HuggingFace-style id, leaving the
+ * model itself: `Qwen/Qwen3-8B` reads as `Qwen3-8B`. Used wherever the
+ * organization is already said by a provider mark or does not matter, so the
+ * width a long model id needs is not spent twice.
+ */
+export function shortModelName(name: string): string {
+  return name.includes('/') ? name.slice(name.lastIndexOf('/') + 1) : name
+}
+
 /** Apply a formatter to a nullable metric, rendering '--' when absent.
  *  The engine tiles' universal "no data yet" placeholder. */
 export function fmtVal(v: number | null, fmt: (n: number) => string): string {

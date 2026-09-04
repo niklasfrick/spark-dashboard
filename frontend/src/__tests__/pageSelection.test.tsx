@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { act, render, screen, within } from '@testing-library/react'
 import { useEffect } from 'react'
 import { GridPanel } from '@/components/grid/GridPanel'
+import { LogStreamProvider } from '@/hooks/LogStreamProvider'
 import { PageSelectionProvider } from '@/hooks/PageSelectionProvider'
 import { MetricsStoreProvider } from '@/hooks/MetricsStoreProvider'
 import { useMetricsStore } from '@/hooks/useMetricsStore'
@@ -179,6 +180,60 @@ describe('the page-level GPU selection', () => {
 
     click('Select GPU default')
     expect(within(region('GPU Utilization')).getByText('11')).toBeInTheDocument()
+  })
+})
+
+describe('a page configured for all models', () => {
+  function AllModelsPage() {
+    return (
+      <MetricsStoreProvider>
+        {/* The log stream store, because choosing one engine resolves the log
+            panel to a real stream — exactly what the yield-to-choice spec does. */}
+        <LogStreamProvider>
+          <Ingest />
+          <PageSelectionProvider source={{ kind: 'all' }}>
+            <SelectEngine endpoint={ALPHA} />
+            <GridPanel panel={panel('decode', 'engine-decode-throughput')} />
+            <GridPanel panel={panel('status', 'engine-status')} />
+            <GridPanel panel={panel('logs', 'logs')} />
+            <GridPanel
+              panel={{
+                ...panel('pinned-engine', 'engine-decode-throughput'),
+                title: 'Pinned to Alpha',
+                binding: { kind: 'engine', endpoint: ALPHA },
+              }}
+            />
+          </PageSelectionProvider>
+        </LogStreamProvider>
+      </MetricsStoreProvider>
+    )
+  }
+
+  it('shows the combined figures on following panels and leaves pins alone', () => {
+    render(<AllModelsPage />)
+
+    const decode = region('Decode Throughput')
+    expect(within(decode).getByText('760.0')).toBeInTheDocument()
+    // The combined figure wears the aggregate's own name, never an engine's.
+    expect(within(decode).getByText('All models')).toBeInTheDocument()
+    expect(within(region('Pinned to Alpha')).getByText('120.0')).toBeInTheDocument()
+  })
+
+  it('explains itself on the panels that are per-engine by nature', () => {
+    render(<AllModelsPage />)
+
+    expect(
+      within(region('Engine')).getByText(/Engine identity is per-engine/),
+    ).toBeInTheDocument()
+    expect(within(region('Logs')).getByText(/Logs are per-engine/)).toBeInTheDocument()
+  })
+
+  it('yields to a session choice, which is the operator asking for one engine now', () => {
+    render(<AllModelsPage />)
+
+    click(`Select ${ALPHA}`)
+
+    expect(within(region('Decode Throughput')).getByText('120.0')).toBeInTheDocument()
   })
 })
 

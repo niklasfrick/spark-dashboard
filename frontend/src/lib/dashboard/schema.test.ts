@@ -209,6 +209,39 @@ describe('parseDashboardDocument', () => {
     expect(document!.pages[0].panels[1].title).toBeUndefined()
   })
 
+  it('keeps a page source naming an engine or all models', () => {
+    const document = parseDashboardDocument(
+      rawDocument({
+        pages: [
+          { id: 'qwen', name: 'Qwen', source: { kind: 'engine', endpoint: 'http://localhost:8000' }, panels: [] },
+          { id: 'global', name: 'Global', source: { kind: 'all' }, panels: [] },
+        ],
+      }),
+    )
+
+    expect(document!.pages[0].source).toEqual({ kind: 'engine', endpoint: 'http://localhost:8000' })
+    expect(document!.pages[1].source).toEqual({ kind: 'all' })
+  })
+
+  it('reads an absent or unreadable page source as automatic', () => {
+    // Automatic is the state every page began in, and no panel label promises
+    // the lost target — a following panel names whatever it resolves to.
+    const document = parseDashboardDocument(
+      rawDocument({
+        pages: [
+          { id: 'a', name: 'A', panels: [] },
+          { id: 'b', name: 'B', source: { kind: 'engine' }, panels: [] },
+          { id: 'c', name: 'C', source: 'all', panels: [] },
+          { id: 'd', name: 'D', source: { kind: 'everything' }, panels: [] },
+        ],
+      }),
+    )
+
+    for (const page of document!.pages) {
+      expect(page.source).toBeUndefined()
+    }
+  })
+
   it('drops a panel that is not an object at all', () => {
     const document = parseDashboardDocument(
       rawDocument({
@@ -301,6 +334,24 @@ describe('serializeDashboardDocument', () => {
     expect(JSON.parse(serializeDashboardDocument(document)).pages[0].panels[0]).not.toHaveProperty(
       'title',
     )
+  })
+
+  it('round-trips a page source and omits one that was never set', () => {
+    const document = parseDashboardDocument(
+      rawDocument({
+        pages: [
+          { id: 'auto', name: 'Auto', panels: [] },
+          { id: 'global', name: 'Global', source: { kind: 'all' }, panels: [] },
+          { id: 'qwen', name: 'Qwen', source: { kind: 'engine', endpoint: 'http://localhost:8000' }, panels: [] },
+        ],
+      }),
+    )!
+    const written = JSON.parse(serializeDashboardDocument(document))
+
+    expect(written.pages[0]).not.toHaveProperty('source')
+    expect(written.pages[1].source).toEqual({ kind: 'all' })
+    expect(written.pages[2].source).toEqual({ kind: 'engine', endpoint: 'http://localhost:8000' })
+    expect(parseDashboardDocument(written)).toEqual(document)
   })
 })
 

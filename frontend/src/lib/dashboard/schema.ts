@@ -23,18 +23,23 @@
 import { readBinding, type PanelBinding } from './bindings'
 import { readGeometry, type PanelGeometry } from './grid'
 import { isRecord } from './json'
+import { readPageSource, type PageSource } from './pageSource'
 import { defaultPanelTitle } from './panels'
 import { TIME_WINDOW_SECONDS, type TimeWindow } from '@/types/events'
 
 /**
  * The schema version this build reads and writes.
  *
- * Bump it when a change is not additive, and add the migration that goes with
- * it. There is no down-migration: a document from a newer version falls back to
- * the preset with a banner, which is what makes rolling the dashboard back
- * recoverable.
+ * Bump it for **every** shape change, additive ones included, and add the
+ * migration that goes with it — an additive migration is a no-op, but the bump
+ * is what keeps an older build from parsing the document, dropping the field it
+ * has never heard of, and saving the loss. There is no down-migration: a
+ * document from a newer version falls back to the preset with a banner, which
+ * is what makes rolling the dashboard back recoverable.
+ *
+ * - v2 added the optional per-page `source` (`lib/dashboard/pageSource`).
  */
-export const DASHBOARD_SCHEMA_VERSION = 1
+export const DASHBOARD_SCHEMA_VERSION = 2
 
 /** Time window a panel's chart covers when the operator has not chosen one. */
 export const DEFAULT_TIME_WINDOW: TimeWindow = '5m'
@@ -53,6 +58,11 @@ export interface DashboardPage {
    */
   id: string
   name: string
+  /**
+   * What the page's following panels show by default. Absent means automatic —
+   * the host's own default — which is where every page starts.
+   */
+  source?: PageSource
   panels: DashboardPanel[]
 }
 
@@ -108,6 +118,16 @@ export function serializeDashboardDocument(document: DashboardDocument): string 
     pages: document.pages.map((page) => ({
       id: page.id,
       name: page.name,
+      // Omitted rather than written as a sentinel, so "never configured" stays
+      // what absence means everywhere else in the document.
+      ...(page.source === undefined
+        ? {}
+        : {
+            source:
+              page.source.kind === 'engine'
+                ? { kind: 'engine', endpoint: page.source.endpoint }
+                : { kind: 'all' },
+          }),
       panels: page.panels.map((panel) => ({
         id: panel.id,
         type: panel.type,
@@ -134,10 +154,12 @@ export function panelTitle(panel: Pick<DashboardPanel, 'type' | 'title'>): strin
 
 function readPage(raw: Record<string, unknown>): DashboardPage {
   const panels = Array.isArray(raw.panels) ? raw.panels.filter(isRecord).map(readPanel) : []
+  const source = readPageSource(raw.source)
 
   return {
     id: readId(raw.id),
     name: readText(raw.name) ?? '',
+    ...(source === undefined ? {} : { source }),
     panels: withUniqueIds(panels, 'panel'),
   }
 }

@@ -1,7 +1,7 @@
 import { LogConsole } from '@/components/LogConsole'
 import { useLogStream } from '@/hooks/useLogStream'
 import { engineLabel } from './engineLabel'
-import { EnginePanelNotice } from './PanelNotice'
+import { EnginePanelNotice, PanelNotice } from './PanelNotice'
 import { useEngineTarget, type ResolvedEngineTarget } from './useEnginePanel'
 import type { PanelContentProps } from '../panelRegistry'
 
@@ -23,6 +23,18 @@ export function LogsPanel({ panel }: PanelContentProps) {
   // an operator opens its logs. Gating the panel on availability would hide the
   // output that explains why the engine is in that state.
   const target = useEngineTarget(panel)
+
+  // A log stream is one container's output; interleaving several would produce
+  // a transcript no engine ever wrote. So a page showing all models has no
+  // stream for a following log panel, and the way to one is a pin.
+  if (target.status === 'aggregate') {
+    return (
+      <PanelNotice>
+        This page shows all models. Logs are per-engine — pin this panel to one engine.
+      </PanelNotice>
+    )
+  }
+
   if (target.status !== 'resolved') return <EnginePanelNotice resolution={target} />
 
   // The stream is subscribed one component down, so switching engines remounts
