@@ -1,4 +1,4 @@
-import { Settings2 } from 'lucide-react'
+import { Settings2, X } from 'lucide-react'
 import { useState } from 'react'
 import { isKnownPanelType } from '@/lib/dashboard/panels'
 import { panelTitle, type DashboardPanel } from '@/lib/dashboard/schema'
@@ -16,7 +16,7 @@ import { renderPanelContent } from './panelRegistry'
  * pointer — the drag would start either way, since the grid listens on the frame
  * and the event bubbles, but a chart that pops a tooltip under a panel in flight
  * is noise the operator did not ask for. The header keeps its pointer, because
- * that is where the panel's own settings are opened from; the grid library
+ * that is where the panel's own settings and removal live; the grid library
  * declines to start a drag on a button, so the two do not fight.
  */
 export function GridPanel({
@@ -24,12 +24,14 @@ export function GridPanel({
   editing = false,
   configuring = false,
   onConfigure,
+  onRemove,
 }: {
   panel: DashboardPanel
   editing?: boolean
   /** This panel's settings are the ones open, so its frame says so. */
   configuring?: boolean
   onConfigure?: () => void
+  onRemove?: () => void
 }) {
   const title = panelTitle(panel)
   // Reported up by the content, which is the only thing that knows what its
@@ -67,6 +69,16 @@ export function GridPanel({
             }`}
           >
             <Settings2 aria-hidden="true" className="w-3 h-3" />
+          </button>
+        )}
+        {editing && onRemove && (
+          <button
+            type="button"
+            aria-label={`Remove ${title}`}
+            onClick={onRemove}
+            className={`${onConfigure ? '' : 'ml-auto '}shrink-0 rounded p-0.5 text-red-500 hover:text-red-400 transition-colors`}
+          >
+            <X aria-hidden="true" className="w-3 h-3" />
           </button>
         )}
       </div>

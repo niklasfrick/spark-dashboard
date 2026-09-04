@@ -80,6 +80,8 @@ export interface PanelChrome {
   /** The panel whose settings are open, or null while none are. */
   configuringId: string | null
   onConfigure: (panelId: string) => void
+  /** The red X on the frame: take this panel off the page being edited. */
+  onRemove: (panelId: string) => void
 }
 
 /**
@@ -227,6 +229,7 @@ export function GridPage({
                 editing={Boolean(editing)}
                 configuring={chrome?.configuringId === panel.id}
                 onConfigure={chrome && (() => chrome.onConfigure(panel.id))}
+                onRemove={chrome && (() => chrome.onRemove(panel.id))}
               />
             </GridStackItem>
           ))}
