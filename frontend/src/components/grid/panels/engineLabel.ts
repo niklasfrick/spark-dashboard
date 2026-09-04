@@ -1,4 +1,4 @@
-import { engineDescription, shortModelName } from '@/lib/format'
+import { engineDescription, modelMetadataWarning, shortModelName } from '@/lib/format'
 import { getProviderLogo, type ProviderLogo } from '@/lib/providerLogo'
 import type { AggregateEngineTarget, ResolvedEngineTarget } from './useEnginePanel'
 
@@ -33,6 +33,10 @@ export interface EngineIdentity {
   /** The provider of that model. Null on a single-engine host, and for a model
    *  no shipped provider is recognized from. */
   logo: ProviderLogo | null
+  /** Why `model` may be wrong: the engine refused to say what it serves, so
+   *  the name (if any) is only the launch command line's word for it. Null
+   *  when there is nothing to warn about. */
+  modelWarning: string | null
 }
 
 /**
@@ -57,15 +61,19 @@ export function engineIdentity(
       label: `${resolution.running} of ${resolution.total} serving`,
       model: 'All models',
       logo: null,
+      modelWarning: null,
     }
   }
 
-  if (!resolution.multiEngine) return { label: null, model: null, logo: null }
+  if (!resolution.multiEngine) {
+    return { label: null, model: null, logo: null, modelWarning: null }
+  }
 
   const { model } = resolution.engine
   return {
     label: engineDescription(resolution.engine),
     model: model?.name ? shortModelName(model.name) : null,
     logo: getProviderLogo(model?.name),
+    modelWarning: modelMetadataWarning(resolution.engine.model_metadata_error),
   }
 }

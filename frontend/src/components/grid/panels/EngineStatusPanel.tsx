@@ -1,5 +1,11 @@
 import { getProviderLogo } from '@/lib/providerLogo'
-import { engineDisplayName, formatEndpoint, formatGpuIndexes, shortModelName } from '@/lib/format'
+import {
+  engineDisplayName,
+  formatEndpoint,
+  formatGpuIndexes,
+  modelMetadataWarning,
+  shortModelName,
+} from '@/lib/format'
 import type { EngineSnapshot } from '@/types/metrics'
 import { DeploymentChip, EngineChip, ProviderMark } from './engineIdentity'
 import { EnginePanelNotice, PanelNotice } from './PanelNotice'
@@ -47,11 +53,18 @@ export function EngineStatusPanel({ panel }: PanelContentProps) {
 function EngineIdentity({ engine }: { engine: EngineSnapshot }) {
   const { model } = engine
   const logo = getProviderLogo(model?.name)
+  const warning = modelMetadataWarning(engine.model_metadata_error)
   // The model is the headline; the endpoint is already on the frame's title
   // row, so repeating it here would spend the panel's widest line on it twice.
   // With no model to name, the absence is the headline — it is the thing an
-  // operator has to act on, not a footnote under a blank line.
-  const headline = model?.name ? shortModelName(model.name) : 'No model loaded'
+  // operator has to act on, not a footnote under a blank line. When the
+  // engine refused to say, the refusal is a better headline than a generic
+  // absence: the model may well be loaded, only its name is unreadable.
+  const headline = model?.name
+    ? shortModelName(model.name)
+    : warning
+      ? 'Model name unavailable'
+      : 'No model loaded'
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-2 overflow-y-auto">
@@ -69,6 +82,16 @@ function EngineIdentity({ engine }: { engine: EngineSnapshot }) {
           </p>
         </div>
       </div>
+
+      {/* The warning accompanies whatever name resolved rather than replacing
+          it: the fallback from the launch command line is still the best
+          guess there is, but an operator has to know it is only a guess —
+          and how to make it not one. */}
+      {warning && (
+        <p role="alert" className="shrink-0 text-[11px] leading-snug text-amber-200">
+          {warning}
+        </p>
+      )}
 
       {/* Everything the backend could tell us about the deployment and the
           weights, in the order the fixed dashboard showed it. Each is omitted

@@ -6,6 +6,7 @@ import {
   formatAcceptanceLength,
   formatEndpoint,
   engineDescription,
+  modelMetadataWarning,
 } from '../lib/format'
 
 const GIB = 1_073_741_824
@@ -109,5 +110,22 @@ describe('engineDescription', () => {
     expect(engineDescription({ engine_type: 'Vllm', endpoint: 'http://localhost:8001' })).toBe(
       'vLLM localhost:8001',
     )
+  })
+})
+
+describe('modelMetadataWarning', () => {
+  it('warns only on the auth rejection, which the operator can fix dashboard-side', () => {
+    expect(modelMetadataWarning('AuthRequired')).toBe(
+      'Engine requires authentication — configure the provider API key to read the model name.',
+    )
+  })
+
+  it('stays silent for every non-auth reason', () => {
+    // A merely unreachable /v1/models is already told by the engine status,
+    // and a key would not help — warning here would send an operator fixing
+    // the wrong thing. Absent covers older backends without the field.
+    expect(modelMetadataWarning('Unavailable')).toBeNull()
+    expect(modelMetadataWarning(null)).toBeNull()
+    expect(modelMetadataWarning(undefined)).toBeNull()
   })
 })

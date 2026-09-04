@@ -1,5 +1,5 @@
 import type { EngineIdentity } from '@/lib/identity'
-import type { EngineType } from '@/types/metrics'
+import type { EngineType, ModelMetadataError } from '@/types/metrics'
 
 const KIB = 1024
 const MIB = 1024 * 1024
@@ -202,6 +202,22 @@ export function engineDescription(engine: EngineIdentity): string {
  */
 export function shortModelName(name: string): string {
   return name.includes('/') ? name.slice(name.lastIndexOf('/') + 1) : name
+}
+
+/**
+ * Why the model name beside this warning may be wrong, in words an operator
+ * can act on. Only the authentication rejection gets one: it is the failure
+ * fixed on the dashboard's side (configure a provider API key), and telling
+ * an operator to configure a key for an engine that is merely unreachable
+ * would send them fixing the wrong thing. Null means nothing to warn about —
+ * metadata resolved, the engine is merely down (its status already says so),
+ * or an older backend that does not report the field.
+ */
+export function modelMetadataWarning(
+  error: ModelMetadataError | null | undefined,
+): string | null {
+  if (error !== 'AuthRequired') return null
+  return 'Engine requires authentication — configure the provider API key to read the model name.'
 }
 
 /** Apply a formatter to a nullable metric, rendering '--' when absent.
