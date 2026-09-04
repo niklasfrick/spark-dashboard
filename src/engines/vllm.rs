@@ -1230,6 +1230,47 @@ mod tests {
         );
     }
 
+    /// The HF enrichment cache is keyed by model id: it serves the same id
+    /// without a refetch, but must not hand a different id the stale entry —
+    /// the id legitimately changes once, when an auth-gated `/v1/models`
+    /// starts answering and replaces the command-line fallback the cache was
+    /// filled from. Both calls run inside the retry cooldown, so neither can
+    /// touch the network: whatever comes back is the cache's answer.
+    #[tokio::test]
+    async fn hf_cache_serves_only_the_id_it_was_filled_from() {
+        let adapter = VllmAdapter::new(
+            reqwest::Client::new(),
+            "http://localhost:8000".into(),
+            None,
+            None,
+        );
+        *adapter.hf_model_cache.lock().await = Some(ModelInfo {
+            name: "google/gemma-4-31B-it".into(),
+            parameter_size: Some("31.0B params".into()),
+            quantization: None,
+            precision: None,
+            tensor_type: None,
+            model_type: None,
+            pipeline_tag: None,
+        });
+        *adapter.last_hf_error.lock().await = Some(Instant::now());
+
+        let hit = adapter.fetch_hf_model_info("google/gemma-4-31B-it").await;
+        assert_eq!(
+            hit.map(|m| m.name),
+            Some("google/gemma-4-31B-it".to_string()),
+            "same id is served from the cache"
+        );
+
+        let miss = adapter
+            .fetch_hf_model_info("google/gemma-4-31B-it_FP16")
+            .await;
+        assert!(
+            miss.is_none(),
+            "a different id must not be renamed to the stale cache entry"
+        );
+    }
+
     /// Sanity check: percentiles flow from the parser through the adapter.
     /// We don't spin up an HTTP mock here — `parse_prometheus_text` is the
     /// boundary we care about, so we assert the percentile pipeline against
