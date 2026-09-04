@@ -25,7 +25,48 @@ interface MigrationFixture {
   expect: (document: NonNullable<ReturnType<typeof parseDashboardDocument>>) => void
 }
 
-const MIGRATION_FIXTURES: MigrationFixture[] = []
+const MIGRATION_FIXTURES: MigrationFixture[] = [
+  {
+    name: 'a v1 document, from before the per-page source',
+    // As the v1 build's serializer actually wrote it: full geometry, explicit
+    // binding and window, no `source` anywhere.
+    stored: {
+      version: 1,
+      pages: [
+        {
+          id: 'overview',
+          name: 'Overview',
+          panels: [
+            {
+              id: 'decode',
+              type: 'engine-decode-throughput',
+              geometry: { x: 0, y: 0, w: 6, h: 3 },
+              binding: { kind: 'follow' },
+              window: '5m',
+            },
+            {
+              id: 'pinned',
+              type: 'gpu-utilization',
+              title: 'My GPU',
+              geometry: { x: 6, y: 0, w: 3, h: 3 },
+              binding: { kind: 'gpu', index: 1 },
+              window: '15m',
+            },
+          ],
+        },
+      ],
+    },
+    from: 1,
+    expect: (document) => {
+      // The addition was the optional source, so a v1 page comes through
+      // whole and without one — absent is automatic, which is what it was.
+      expect(document.pages).toHaveLength(1)
+      expect(document.pages[0].source).toBeUndefined()
+      expect(document.pages[0].panels.map((panel) => panel.id)).toEqual(['decode', 'pinned'])
+      expect(document.pages[0].panels[1].binding).toEqual({ kind: 'gpu', index: 1 })
+    },
+  },
+]
 
 /** A stand-in migration, so the runner's chaining is covered before there is a real one. */
 function stub(from: number, mark: string): DashboardMigration {
@@ -71,7 +112,6 @@ describe('runMigrations against the real migration path', () => {
     })
   })
 
-  // Empty until the first migration exists; each fixture then becomes a spec.
   for (const fixture of MIGRATION_FIXTURES) {
     it(`migrates ${fixture.name} into a document that still parses`, () => {
       const outcome = runMigrations(fixture.stored, fixture.from)

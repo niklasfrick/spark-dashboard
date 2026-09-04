@@ -1,16 +1,6 @@
-import { engineDescription } from '@/lib/format'
+import { engineDescription, shortModelName } from '@/lib/format'
 import { getProviderLogo, type ProviderLogo } from '@/lib/providerLogo'
-import type { ResolvedEngineTarget } from './useEnginePanel'
-
-/**
- * Strip the `Organization/` prefix off a HuggingFace-style id, leaving the
- * model itself: `Qwen/Qwen3-8B` reads as `Qwen3-8B`. The organization is
- * already said by the provider mark beside it, so repeating it in the name
- * spends the width a long model id needs.
- */
-export function shortModelName(name: string): string {
-  return name.includes('/') ? name.slice(name.lastIndexOf('/') + 1) : name
-}
+import type { AggregateEngineTarget, ResolvedEngineTarget } from './useEnginePanel'
 
 /**
  * The engine a panel resolved to, named — or null on a host running a single
@@ -20,8 +10,15 @@ export function shortModelName(name: string): string {
  * showing. Two panels pinned to two engines otherwise differ only by their
  * position on the page, and a panel that has followed the page selection
  * somewhere else would look identical to one that has not.
+ *
+ * A panel following a page configured to show all models is named on the same
+ * terms: "All models" is what its numbers are, and a combined figure wearing no
+ * name would read as one engine's.
  */
-export function engineLabel(resolution: ResolvedEngineTarget): string | null {
+export function engineLabel(
+  resolution: ResolvedEngineTarget | AggregateEngineTarget,
+): string | null {
+  if (resolution.status === 'aggregate') return 'All models'
   return resolution.multiEngine ? engineDescription(resolution.engine) : null
 }
 
@@ -47,8 +44,22 @@ export interface EngineIdentity {
  * of them can legitimately serve the same model; the mark is the provider, at a
  * glance. All are absent on a single-engine host, where there is nothing to
  * tell apart and the row would only cost the panel height.
+ *
+ * The aggregate wears an identity **unconditionally**, single-engine hosts
+ * included: a combined figure is a different thing from an engine's own, and
+ * the row is the only place the panel says so.
  */
-export function engineIdentity(resolution: ResolvedEngineTarget): EngineIdentity {
+export function engineIdentity(
+  resolution: ResolvedEngineTarget | AggregateEngineTarget,
+): EngineIdentity {
+  if (resolution.status === 'aggregate') {
+    return {
+      label: `${resolution.running} of ${resolution.total} serving`,
+      model: 'All models',
+      logo: null,
+    }
+  }
+
   if (!resolution.multiEngine) return { label: null, model: null, logo: null }
 
   const { model } = resolution.engine

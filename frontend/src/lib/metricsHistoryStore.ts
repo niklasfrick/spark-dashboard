@@ -1,5 +1,6 @@
 import { CircularBuffer } from './circular-buffer'
 import { DEFAULT_TIME_WINDOW } from './dashboard/schema'
+import { aggregateEngineMetrics } from './engineAggregate'
 import { engineKey, gpuIndexOf, snapshotGpus } from './identity'
 import { TIME_WINDOW_SECONDS, type TimeWindow } from '@/types/events'
 import type { GpuEventData, InferenceRequestData, MetricsSnapshot } from '@/types/metrics'
@@ -121,6 +122,14 @@ export type EngineSeriesName = (typeof ENGINE_SERIES)[number][0]
 export function engineSeries(name: EngineSeriesName, key: string): string {
   return `${key}:${name}`
 }
+
+/**
+ * The engine-buffer key of the all-engines aggregate, ingested alongside the
+ * per-engine series so a page configured for all models has history to chart.
+ * Cannot collide with `engineKey()`, whose keys always start with the engine
+ * type (`Vllm-…`).
+ */
+export const ALL_ENGINES_KEY = 'all-engines'
 
 /** The series key of the event buffer, for subscriptions. */
 export const EVENTS_SERIES = 'events'
@@ -273,18 +282,8 @@ export class MetricsHistoryStore {
 
     for (const engine of metrics.engines) {
       const key = engineKey(engine)
-      if (!this.engineBuffers[key]) {
-        this.engineBuffers[key] = createEngineBuffers()
-      }
-      const eb = this.engineBuffers[key]
       if (engine.metrics) {
-        for (const [name, sample] of ENGINE_SERIES) {
-          const val = sample(engine.metrics)
-          if (val !== null) {
-            eb[name].push({ timestamp: ts, value: val })
-            changed.add(`${key}:${name}`)
-          }
-        }
+        this.pushEngineSamples(key, engine.metrics, ts, changed)
       }
 
       if (engine.recent_requests && engine.recent_requests.length > 0) {
@@ -299,6 +298,15 @@ export class MetricsHistoryStore {
         changed.add(requestsSeries(key))
         changed.add(requestsSeries())
       }
+    }
+
+    // The all-engines aggregate, as a series set of its own: a page configured
+    // for all models charts history like any single engine's, and recomputing
+    // fifteen minutes of sums at read time from N per-engine buffers would not
+    // survive an engine's buffer starting later than another's.
+    const aggregate = aggregateEngineMetrics(metrics.engines)
+    if (aggregate) {
+      this.pushEngineSamples(ALL_ENGINES_KEY, aggregate, ts, changed)
     }
 
     if (metrics.gpu_events && metrics.gpu_events.length > 0) {
@@ -319,6 +327,28 @@ export class MetricsHistoryStore {
       if (listeners) for (const listener of listeners) listener()
     }
     for (const listener of this.allListeners) listener()
+  }
+
+  /** Append one tick of engine-shaped metrics to the buffer set under `key` —
+   *  a real engine's, or the all-engines aggregate, which is what the shared
+   *  shape is for. */
+  private pushEngineSamples(
+    key: string,
+    metrics: EngineMetricsShape,
+    ts: number,
+    changed: Set<string>,
+  ): void {
+    if (!this.engineBuffers[key]) {
+      this.engineBuffers[key] = createEngineBuffers()
+    }
+    const eb = this.engineBuffers[key]
+    for (const [name, sample] of ENGINE_SERIES) {
+      const val = sample(metrics)
+      if (val !== null) {
+        eb[name].push({ timestamp: ts, value: val })
+        changed.add(`${key}:${name}`)
+      }
+    }
   }
 
   /** Subscribe to one series. The listener fires when that series gains data. */

@@ -209,8 +209,9 @@ export function GridPage({
     >
       {/* The selection is per page and lives inside it: every following panel
           on this page reads the same GPU and engine, and a page mounted at
-          another id starts from the host's defaults again. */}
-      <PageSelectionProvider>
+          another id starts from its own configured source — or the host's
+          defaults — again. */}
+      <PageSelectionProvider source={page.source}>
         <GridStack
           options={options}
           onChange={draggable ? handleChange : undefined}

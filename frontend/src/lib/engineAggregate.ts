@@ -1,4 +1,4 @@
-import type { EngineSnapshot, LatencyPercentiles } from '@/types/metrics'
+import type { EngineMetrics, EngineSnapshot, LatencyPercentiles } from '@/types/metrics'
 import { getProviderLogo, type ProviderLogo } from './providerLogo'
 
 /**
@@ -43,6 +43,7 @@ export interface AggregateSnapshot {
   e2e_latency_ms: number | null
   queue_time_ms: number | null
   inter_token_latency_ms: number | null
+  tpot_ms: number | null
   per_request_tps: number | null
   per_request_prompt_tps: number | null
 
@@ -59,11 +60,13 @@ export interface AggregateSnapshot {
   ttft_percentiles: LatencyPercentiles | null
   itl_percentiles: LatencyPercentiles | null
   e2e_percentiles: LatencyPercentiles | null
+  tpot_percentiles: LatencyPercentiles | null
 
   // Goodput (% meeting SLO), weighted mean by total_requests.
   ttft_goodput_pct: number | null
   itl_goodput_pct: number | null
   e2e_goodput_pct: number | null
+  tpot_goodput_pct: number | null
 }
 
 function sumOrNull(values: Array<number | null | undefined>): number | null {
@@ -138,6 +141,7 @@ function emptySnapshot(totalCount: number): AggregateSnapshot {
     e2e_latency_ms: null,
     queue_time_ms: null,
     inter_token_latency_ms: null,
+    tpot_ms: null,
     per_request_tps: null,
     per_request_prompt_tps: null,
     avg_batch_size: null,
@@ -146,9 +150,11 @@ function emptySnapshot(totalCount: number): AggregateSnapshot {
     ttft_percentiles: null,
     itl_percentiles: null,
     e2e_percentiles: null,
+    tpot_percentiles: null,
     ttft_goodput_pct: null,
     itl_goodput_pct: null,
     e2e_goodput_pct: null,
+    tpot_goodput_pct: null,
   }
 }
 
@@ -310,6 +316,7 @@ export function aggregateEngines(engines: readonly EngineSnapshot[]): AggregateS
     e2e_latency_ms: weightedBy('e2e_latency_ms'),
     queue_time_ms: weightedBy('queue_time_ms'),
     inter_token_latency_ms: weightedBy('inter_token_latency_ms'),
+    tpot_ms: weightedBy('tpot_ms'),
     per_request_tps: weightedBy('per_request_tps'),
     per_request_prompt_tps: weightedBy('per_request_prompt_tps'),
 
@@ -331,10 +338,78 @@ export function aggregateEngines(engines: readonly EngineSnapshot[]): AggregateS
       metrics.map((m) => m?.e2e_percentiles ?? null),
       weights,
     ),
+    tpot_percentiles: aggregatePercentiles(
+      metrics.map((m) => m?.tpot_percentiles ?? null),
+      weights,
+    ),
 
     // Goodput — weighted mean by total_requests, same caveat as percentiles.
     ttft_goodput_pct: weightedBy('ttft_goodput_pct'),
     itl_goodput_pct: weightedBy('itl_goodput_pct'),
     e2e_goodput_pct: weightedBy('e2e_goodput_pct'),
+    tpot_goodput_pct: weightedBy('tpot_goodput_pct'),
+  }
+}
+
+/**
+ * The aggregate reshaped as one engine's metrics, so a following engine panel
+ * on a page configured for all models renders the combined figures through the
+ * same reader and series it uses for a single engine. Null when no engine is
+ * running — an aggregate over nothing is not a row of zeros.
+ *
+ * The histogram buckets are deliberately null: engines can carry different
+ * bucket layouts, and merging mismatched histograms would manufacture a
+ * distribution nobody measured. The SLO panel already falls back to the
+ * backend-computed goodput percentages, which aggregate as weighted means.
+ */
+export function aggregateEngineMetrics(engines: readonly EngineSnapshot[]): EngineMetrics | null {
+  const aggregate = aggregateEngines(engines)
+  if (aggregate.running_count === 0) return null
+
+  const running = engines.filter((e) => e.status.type === 'Running')
+
+  return {
+    tokens_per_sec: aggregate.tokens_per_sec,
+    avg_tokens_per_sec: aggregate.avg_tokens_per_sec,
+    per_request_tps: aggregate.per_request_tps,
+    ttft_ms: aggregate.ttft_ms,
+    active_requests: aggregate.active_requests,
+    queued_requests: aggregate.queued_requests,
+    kv_cache_percent: aggregate.kv_cache_percent,
+    // Estimated if any contributing pool is: a mean over one estimate is one.
+    kv_cache_is_estimated: running.some((e) => e.metrics?.kv_cache_is_estimated === true),
+    total_requests: aggregate.total_requests,
+    e2e_latency_ms: aggregate.e2e_latency_ms,
+    prompt_tokens_per_sec: aggregate.prompt_tokens_per_sec,
+    avg_prompt_tokens_per_sec: aggregate.avg_prompt_tokens_per_sec,
+    per_request_prompt_tps: aggregate.per_request_prompt_tps,
+    swapped_requests: aggregate.swapped_requests,
+    prefix_cache_hit_rate: aggregate.prefix_cache_hit_rate,
+    queue_time_ms: aggregate.queue_time_ms,
+    inter_token_latency_ms: aggregate.inter_token_latency_ms,
+    preemptions_total: aggregate.preemptions_total,
+    total_prompt_tokens: aggregate.total_prompt_tokens,
+    total_generation_tokens: aggregate.total_generation_tokens,
+    prefix_cache_queries_total: aggregate.prefix_cache_queries_total,
+    avg_batch_size: aggregate.avg_batch_size,
+    ttft_percentiles: aggregate.ttft_percentiles,
+    itl_percentiles: aggregate.itl_percentiles,
+    e2e_percentiles: aggregate.e2e_percentiles,
+    ttft_goodput_pct: aggregate.ttft_goodput_pct,
+    itl_goodput_pct: aggregate.itl_goodput_pct,
+    e2e_goodput_pct: aggregate.e2e_goodput_pct,
+    ttft_buckets: null,
+    itl_buckets: null,
+    e2e_buckets: null,
+    tpot_ms: aggregate.tpot_ms,
+    tpot_percentiles: aggregate.tpot_percentiles,
+    tpot_goodput_pct: aggregate.tpot_goodput_pct,
+    tpot_buckets: null,
+    spec_decode_draft_tokens_total: aggregate.spec_decode_draft_tokens_total,
+    spec_decode_accepted_tokens_total: aggregate.spec_decode_accepted_tokens_total,
+    spec_decode_drafts_total: aggregate.spec_decode_drafts_total,
+    spec_decode_acceptance_rate: aggregate.spec_decode_acceptance_rate,
+    spec_decode_acceptance_rate_live: aggregate.spec_decode_acceptance_rate_live,
+    spec_decode_mean_acceptance_length: aggregate.spec_decode_mean_acceptance_length,
   }
 }

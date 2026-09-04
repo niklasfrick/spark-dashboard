@@ -156,12 +156,31 @@ describe('resolveGpuBinding', () => {
 
 describe('resolveEngineBinding', () => {
   const engines = [engine('http://localhost:8000'), engine('http://localhost:8001')]
+  const pageOn = (endpoint: string) => ({ kind: 'engine', endpoint }) as const
 
   it('follows the page selection', () => {
-    expect(resolveEngineBinding(FOLLOW, engines, 'http://localhost:8001')).toEqual({
+    expect(resolveEngineBinding(FOLLOW, engines, pageOn('http://localhost:8001'))).toEqual({
       status: 'resolved',
       target: engines[1],
     })
+  })
+
+  it('follows a page configured for all models to the aggregate', () => {
+    expect(resolveEngineBinding(FOLLOW, engines, { kind: 'all' })).toEqual({
+      status: 'aggregate',
+    })
+  })
+
+  it('never routes a pinned engine to the aggregate', () => {
+    // A pin names one engine; the page showing all models is exactly when the
+    // pin is there to keep showing that one.
+    expect(
+      resolveEngineBinding(
+        { kind: 'engine', endpoint: 'http://localhost:8000' },
+        engines,
+        { kind: 'all' },
+      ),
+    ).toEqual({ status: 'resolved', target: engines[0] })
   })
 
   it('resolves a pinned engine that is running', () => {
@@ -179,7 +198,7 @@ describe('resolveEngineBinding', () => {
   })
 
   it('reports a followed selection that is gone as missing', () => {
-    expect(resolveEngineBinding(FOLLOW, engines, 'http://localhost:9999')).toEqual({
+    expect(resolveEngineBinding(FOLLOW, engines, pageOn('http://localhost:9999'))).toEqual({
       status: 'missing',
       requested: 'http://localhost:9999',
     })

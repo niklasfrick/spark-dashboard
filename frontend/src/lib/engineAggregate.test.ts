@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { aggregateEngines, groupRunningByProvider } from './engineAggregate'
+import { aggregateEngineMetrics, aggregateEngines, groupRunningByProvider } from './engineAggregate'
 import type { EngineMetrics, EngineSnapshot, EngineStatus } from '@/types/metrics'
 
 function fullMetrics(overrides: Partial<EngineMetrics> = {}): EngineMetrics {
@@ -301,6 +301,50 @@ function engineWithModel(
     deployment_mode: 'Docker',
   }
 }
+
+describe('aggregateEngineMetrics', () => {
+  it('returns null when no engine is running', () => {
+    // An aggregate over nothing is not a row of zeros.
+    expect(aggregateEngineMetrics([])).toBeNull()
+    expect(aggregateEngineMetrics([engine('Stopped')])).toBeNull()
+  })
+
+  it('reshapes the aggregate as one engine metrics object', () => {
+    const engines = [
+      engine('Running', fullMetrics({ tokens_per_sec: 100, tpot_ms: 20, total_requests: 10 })),
+      engine('Running', fullMetrics({ tokens_per_sec: 150, tpot_ms: 40, total_requests: 30 })),
+    ]
+    const metrics = aggregateEngineMetrics(engines)!
+
+    expect(metrics.tokens_per_sec).toBe(250)
+    // Weighted mean by total_requests, like the other latencies: (20·10 + 40·30) / 40.
+    expect(metrics.tpot_ms).toBe(35)
+  })
+
+  it('marks the KV figure estimated when any contributing pool is', () => {
+    const engines = [
+      engine('Running', fullMetrics({ kv_cache_is_estimated: false })),
+      engine('Running', fullMetrics({ kv_cache_is_estimated: true })),
+    ]
+    expect(aggregateEngineMetrics(engines)!.kv_cache_is_estimated).toBe(true)
+    expect(aggregateEngineMetrics([engine('Running')])!.kv_cache_is_estimated).toBe(false)
+  })
+
+  it('carries no histogram buckets, whose layouts differ per engine', () => {
+    // The SLO panel falls back to the backend-computed goodput percentages,
+    // which do aggregate — as weighted means.
+    const metrics = aggregateEngineMetrics([
+      engine('Running', fullMetrics({ ttft_buckets: [{ le_seconds: 1, cumulative_count: 5 }], ttft_goodput_pct: 90, itl_goodput_pct: 80 })),
+    ])!
+
+    expect(metrics.ttft_buckets).toBeNull()
+    expect(metrics.itl_buckets).toBeNull()
+    expect(metrics.e2e_buckets).toBeNull()
+    expect(metrics.tpot_buckets).toBeNull()
+    expect(metrics.ttft_goodput_pct).toBe(90)
+    expect(metrics.itl_goodput_pct).toBe(80)
+  })
+})
 
 describe('groupRunningByProvider', () => {
   it('returns [] for no engines', () => {

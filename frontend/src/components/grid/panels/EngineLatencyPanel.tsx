@@ -24,7 +24,9 @@ import type { PanelContentProps } from '../panelRegistry'
 export function EngineLatencyPanel({ panel }: PanelContentProps) {
   const resolution = useEnginePanel(panel)
   const [mode, setMode] = useLatencyMode()
-  if (resolution.status !== 'resolved') return <EnginePanelNotice resolution={resolution} />
+  if (resolution.status !== 'resolved' && resolution.status !== 'aggregate') {
+    return <EnginePanelNotice resolution={resolution} />
+  }
 
   const { metric, series } = resolution
   const ttft = pickLatencyValue(mode, metric('ttft_ms'), metric('ttft_percentiles'))

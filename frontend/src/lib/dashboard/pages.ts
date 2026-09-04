@@ -23,6 +23,7 @@
  */
 
 import { pageSlug } from './routes'
+import type { PageSource } from './pageSource'
 import type { DashboardDocument, DashboardPage } from './schema'
 
 /** A page was made; `pageId` is the one to navigate to. */
@@ -76,6 +77,45 @@ export function renamePage(
       candidate.id === pageId ? { ...candidate, name: trimmed } : candidate,
     ),
   }
+}
+
+/**
+ * The document with one page's source replaced — what it shows by default: one
+ * model, all of them combined, or (with `null`) back to automatic.
+ *
+ * A page edit like renaming, not a layout edit: choosing what a page shows is
+ * already the deliberate, named request that an edit session exists to
+ * distinguish a drag from, so the caller writes it when it is made.
+ *
+ * Null **removes** the field rather than storing a sentinel, because absent is
+ * what "never configured" looks like everywhere else in the document.
+ */
+export function setPageSource(
+  document: DashboardDocument,
+  pageId: string,
+  source: PageSource | null,
+): DashboardDocument {
+  const page = document.pages.find((candidate) => candidate.id === pageId)
+  if (!page || sameSource(page.source, source ?? undefined)) return document
+
+  return {
+    ...document,
+    pages: document.pages.map((candidate) => {
+      if (candidate.id !== pageId) return candidate
+      if (source === null) {
+        const cleared = { ...candidate }
+        delete cleared.source
+        return cleared
+      }
+      return { ...candidate, source }
+    }),
+  }
+}
+
+function sameSource(a: PageSource | undefined, b: PageSource | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b
+  if (a.kind !== b.kind) return false
+  return a.kind !== 'engine' || b.kind !== 'engine' || a.endpoint === b.endpoint
 }
 
 /** What became of a request to delete a page. */

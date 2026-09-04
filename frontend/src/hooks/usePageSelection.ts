@@ -1,18 +1,21 @@
 import { createContext, useContext } from 'react'
+import type { PageSource } from '@/lib/dashboard/pageSource'
 import type { SelectedTargets } from '@/lib/dashboard/selection'
 
 /**
  * What one page is pointed at, and how to point it somewhere else.
  *
- * Only the operator's explicit choice travels through the context; resolving it
- * against the host is `pageSelection()`, which the panel hooks call because they
- * already hold the snapshot. Keeping the context to the choice alone means a
- * page that has never been pointed anywhere costs nothing and re-renders for
- * nothing.
+ * Only the operator's explicit choice and the page's configured source travel
+ * through the context; resolving them against the host is `pageSelection()`,
+ * which the panel hooks call because they already hold the snapshot. Keeping
+ * the context to the choice alone means a page that has never been pointed
+ * anywhere costs nothing and re-renders for nothing.
  */
 export interface PageSelectionValue {
-  /** What the operator pointed this page at. Empty = follow the host. */
+  /** What the operator pointed this page at. Empty = follow the source, then the host. */
   chosen: SelectedTargets
+  /** The page's configured default (`DashboardPage.source`). Absent = automatic. */
+  source?: PageSource
   /** Point every following panel at one GPU; null goes back to the host default. */
   selectGpu: (index: number | null) => void
   /** Point every following panel at one engine; null goes back to the host default. */
