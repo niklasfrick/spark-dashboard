@@ -164,8 +164,11 @@ impl VllmAdapter {
             }
         }
 
-        // Only HF-format names can be resolved.
-        if !model_id.contains('/') {
+        // Only HF-format names can be resolved — bare serve names have no
+        // `org/name` shape, and a filesystem path (a local-directory launch
+        // that `normalize_model_id` could not map back to a repo id) is not
+        // an HF repo either.
+        if !model_id.contains('/') || model_id.starts_with(['/', '.', '~']) {
             return None;
         }
 
@@ -279,6 +282,52 @@ impl VllmAdapter {
     }
 }
 
+/// Recover a human-readable model id from a filesystem path.
+///
+/// vLLM launched against a local directory (the `HF_HUB_OFFLINE` workflow)
+/// reports that path as its model id — typically a hub-cache snapshot like
+/// `~/.cache/huggingface/hub/models--Qwen--Qwen3-32B/snapshots/<commit>`,
+/// whose last segment is a bare git commit hash and would end up displayed
+/// as the model name.
+///
+/// * A path containing a hub-cache `models--{org}--{name}` segment is
+///   de-mangled back to `org/name`. Splitting on `--` is unambiguous: the
+///   hub encodes the one `/` of a repo id as `--`, and HuggingFace forbids
+///   consecutive dashes inside org and repo names.
+/// * Otherwise a trailing `snapshots/<commit-hash>` is dropped, so the
+///   display name falls back to the containing directory instead of the hash.
+/// * Anything else — HF ids, custom serve names, plain paths — passes
+///   through unchanged.
+fn normalize_model_id(id: &str) -> String {
+    if !id.contains('/') {
+        return id.to_string();
+    }
+
+    for segment in id.split('/') {
+        if let Some(repo) = segment.strip_prefix("models--") {
+            if let Some((org, name)) = repo.split_once("--") {
+                if !org.is_empty() && !name.is_empty() {
+                    return format!("{org}/{name}");
+                }
+            }
+        }
+    }
+
+    let trimmed = id.trim_end_matches('/');
+    if let Some((parent, last)) = trimmed.rsplit_once('/') {
+        let is_commit_hash = last.len() == 40 && last.bytes().all(|b| b.is_ascii_hexdigit());
+        if is_commit_hash {
+            if let Some((grandparent, "snapshots")) = parent.rsplit_once('/') {
+                if !grandparent.trim_matches('/').is_empty() {
+                    return grandparent.to_string();
+                }
+            }
+        }
+    }
+
+    id.to_string()
+}
+
 /// HuggingFace returns these statuses when a model id isn't publicly
 /// resolvable — local/custom serve names (e.g. a vLLM `--served-model-name`),
 /// or gated/private repos accessed without a token. Metadata enrichment is
@@ -384,6 +433,12 @@ impl EngineAdapter for VllmAdapter {
             (Some(id), None) => Some(id.clone()),
             (None, None) => None,
         }?;
+
+        // An offline launch (`HF_HUB_OFFLINE` + `--model <local dir>`) makes
+        // vLLM report the filesystem path as its model id. Recover the real
+        // repo id from the hub-cache layout so the UI never shows a snapshot
+        // commit hash as the model name.
+        let name = normalize_model_id(&name);
 
         // Try HF enrichment — fetch_hf_model_info caches successes and
         // throttles retries internally.
@@ -944,6 +999,45 @@ mod tests {
         for status in [200, 429, 500, 502, 503] {
             assert!(!is_expected_hf_miss(status), "{status} should warn");
         }
+    }
+
+    /// Offline launches (`HF_HUB_OFFLINE` + `--model <local dir>`) make vLLM
+    /// report a filesystem path as its model id. The hub-cache layout must be
+    /// de-mangled back to the repo id, and a bare snapshot dir must not leave
+    /// the commit hash as the display name; everything else passes through.
+    #[test]
+    fn normalize_model_id_recovers_repo_id_from_local_paths() {
+        // Hub-cache snapshot path → repo id (the reported bug).
+        assert_eq!(
+            normalize_model_id(
+                "/root/.cache/huggingface/hub/models--Qwen--Qwen3-32B\
+                 /snapshots/7b719225242aacd3dbd3f9407468c2ee9a9d2594"
+            ),
+            "Qwen/Qwen3-32B"
+        );
+        // Single dashes inside org/name survive; only the `--` separator splits.
+        assert_eq!(
+            normalize_model_id("/data/hub/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/abc"),
+            "meta-llama/Llama-3.1-8B-Instruct"
+        );
+        // A snapshot dir outside the hub-cache layout: drop `snapshots/<hash>`
+        // so the containing directory names the model, not the hash.
+        assert_eq!(
+            normalize_model_id("/mnt/qwen3-32b/snapshots/7b719225242aacd3dbd3f9407468c2ee9a9d2594"),
+            "/mnt/qwen3-32b"
+        );
+        // HF ids, bare serve names, and plain paths pass through unchanged.
+        assert_eq!(normalize_model_id("Qwen/Qwen3-32B"), "Qwen/Qwen3-32B");
+        assert_eq!(normalize_model_id("my-alias"), "my-alias");
+        assert_eq!(
+            normalize_model_id("/models/custom-llm"),
+            "/models/custom-llm"
+        );
+        // A 40-char last segment that isn't hex is a name, not a commit hash.
+        assert_eq!(
+            normalize_model_id("/srv/snapshots/this-is-a-forty-char-model-name-not-hex"),
+            "/srv/snapshots/this-is-a-forty-char-model-name-not-hex"
+        );
     }
 
     /// Sanity check: percentiles flow from the parser through the adapter.
