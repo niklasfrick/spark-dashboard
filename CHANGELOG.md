@@ -1,5 +1,75 @@
 # Changelog
 
+## [0.14.0](https://github.com/niklasfrick/spark-dashboard/compare/spark-dashboard-v0.13.0...spark-dashboard-v0.14.0) (2026-09-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* **frontend:** the fixed dashboard is retired, and three things it carried have no replacement in this release. The All Engines aggregate — running-engine count, summed throughput, weighted-mean latencies — has a panel type reserved (`engines-overview`) and no implementation yet. The auto-rotating engine tab carousel is gone with the tabs themselves; panels are pinned or follow the page selection instead. The log console is no longer a fixed drawer at the bottom of the page — logs are a panel an operator places, and the default preset places none.
+
+### Features
+
+* **deploy:** grant the state directory in the systemd unit ([9931ce8](https://github.com/niklasfrick/spark-dashboard/commit/9931ce865c54bcff24296cad25c688cc0ccff173))
+* **docker:** persist the dashboard configuration in a named volume ([0b625c7](https://github.com/niklasfrick/spark-dashboard/commit/0b625c7ddb4c050b3c1588fd05cab01f1efa0129))
+* **frontend:** a live-motion context that holds the dashboard still ([85fd9aa](https://github.com/niklasfrick/spark-dashboard/commit/85fd9aa05132f40489832a46490aab4a9d2becb6))
+* **frontend:** a palette that places a panel in the first free slot ([265cf71](https://github.com/niklasfrick/spark-dashboard/commit/265cf710f5044829eaedd4f9a55c746943965b23))
+* **frontend:** an engine panel that says what is being served ([524fd15](https://github.com/niklasfrick/spark-dashboard/commit/524fd1584c132fe8893794f8bc5047b81021e0f4))
+* **frontend:** configuration load/save client and failure banners ([ed36d9c](https://github.com/niklasfrick/spark-dashboard/commit/ed36d9c571ae8824c7043796217bcfaa939aeeb4)), closes [#77](https://github.com/niklasfrick/spark-dashboard/issues/77)
+* **frontend:** dashboard document schema, migrations and default preset ([0f4ae34](https://github.com/niklasfrick/spark-dashboard/commit/0f4ae34be5fc9e9f325b544fa9be0065c0108127)), closes [#76](https://github.com/niklasfrick/spark-dashboard/issues/76)
+* **frontend:** dashboard grid geometry and panel type vocabulary ([328941a](https://github.com/niklasfrick/spark-dashboard/commit/328941a037c894a9e2c7851f42b420a98b1b4999)), closes [#76](https://github.com/niklasfrick/spark-dashboard/issues/76)
+* **frontend:** edit-session rules for layout changes and refused drops ([6e3073b](https://github.com/niklasfrick/spark-dashboard/commit/6e3073b6f82fbc71ba992ef9fc8c7308828a004e))
+* **frontend:** engine goodput, cache and speculative-decoding panels ([e9aae51](https://github.com/niklasfrick/spark-dashboard/commit/e9aae51f6674f32b5f861a46c620fd4c56333934)), closes [#81](https://github.com/niklasfrick/spark-dashboard/issues/81)
+* **frontend:** engine throughput, latency and request panels ([555a3e9](https://github.com/niklasfrick/spark-dashboard/commit/555a3e9488363a0a0ae87459acc6d175fb5ec884)), closes [#81](https://github.com/niklasfrick/spark-dashboard/issues/81)
+* **frontend:** explicit edit mode with save and discard ([c8fb6fd](https://github.com/niklasfrick/spark-dashboard/commit/c8fb6fdad769945fffa7d6856a3f6dad57a9112e))
+* **frontend:** grid page shell rendering stored pages at their own URLs ([3ca685d](https://github.com/niklasfrick/spark-dashboard/commit/3ca685d014f9e214cd4b1db4c2959a998ce422f4))
+* **frontend:** hardware metrics as individually placeable panels ([d67d106](https://github.com/niklasfrick/spark-dashboard/commit/d67d106175c791b270612150679d22cce5120042))
+* **frontend:** history-based page routes with stable ids and slugs ([aa15972](https://github.com/niklasfrick/spark-dashboard/commit/aa159727087032d7d70c4658e966f2f31cc7b509))
+* **frontend:** keep the provider mark where the grid names an engine ([d0ac733](https://github.com/niklasfrick/spark-dashboard/commit/d0ac73328715e28bfe91f76198419d396d04ffcc))
+* **frontend:** latest-snapshot access and GPU series keys on the metrics store ([919744c](https://github.com/niklasfrick/spark-dashboard/commit/919744cdd9439dbcb905877571788bb6094fc770))
+* **frontend:** lead the preset with what the machine is serving ([70f43dc](https://github.com/niklasfrick/spark-dashboard/commit/70f43dc702d3540b5429438719bd3bce768d24ce))
+* **frontend:** let each page choose its model — one, or all combined ([0f430d0](https://github.com/niklasfrick/spark-dashboard/commit/0f430d00b1ee1e984c869700fe4082b38a65db89))
+* **frontend:** logs as a placeable panel bound to an engine ([9c74096](https://github.com/niklasfrick/spark-dashboard/commit/9c74096904401384657ae7f34f5e29f08ef7e853))
+* **frontend:** metrics history store with per-series subscriptions and windowed reads ([cca90ee](https://github.com/niklasfrick/spark-dashboard/commit/cca90ee073a9a00651d0aba324c60e47061d1e15))
+* **frontend:** name the hardware each panel is reading ([fa8aa76](https://github.com/niklasfrick/spark-dashboard/commit/fa8aa7650a86adbca813a76bea96ca0f8e3af9e1))
+* **frontend:** page-level GPU and engine selection for follow bindings ([1f6d1fc](https://github.com/niklasfrick/spark-dashboard/commit/1f6d1fcf035ba21ee02556c83a2dd813b3c0314e)), closes [#81](https://github.com/niklasfrick/spark-dashboard/issues/81)
+* **frontend:** pages as header tabs, with their own URLs and resets ([f29d957](https://github.com/niklasfrick/spark-dashboard/commit/f29d9574fe89257e4372b22bd9bcb0fdd6585364))
+* **frontend:** panel registry with tracer panels and slot-keeping placeholders ([1781bf5](https://github.com/niklasfrick/spark-dashboard/commit/1781bf524435b807f24dca1adff9cf9805385a4f))
+* **frontend:** panel-list edits an operator makes by hand ([2394684](https://github.com/niklasfrick/spark-dashboard/commit/2394684fea296228dd782b6abff41af99dbb3357))
+* **frontend:** per-panel settings for title, window, source and removal ([0237e79](https://github.com/niklasfrick/spark-dashboard/commit/0237e79890f7fdd6590cbc9aba99ca89b46f1c4b))
+* **frontend:** recognize BAAI and Baidu provider icons ([f3b3439](https://github.com/niklasfrick/spark-dashboard/commit/f3b34395e6e5ee73d12b9c3c0f66276e1d373401))
+* **frontend:** remove a panel with one click on its frame in edit mode ([09e16e2](https://github.com/niklasfrick/spark-dashboard/commit/09e16e2cce4a517bc995e5d61456c11c9b616795))
+* **frontend:** removing the stored configuration on the operator's word ([7edc886](https://github.com/niklasfrick/spark-dashboard/commit/7edc8862b269a3ffc6b9fed6bb6d069bf7fd2749))
+* **frontend:** render the five panel types the palette offered ([a26dd3b](https://github.com/niklasfrick/spark-dashboard/commit/a26dd3b284b67ccba4e5d317717fd730c50e622e))
+* **frontend:** resolve panel bindings without silent substitution ([5195e2e](https://github.com/niklasfrick/spark-dashboard/commit/5195e2e06b750bdaf164ee5af8f761d8e1208d31)), closes [#76](https://github.com/niklasfrick/spark-dashboard/issues/76)
+* **frontend:** serve the grid dashboard at the root URL ([ec2632e](https://github.com/niklasfrick/spark-dashboard/commit/ec2632edff3034092c2d048799bd9b2fca1a3185))
+* **frontend:** subscribe the dashboard through the metrics store ([f80787c](https://github.com/niklasfrick/spark-dashboard/commit/f80787c7301cc643304ccf73d855d9745d9d4813))
+* **frontend:** the All Engines overview, as a panel ([d57b30b](https://github.com/niklasfrick/spark-dashboard/commit/d57b30b21b42ff6d61e2f2a7c9341f9e04d89a42))
+* **frontend:** the dashboard a fresh install opens on ([011cad6](https://github.com/niklasfrick/spark-dashboard/commit/011cad6a34dbf82c419fd933ae927e50d974b442))
+* **frontend:** the page-list edits an operator makes by hand ([70855ea](https://github.com/niklasfrick/spark-dashboard/commit/70855ea6633c1de51aba8332ecec0cee8381c8e5))
+* **frontend:** the targets a panel can be pinned to ([056f52c](https://github.com/niklasfrick/spark-dashboard/commit/056f52c8cfe55ea92442fc0a0262e27b7e35f8d2))
+* **frontend:** which page tabs fit the header, and which go in a menu ([932aae5](https://github.com/niklasfrick/spark-dashboard/commit/932aae54bb399d15334d4d4cae7ce6e569537d46))
+* **server:** store the dashboard configuration in a state directory ([8546a57](https://github.com/niklasfrick/spark-dashboard/commit/8546a5791b250990f1927fbe099e3dfab5b01264)), closes [#72](https://github.com/niklasfrick/spark-dashboard/issues/72)
+
+
+### Bug Fixes
+
+* **engines:** find a containerized vLLM that publishes no ports ([3601f6a](https://github.com/niklasfrick/spark-dashboard/commit/3601f6a0891e75ec495ffdb1ab5204fda1909dc0))
+* **engines:** recover the real model name from a local-directory vLLM launch ([fcfd88f](https://github.com/niklasfrick/spark-dashboard/commit/fcfd88f79aba53b63ff12702df7a2083eb49c439))
+* **engines:** report why /v1/models model metadata is missing ([470103a](https://github.com/niklasfrick/spark-dashboard/commit/470103a266671d2694c21bd09c8182977096b2b3))
+* **frontend:** don't clip the bottom off the page tab you are on ([94ffd57](https://github.com/niklasfrick/spark-dashboard/commit/94ffd5776a5d3b73942353d538c33f66832dbd35))
+* **frontend:** don't reconnect a log socket whose endpoint changed hands ([26d7ff8](https://github.com/niklasfrick/spark-dashboard/commit/26d7ff89237bfa2c7d0cf08a4d4c7b9d6763cafd))
+* **frontend:** judge a refused gesture by the pointer, not by the panel ([9e4c492](https://github.com/niklasfrick/spark-dashboard/commit/9e4c4923470dbd0d04273deacff4b087495cbbdf))
+* **frontend:** keep page navigation usable on a narrow header ([022d3e8](https://github.com/niklasfrick/spark-dashboard/commit/022d3e87200d4797d7cb7d79883512a295039000))
+* **frontend:** stop a chart deriving its height from its own width ([aafae73](https://github.com/niklasfrick/spark-dashboard/commit/aafae73e27ed21fef9ab6f0baa1f9110b115a05b))
+* **frontend:** stop the page compacting when edit mode ends ([97da66c](https://github.com/niklasfrick/spark-dashboard/commit/97da66cf0c32468d3df1e286c9c32c79d5def6a8))
+* **frontend:** warn when reading the model name needs a provider API key ([07f062b](https://github.com/niklasfrick/spark-dashboard/commit/07f062b84c2ea674b43862630a51d2e76bc85cb8))
+
+
+### Dependencies & Chores
+
+* **deps:** drop the packages the deleted chrome was the last user of ([61eb8e8](https://github.com/niklasfrick/spark-dashboard/commit/61eb8e8c18d0f68f8f314a0eb4e08f2c0334d556))
+* **frontend:** adopt gridstack 13.2.0, pinned exactly ([5df800d](https://github.com/niklasfrick/spark-dashboard/commit/5df800db19264b2c308e8419ff089dbb859244ac))
+
 ## [0.13.0](https://github.com/niklasfrick/spark-dashboard/compare/spark-dashboard-v0.12.0...spark-dashboard-v0.13.0) (2026-07-27)
 
 
