@@ -3,7 +3,8 @@ use super::prometheus::parse_prometheus_text;
 use super::warmup::WarmupTracker;
 use super::{
     EngineAdapter, EngineMetrics, EngineStatus, EngineType, HistogramBucket, LatencyPercentiles,
-    ModelInfo, E2E_SLO_MS, ITL_SLO_MS, TPOT_SLO_MS, TTFT_SLO_MS,
+    ModelInfo, ModelMetadataError, ModelResolution, E2E_SLO_MS, ITL_SLO_MS, TPOT_SLO_MS,
+    TTFT_SLO_MS,
 };
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -146,11 +147,17 @@ impl VllmAdapter {
     /// lifetime. On failure, a 60-second cooldown prevents hammering the HF
     /// API on every 1-second poll cycle.
     async fn fetch_hf_model_info(&self, model_id: &str) -> Option<ModelInfo> {
-        // Cache hit — model metadata never changes at runtime.
+        // Cache hit — model metadata never changes at runtime. Only for the
+        // same id, though: the name can legitimately change once, when an
+        // auth-gated `/v1/models` starts answering and replaces the
+        // command-line fallback the cache was filled from. A stale entry
+        // must not keep renaming the model back.
         {
             let cache = self.hf_model_cache.lock().await;
             if let Some(cached) = cache.as_ref() {
-                return Some(cached.clone());
+                if cached.name == model_id {
+                    return Some(cached.clone());
+                }
             }
         }
 
@@ -336,6 +343,62 @@ fn is_expected_hf_miss(status: u16) -> bool {
     matches!(status, 401 | 403 | 404)
 }
 
+/// What the engine's `/v1/models` endpoint had to say, reduced to the cases
+/// the name resolution cares about.
+enum ModelsEndpointReply {
+    /// A model id was returned.
+    Resolved(String),
+    /// The endpoint answered successfully but listed no models.
+    Empty,
+    /// The endpoint could not be read; the error says why.
+    Failed(ModelMetadataError),
+}
+
+/// Classify a non-success `/v1/models` status. 401/403 mean the dashboard
+/// lacks the engine's API key — the one failure an operator fixes on the
+/// dashboard's side (configure a provider API key), so it gets its own
+/// reason; everything else is generic unavailability.
+fn classify_models_error_status(status: u16) -> ModelMetadataError {
+    match status {
+        401 | 403 => ModelMetadataError::AuthRequired,
+        _ => ModelMetadataError::Unavailable,
+    }
+}
+
+/// Resolve the display name from the `/v1/models` reply and the command-line
+/// hint, and say why the engine's own answer is missing when it is.
+///
+/// Precedence on a successful reply (unchanged from before the error
+/// plumbing):
+///   1. API id, if it already carries a `Provider/` prefix.
+///   2. Command-line hint captured during detection.
+///   3. API id as-is (bare slug).
+///   4. None (nothing resolved).
+///
+/// When the endpoint failed or listed nothing, the hint is all there is, and
+/// the metadata error travels with it — the fallback name is shown, but the
+/// frontend can say it is only a fallback.
+fn resolve_model_name(
+    reply: &ModelsEndpointReply,
+    hint: Option<&str>,
+) -> (Option<String>, Option<ModelMetadataError>) {
+    match reply {
+        ModelsEndpointReply::Resolved(id) => {
+            let name = if id.contains('/') {
+                id.clone()
+            } else {
+                hint.map(str::to_string).unwrap_or_else(|| id.clone())
+            };
+            (Some(name), None)
+        }
+        ModelsEndpointReply::Empty => (
+            hint.map(str::to_string),
+            Some(ModelMetadataError::Unavailable),
+        ),
+        ModelsEndpointReply::Failed(error) => (hint.map(str::to_string), Some(*error)),
+    }
+}
+
 #[derive(Deserialize)]
 struct OpenAIModelsResponse {
     #[serde(default)]
@@ -402,37 +465,76 @@ impl EngineAdapter for VllmAdapter {
         }
     }
 
-    async fn get_model_info(&self) -> Option<ModelInfo> {
+    async fn get_model_info(&self) -> ModelResolution {
         // Try the OpenAI-compatible models endpoint first. vLLM returns
         // whatever id it was launched with, but downstream model routers can
         // strip the HF-style `Provider/` prefix before replying — which is
         // exactly the case we want to recover from via the command-line hint.
-        let api_id: Option<String> = async {
-            let resp = self
-                .auth(
-                    self.client
-                        .get(format!("{}/v1/models", self.endpoint))
-                        .timeout(Duration::from_secs(2)),
-                )
-                .send()
-                .await
-                .ok()?;
-            let models: OpenAIModelsResponse = resp.json().await.ok()?;
-            models.data.first().map(|m| m.id.clone())
-        }
-        .await;
+        // The status is inspected rather than piped through "parse or None":
+        // an auth-gated deployment answers 401/403 here while `/metrics`
+        // keeps working, and that rejection must reach the operator instead
+        // of silently degrading to the command-line fallback (issue #90).
+        let reply = match self
+            .auth(
+                self.client
+                    .get(format!("{}/v1/models", self.endpoint))
+                    .timeout(Duration::from_secs(2)),
+            )
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => {
+                match resp.json::<OpenAIModelsResponse>().await {
+                    Ok(models) => match models.data.first() {
+                        Some(m) => ModelsEndpointReply::Resolved(m.id.clone()),
+                        None => ModelsEndpointReply::Empty,
+                    },
+                    Err(e) => {
+                        tracing::debug!(
+                            endpoint = %self.endpoint,
+                            error = %e,
+                            "/v1/models response deserialization failed",
+                        );
+                        ModelsEndpointReply::Failed(ModelMetadataError::Unavailable)
+                    }
+                }
+            }
+            Ok(resp) => {
+                let status = resp.status();
+                let error = classify_models_error_status(status.as_u16());
+                if error == ModelMetadataError::AuthRequired {
+                    tracing::warn!(
+                        endpoint = %self.endpoint,
+                        status = %status,
+                        "/v1/models rejected the request as unauthorized — \
+                         configure a provider API key to read model metadata",
+                    );
+                } else {
+                    tracing::debug!(
+                        endpoint = %self.endpoint,
+                        status = %status,
+                        "/v1/models returned non-success",
+                    );
+                }
+                ModelsEndpointReply::Failed(error)
+            }
+            Err(e) => {
+                tracing::debug!(
+                    endpoint = %self.endpoint,
+                    error = %e,
+                    "/v1/models request failed",
+                );
+                ModelsEndpointReply::Failed(ModelMetadataError::Unavailable)
+            }
+        };
 
-        // Precedence:
-        //   1. API id, if it already carries a `Provider/` prefix.
-        //   2. Command-line hint captured during detection.
-        //   3. API id as-is (bare slug).
-        //   4. None (nothing resolved).
-        let name = match (&api_id, &self.served_model) {
-            (Some(id), _) if id.contains('/') => Some(id.clone()),
-            (_, Some(hint)) => Some(hint.clone()),
-            (Some(id), None) => Some(id.clone()),
-            (None, None) => None,
-        }?;
+        let (name, metadata_error) = resolve_model_name(&reply, self.served_model.as_deref());
+        let Some(name) = name else {
+            return ModelResolution {
+                model: None,
+                metadata_error,
+            };
+        };
 
         // An offline launch (`HF_HUB_OFFLINE` + `--model <local dir>`) makes
         // vLLM report the filesystem path as its model id. Recover the real
@@ -442,19 +544,23 @@ impl EngineAdapter for VllmAdapter {
 
         // Try HF enrichment — fetch_hf_model_info caches successes and
         // throttles retries internally.
-        if let Some(enriched) = self.fetch_hf_model_info(&name).await {
-            return Some(enriched);
-        }
+        let model = match self.fetch_hf_model_info(&name).await {
+            Some(enriched) => enriched,
+            None => ModelInfo {
+                name,
+                parameter_size: None,
+                quantization: None,
+                precision: None,
+                tensor_type: None,
+                model_type: None,
+                pipeline_tag: None,
+            },
+        };
 
-        Some(ModelInfo {
-            name,
-            parameter_size: None,
-            quantization: None,
-            precision: None,
-            tensor_type: None,
-            model_type: None,
-            pipeline_tag: None,
-        })
+        ModelResolution {
+            model: Some(model),
+            metadata_error,
+        }
     }
 
     async fn get_metrics(&self) -> Option<EngineMetrics> {
@@ -1037,6 +1143,90 @@ mod tests {
         assert_eq!(
             normalize_model_id("/srv/snapshots/this-is-a-forty-char-model-name-not-hex"),
             "/srv/snapshots/this-is-a-forty-char-model-name-not-hex"
+        );
+    }
+
+    /// `/v1/models` auth rejections (401/403) get their own reason — the one
+    /// failure the operator fixes on the dashboard's side. Everything else
+    /// (missing endpoint, throttling, server errors) is generic
+    /// unavailability.
+    #[test]
+    fn models_auth_statuses_classified_apart_from_other_failures() {
+        for status in [401, 403] {
+            assert_eq!(
+                classify_models_error_status(status),
+                ModelMetadataError::AuthRequired,
+                "{status} should read as an auth rejection"
+            );
+        }
+        for status in [404, 429, 500, 502, 503] {
+            assert_eq!(
+                classify_models_error_status(status),
+                ModelMetadataError::Unavailable,
+                "{status} should read as generic unavailability"
+            );
+        }
+    }
+
+    /// A rejected `/v1/models` falls back to the command-line hint, and the
+    /// auth reason travels with the fallback name — the warning accompanies
+    /// the name rather than replacing it. Without a hint, the reason stands
+    /// alone.
+    #[test]
+    fn auth_rejection_reports_reason_beside_fallback_name() {
+        let reply = ModelsEndpointReply::Failed(ModelMetadataError::AuthRequired);
+        assert_eq!(
+            resolve_model_name(&reply, Some("google/gemma-4-31B-it")),
+            (
+                Some("google/gemma-4-31B-it".into()),
+                Some(ModelMetadataError::AuthRequired)
+            )
+        );
+        assert_eq!(
+            resolve_model_name(&reply, None),
+            (None, Some(ModelMetadataError::AuthRequired))
+        );
+    }
+
+    /// A connection failure / non-auth error status resolves the same way but
+    /// with the non-auth reason, so the frontend never tells an operator to
+    /// configure a key that would not help.
+    #[test]
+    fn non_auth_failure_reports_unavailable() {
+        let reply = ModelsEndpointReply::Failed(ModelMetadataError::Unavailable);
+        assert_eq!(
+            resolve_model_name(&reply, Some("org/model")),
+            (
+                Some("org/model".into()),
+                Some(ModelMetadataError::Unavailable)
+            )
+        );
+        // A successful reply listing no models is not an auth problem either.
+        assert_eq!(
+            resolve_model_name(&ModelsEndpointReply::Empty, None),
+            (None, Some(ModelMetadataError::Unavailable))
+        );
+    }
+
+    /// A successful `/v1/models` reply carries no error and keeps the
+    /// long-standing precedence: a `Provider/`-prefixed API id wins, the hint
+    /// beats a bare slug, and a bare slug still resolves without a hint.
+    #[test]
+    fn successful_reply_keeps_precedence_and_reports_no_error() {
+        let prefixed = ModelsEndpointReply::Resolved("google/gemma-4-31B-it_FP16".into());
+        assert_eq!(
+            resolve_model_name(&prefixed, Some("hint/model")),
+            (Some("google/gemma-4-31B-it_FP16".into()), None)
+        );
+
+        let bare = ModelsEndpointReply::Resolved("gemma".into());
+        assert_eq!(
+            resolve_model_name(&bare, Some("google/gemma-4-31B-it")),
+            (Some("google/gemma-4-31B-it".into()), None)
+        );
+        assert_eq!(
+            resolve_model_name(&bare, None),
+            (Some("gemma".into()), None)
         );
     }
 

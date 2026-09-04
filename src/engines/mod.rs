@@ -42,6 +42,32 @@ pub enum EngineStatus {
     Error(String),
 }
 
+/// Why model metadata could not be read from the engine's `/v1/models`
+/// endpoint. Travels on the wire next to `model` so the frontend can say
+/// *why* a name is missing (or provisional) instead of silently showing the
+/// command-line fallback. `None` on the snapshot means metadata resolved
+/// normally.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+pub enum ModelMetadataError {
+    /// `/v1/models` rejected the request as unauthorized (401/403) — the
+    /// dashboard lacks the engine's API key. Actionable: configure a
+    /// provider API key.
+    AuthRequired,
+    /// `/v1/models` could not be used for any non-auth reason: unreachable,
+    /// non-auth error status, unparseable body, or an empty model list.
+    Unavailable,
+}
+
+/// The outcome of a model-info fetch: what resolved (possibly from the
+/// command-line fallback) and why the engine's own answer is missing, if it
+/// is. Both can be populated at once — a fallback name accompanied by the
+/// reason it is only a fallback.
+#[derive(Clone, Debug, Default)]
+pub struct ModelResolution {
+    pub model: Option<ModelInfo>,
+    pub metadata_error: Option<ModelMetadataError>,
+}
+
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct ModelInfo {
     pub name: String,
@@ -204,6 +230,9 @@ pub struct EngineSnapshot {
     pub endpoint: String,
     pub status: EngineStatus,
     pub model: Option<ModelInfo>,
+    /// Why `model` is missing or only a command-line fallback. `None` when
+    /// metadata resolved normally (or has not been attempted yet).
+    pub model_metadata_error: Option<ModelMetadataError>,
     pub metrics: Option<EngineMetrics>,
     pub recent_requests: Vec<RecentRequest>,
     pub deployment_mode: DeploymentMode,
@@ -236,7 +265,7 @@ pub trait EngineAdapter: Send + Sync {
     fn engine_type(&self) -> EngineType;
     fn endpoint(&self) -> &str;
     async fn health_check(&self) -> EngineStatus;
-    async fn get_model_info(&self) -> Option<ModelInfo>;
+    async fn get_model_info(&self) -> ModelResolution;
     async fn get_metrics(&self) -> Option<EngineMetrics>;
 }
 
@@ -264,6 +293,10 @@ pub struct EngineState {
     /// Last successfully resolved model info. Reused every poll tick instead of
     /// re-hitting `/v1/models`; invalidated on engine restart.
     pub cached_model: Option<ModelInfo>,
+    /// Why the last fetch could not read metadata from the engine itself
+    /// (`cached_model` is then absent or a command-line fallback). Cleared by
+    /// the next fetch that resolves without error.
+    pub model_metadata_error: Option<ModelMetadataError>,
     /// When `cached_model` was last populated — drives the 10-minute refresh.
     pub model_fetched_at: Option<Instant>,
     /// When a fetch was last attempted (success or unresolved) — drives the
@@ -287,6 +320,7 @@ impl EngineState {
             stopped_at: None,
             deployment_mode,
             cached_model: None,
+            model_metadata_error: None,
             model_fetched_at: None,
             model_attempted_at: None,
             pids: Vec::new(),
@@ -295,9 +329,20 @@ impl EngineState {
     }
 
     /// Whether `/v1/models` should be hit on this poll tick. Returns `true`
-    /// only when there is no cached model and the unresolved cooldown has
-    /// elapsed, or when the cached model is older than the refresh interval.
+    /// only when there is no cleanly resolved model and the unresolved
+    /// cooldown has elapsed, or when the cached model is older than the
+    /// refresh interval. A resolution that carried a metadata error is
+    /// provisional even when it produced a name (the command-line fallback),
+    /// so it retries on the short cooldown rather than being trusted for the
+    /// full refresh interval — an operator who fixes the API key sees the
+    /// warning clear within the cooldown, not after ten minutes.
     pub fn should_fetch_model(&self) -> bool {
+        if self.model_metadata_error.is_some() {
+            return match self.model_attempted_at {
+                None => true,
+                Some(attempted) => attempted.elapsed() >= MODEL_UNRESOLVED_RETRY,
+            };
+        }
         match (&self.cached_model, self.model_fetched_at) {
             (Some(_), Some(fetched)) => fetched.elapsed() >= MODEL_REFRESH_INTERVAL,
             (Some(_), None) => true,
@@ -308,13 +353,17 @@ impl EngineState {
         }
     }
 
-    /// Record the outcome of a model-info fetch. Always stamps the attempt;
-    /// only updates the cache + refresh clock when something resolved.
-    pub fn cache_model(&mut self, model: Option<ModelInfo>) {
+    /// Record the outcome of a model-info fetch. Always stamps the attempt
+    /// and the metadata error (so a clean fetch clears a stale warning);
+    /// only updates the cache + refresh clock when something resolved. An
+    /// errored fetch that produced no name keeps the last-known model
+    /// visible, with the fresh error explaining why it may be stale.
+    pub fn cache_model(&mut self, resolution: ModelResolution) {
         let now = Instant::now();
         self.model_attempted_at = Some(now);
-        if model.is_some() {
-            self.cached_model = model;
+        self.model_metadata_error = resolution.metadata_error;
+        if resolution.model.is_some() {
+            self.cached_model = resolution.model;
             self.model_fetched_at = Some(now);
         }
     }
@@ -322,6 +371,7 @@ impl EngineState {
     /// Drop the cached model so the next successful probe re-resolves it.
     fn invalidate_model_cache(&mut self) {
         self.cached_model = None;
+        self.model_metadata_error = None;
         self.model_fetched_at = None;
         self.model_attempted_at = None;
     }
@@ -634,6 +684,7 @@ pub async fn engine_collector_loop(
                             endpoint: state.adapter.endpoint().to_string(),
                             status,
                             model,
+                            model_metadata_error: state.model_metadata_error,
                             metrics,
                             recent_requests: Vec::new(),
                             deployment_mode: state.deployment_mode.clone(),
@@ -674,8 +725,8 @@ mod tests {
         async fn health_check(&self) -> EngineStatus {
             EngineStatus::Running
         }
-        async fn get_model_info(&self) -> Option<ModelInfo> {
-            None
+        async fn get_model_info(&self) -> ModelResolution {
+            ModelResolution::default()
         }
         async fn get_metrics(&self) -> Option<EngineMetrics> {
             None
@@ -698,6 +749,23 @@ mod tests {
         }
     }
 
+    /// A fetch that resolved cleanly from the engine's own endpoint.
+    fn resolved(name: &str) -> ModelResolution {
+        ModelResolution {
+            model: Some(model(name)),
+            metadata_error: None,
+        }
+    }
+
+    /// A fetch that fell back to the command-line hint (or nothing) because
+    /// `/v1/models` could not be read.
+    fn errored(name: Option<&str>, error: ModelMetadataError) -> ModelResolution {
+        ModelResolution {
+            model: name.map(model),
+            metadata_error: Some(error),
+        }
+    }
+
     /// Back-date an instant by `d`; relies on CI monotonic-clock uptime.
     fn ago(d: Duration) -> Instant {
         Instant::now()
@@ -713,14 +781,14 @@ mod tests {
     #[test]
     fn cached_model_is_not_refetched_within_interval() {
         let mut s = state();
-        s.cache_model(Some(model("a/b")));
+        s.cache_model(resolved("a/b"));
         assert!(!s.should_fetch_model());
     }
 
     #[test]
     fn cached_model_refetched_after_refresh_interval() {
         let mut s = state();
-        s.cache_model(Some(model("a/b")));
+        s.cache_model(resolved("a/b"));
         s.model_fetched_at = Some(ago(MODEL_REFRESH_INTERVAL + Duration::from_secs(1)));
         assert!(s.should_fetch_model());
     }
@@ -728,16 +796,77 @@ mod tests {
     #[test]
     fn unresolved_model_respects_retry_cooldown() {
         let mut s = state();
-        s.cache_model(None);
+        s.cache_model(ModelResolution::default());
         assert!(!s.should_fetch_model(), "within cooldown");
         s.model_attempted_at = Some(ago(MODEL_UNRESOLVED_RETRY + Duration::from_secs(1)));
         assert!(s.should_fetch_model(), "cooldown elapsed");
     }
 
+    /// A fallback name that arrived with a metadata error is provisional: it
+    /// must retry on the short unresolved cooldown, not sit on the 10-minute
+    /// refresh interval — otherwise a fixed API key would leave the auth
+    /// warning standing for up to ten minutes.
+    #[test]
+    fn errored_resolution_retries_on_unresolved_cooldown() {
+        let mut s = state();
+        s.cache_model(errored(Some("a/b"), ModelMetadataError::AuthRequired));
+        assert_eq!(
+            s.model_metadata_error,
+            Some(ModelMetadataError::AuthRequired)
+        );
+        assert!(!s.should_fetch_model(), "within cooldown");
+        s.model_attempted_at = Some(ago(MODEL_UNRESOLVED_RETRY + Duration::from_secs(1)));
+        assert!(
+            s.should_fetch_model(),
+            "cooldown elapsed despite cached name"
+        );
+    }
+
+    /// The warning clears as soon as a fetch resolves cleanly — a cached
+    /// success must not keep showing a stale auth warning.
+    #[test]
+    fn clean_fetch_clears_metadata_error() {
+        let mut s = state();
+        s.cache_model(errored(Some("a/b"), ModelMetadataError::AuthRequired));
+        s.cache_model(resolved("a/b"));
+        assert_eq!(s.model_metadata_error, None);
+        assert!(!s.should_fetch_model(), "clean result trusted again");
+    }
+
+    /// An errored fetch that produced no name (no command-line hint) keeps
+    /// the last-known model visible; the fresh error explains why it may be
+    /// stale.
+    #[test]
+    fn errored_fetch_without_name_keeps_last_known_model() {
+        let mut s = state();
+        s.cache_model(resolved("a/b"));
+        s.cache_model(errored(None, ModelMetadataError::Unavailable));
+        assert_eq!(
+            s.cached_model.as_ref().map(|m| m.name.as_str()),
+            Some("a/b")
+        );
+        assert_eq!(
+            s.model_metadata_error,
+            Some(ModelMetadataError::Unavailable)
+        );
+    }
+
+    /// A restart invalidation drops the error along with the cached model —
+    /// the re-resolved engine starts from a clean slate.
+    #[test]
+    fn restart_clears_metadata_error() {
+        let mut s = state();
+        s.cache_model(errored(Some("a/b"), ModelMetadataError::AuthRequired));
+        s.record_probe_result(false);
+        s.record_probe_result(false);
+        s.record_probe_result(false);
+        assert_eq!(s.model_metadata_error, None);
+    }
+
     #[test]
     fn restart_invalidates_cached_model() {
         let mut s = state();
-        s.cache_model(Some(model("a/b")));
+        s.cache_model(resolved("a/b"));
         assert!(!s.should_fetch_model());
 
         // 3 consecutive failures => Stopped => cache cleared once.
@@ -753,7 +882,7 @@ mod tests {
     #[test]
     fn successful_probe_keeps_model_cache() {
         let mut s = state();
-        s.cache_model(Some(model("a/b")));
+        s.cache_model(resolved("a/b"));
         s.record_probe_result(true);
         assert!(s.cached_model.is_some());
         assert!(!s.should_fetch_model());
