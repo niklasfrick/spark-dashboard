@@ -14,12 +14,13 @@
 //!   they are the page-worthy data and are buffered (bounded), flushed on
 //!   recovery.
 //! - Idle hosts export nothing: the silent gap in the index is the record of
-//!   idleness. GPU events are never idle-gated.
+//!   idleness. GPU events and engine model events are never idle-gated; model
+//!   events fire only on first detection or model change.
 //! - 403 (bad token) and 400 code 7 (index not allowed) count as *reachable* —
 //!   the network is up; the configuration problem is surfaced through the
 //!   status instead of masquerading as an outage.
 
-use crate::engines::EngineType;
+use crate::engines::{EngineSnapshot, EngineType};
 use crate::metrics::{gpu::GpuEvent, MetricsSnapshot};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
@@ -45,6 +46,7 @@ const EVENT_BACKLOG_CAP: usize = 1000;
 const SOURCE: &str = "spark-dashboard";
 const METRICS_SOURCTYPE: &str = "spark_dashboard";
 const EVENTS_SOURCTYPE: &str = "spark_dashboard_gpu_event";
+const MODEL_EVENT_SOURCTYPE: &str = "spark_dashboard_engine_model";
 
 fn default_index() -> String {
     "metrics".to_string()
@@ -509,6 +511,58 @@ pub fn build_gpu_event(event: &GpuEvent, host: &str, events_index: &str) -> Valu
     })
 }
 
+/// An engine model event as a plain JSON event for the conventional
+/// `events_index`. Never a metric, never idle-gated; the exporter emits one
+/// per distinct model per endpoint (first detection and model changes).
+pub fn build_engine_model_event(
+    engine: &EngineSnapshot,
+    host: &str,
+    events_index: &str,
+    timestamp_ms: u64,
+) -> Option<Value> {
+    let model = engine.model.as_ref()?;
+    let engine_type = serde_json::to_value(&engine.engine_type)
+        .ok()?
+        .as_str()?
+        .to_lowercase();
+    Some(json!({
+        "time": timestamp_ms / 1000,
+        "host": host,
+        "source": SOURCE,
+        "sourcetype": MODEL_EVENT_SOURCTYPE,
+        "index": events_index,
+        "event": {
+            "engine_type": engine_type,
+            "endpoint": engine.endpoint,
+            "model_id": model.name,
+            "parameter_size": model.parameter_size,
+            "quantization": model.quantization,
+            "precision": model.precision,
+            "tensor_type": model.tensor_type,
+            "model_type": model.model_type,
+            "pipeline_tag": model.pipeline_tag,
+        },
+    }))
+}
+
+/// Stable identity of the served model: name plus the descriptive fields that
+/// can change on a model swap. One event per distinct signature per endpoint.
+fn model_signature(engine: &EngineSnapshot) -> String {
+    let Some(model) = &engine.model else {
+        return String::new();
+    };
+    format!(
+        "{}/{:?}/{:?}/{:?}/{:?}/{:?}/{:?}",
+        model.name,
+        model.parameter_size,
+        model.quantization,
+        model.precision,
+        model.tensor_type,
+        model.model_type,
+        model.pipeline_tag
+    )
+}
+
 /// The connectivity test event the settings dialog's Test button ingests.
 pub fn build_test_event(host: &str, index: &str, now_ms: u64) -> Value {
     json!({
@@ -651,6 +705,9 @@ struct Exporter {
     backlog: VecDeque<Value>,
     /// GPU events awaiting send.
     events: VecDeque<Value>,
+    /// (endpoint, model signature) pairs already recorded — model events
+    /// fire once per distinct model per endpoint.
+    known_models: Vec<(String, String)>,
 }
 
 impl Exporter {
@@ -664,6 +721,7 @@ impl Exporter {
             next_probe: Instant::now() + probe_interval,
             backlog: VecDeque::new(),
             events: VecDeque::new(),
+            known_models: Vec::new(),
         }
     }
 
@@ -794,6 +852,33 @@ pub async fn run_exporter(
             // down — they are the page-worthy data.
             for event in &snapshot.gpu_events {
                 exporter.push_event(build_gpu_event(event, &host, &target.events_index));
+            }
+
+            // Engine model events: same treatment as GPU events (never
+            // idle-gated, buffered while down), but emitted only on first
+            // detection or model change — the record of which model was
+            // serving when.
+            for engine in &snapshot.engines {
+                let Some(event) = build_engine_model_event(
+                    engine,
+                    &host,
+                    &target.events_index,
+                    snapshot.timestamp_ms,
+                ) else {
+                    continue;
+                };
+                let signature = model_signature(engine);
+                let known = exporter
+                    .known_models
+                    .iter()
+                    .any(|(endpoint, sig)| *endpoint == engine.endpoint && *sig == signature);
+                if !known {
+                    exporter
+                        .known_models
+                        .push((engine.endpoint.clone(), signature));
+                    exporter.push_event(event);
+                    tracing::info!(endpoint = %engine.endpoint, "engine model detected or changed; recording to HEC");
+                }
             }
 
             if !is_active(&snapshot) {
@@ -928,7 +1013,9 @@ async fn flush_events(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engines::{EngineMetrics, EngineSnapshot, EngineStatus, EngineType, RecentRequest};
+    use crate::engines::{
+        EngineMetrics, EngineSnapshot, EngineStatus, EngineType, ModelInfo, RecentRequest,
+    };
     use crate::metrics::{CpuMetrics, DiskMetrics, GpuMetrics, MemoryMetrics, NetworkMetrics};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc as StdArc, Mutex as StdMutex};
@@ -1589,6 +1676,23 @@ mod tests {
         serde_json::to_string(&snap).unwrap()
     }
 
+    fn active_json_with_model(name: &str) -> String {
+        let snap = snapshot(|s| {
+            let mut engine = engine_with(Some(1), Some(0));
+            engine.model = Some(ModelInfo {
+                name: name.into(),
+                parameter_size: Some("1B params".into()),
+                quantization: None,
+                precision: None,
+                tensor_type: None,
+                model_type: None,
+                pipeline_tag: None,
+            });
+            s.engines = vec![engine];
+        });
+        serde_json::to_string(&snap).unwrap()
+    }
+
     #[tokio::test]
     async fn the_exporter_reports_disabled_without_configuration() {
         let (tx, rx) = broadcast::channel::<String>(16);
@@ -1879,6 +1983,82 @@ mod tests {
             st.last_ok_ms.is_none(),
             "a 403 is not a success and must not stamp last_ok_ms"
         );
+        drop(task);
+    }
+
+    #[test]
+    fn the_model_event_carries_the_identity_fields() {
+        let mut engine = engine_with(Some(1), Some(0));
+        engine.model = Some(ModelInfo {
+            name: "org/model-x".into(),
+            parameter_size: Some("19.9B params".into()),
+            quantization: Some("compressed-tensors".into()),
+            precision: None,
+            tensor_type: Some("BF16".into()),
+            model_type: Some("qwen3_5".into()),
+            pipeline_tag: None,
+        });
+        let event = build_engine_model_event(&engine, "h", "main", 1_723_800_000_000).unwrap();
+        assert_eq!(event["sourcetype"], "spark_dashboard_engine_model");
+        assert_eq!(event["index"], "main");
+        assert_eq!(event["time"], 1_723_800_000);
+        assert_eq!(event["event"]["engine_type"], "vllm");
+        assert_eq!(event["event"]["endpoint"], "http://127.0.0.1:8000");
+        assert_eq!(event["event"]["model_id"], "org/model-x");
+        assert_eq!(event["event"]["parameter_size"], "19.9B params");
+        assert_eq!(event["event"]["tensor_type"], "BF16");
+        // No model info: no event.
+        assert!(build_engine_model_event(&engine_with(Some(1), None), "h", "main", 0).is_none());
+    }
+
+    #[tokio::test]
+    async fn the_engine_model_event_is_emitted_once_and_again_on_model_change() {
+        // The exporter must record a model event on first detection, stay
+        // silent while the model is unchanged, and emit again when the
+        // served model changes — without re-emitting for the old model.
+        let mock = start_mock(None, 0).await;
+        let mut target = target();
+        target.url = mock.url.clone();
+        let (tx, rx) = broadcast::channel::<String>(16);
+        let config = SharedHecConfig::new(RwLock::new(Some(target)));
+        let status = SharedExportStatus::new(Mutex::new(ExportStatus::disabled()));
+        let task = tokio::spawn(run_exporter(
+            rx,
+            config,
+            status.clone(),
+            "test-host".into(),
+            Duration::from_secs(60), // keep the liveness probe out of this test
+        ));
+
+        tx.send(active_json_with_model("org/model-a")).unwrap();
+        let st = wait_status(&status, Duration::from_secs(2), |s| {
+            s.state == ExportState::Exporting
+        })
+        .await;
+        assert_eq!(st.state, ExportState::Exporting);
+
+        // Unchanged model: no new model event.
+        tx.send(active_json_with_model("org/model-a")).unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // Model changed: a second model event.
+        tx.send(active_json_with_model("org/model-b")).unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        let posts = mock.posts.lock().unwrap().clone();
+        let model_events: Vec<Value> = posts
+            .iter()
+            .filter_map(|body| serde_json::from_str::<Value>(body).ok())
+            .flat_map(|value| value.as_array().unwrap().clone())
+            .filter(|event| event["sourcetype"] == "spark_dashboard_engine_model")
+            .collect();
+        assert_eq!(
+            model_events.len(),
+            2,
+            "one model event per distinct model, not per tick"
+        );
+        assert_eq!(model_events[0]["event"]["model_id"], "org/model-a");
+        assert_eq!(model_events[1]["event"]["model_id"], "org/model-b");
         drop(task);
     }
 }
