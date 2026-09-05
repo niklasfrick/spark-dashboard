@@ -47,7 +47,7 @@ pub enum EngineStatus {
 /// *why* a name is missing (or provisional) instead of silently showing the
 /// command-line fallback. `None` on the snapshot means metadata resolved
 /// normally.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ModelMetadataError {
     /// `/v1/models` rejected the request as unauthorized (401/403) — the
     /// dashboard lacks the engine's API key. Actionable: configure a
@@ -68,7 +68,7 @@ pub struct ModelResolution {
     pub metadata_error: Option<ModelMetadataError>,
 }
 
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ModelInfo {
     pub name: String,
     pub parameter_size: Option<String>,
@@ -82,7 +82,7 @@ pub struct ModelInfo {
 /// Tail-latency percentiles in milliseconds, derived from a Prometheus
 /// histogram. Any quantile may be `None` if the histogram has not yet
 /// observed enough data to interpolate.
-#[derive(Clone, Debug, serde::Serialize, Default)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, Default)]
 pub struct LatencyPercentiles {
     pub p50_ms: Option<f64>,
     pub p95_ms: Option<f64>,
@@ -112,13 +112,13 @@ pub const TPOT_SLO_MS: f64 = 50.0;
 /// frontend's `JSON.parse`. The interpolation logic treats values
 /// at or beyond `f64::MAX` as the "overflow" bucket, matching the
 /// Rust `fraction_le` semantics.
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct HistogramBucket {
     pub le_seconds: f64,
     pub cumulative_count: f64,
 }
 
-#[derive(Clone, Debug, serde::Serialize, Default)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, Default)]
 pub struct EngineMetrics {
     pub tokens_per_sec: Option<f64>,
     pub avg_tokens_per_sec: Option<f64>,
@@ -216,7 +216,7 @@ pub struct EngineMetrics {
 
 /// A per-request inference metric record.
 /// Empty for now; future engine adapter integration will populate these.
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct RecentRequest {
     pub start_ms: u64,
     pub end_ms: u64,
@@ -224,7 +224,7 @@ pub struct RecentRequest {
     pub ttft_ms: f64,
 }
 
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct EngineSnapshot {
     pub engine_type: EngineType,
     pub endpoint: String,
@@ -246,7 +246,7 @@ pub struct EngineSnapshot {
     /// Host-namespace PIDs belonging to the engine, used to compute
     /// `gpu_indexes`. Internal plumbing between the collector loops — not
     /// part of the wire format.
-    #[serde(skip_serializing)]
+    #[serde(skip_serializing, default)]
     pub pids: Vec<u32>,
     /// Full Docker container id when the engine is running in a container
     /// discovered via the Docker scan layer. Internal-only: not serialized to

@@ -22,5 +22,19 @@ Thumbs.db
 # Claude Code workspace
 .claude/
 .gstack/
+
+# VS Code workspaces
+*.code-workspace
+
+# Splunk stuff
+SplunkHEC-spec.md
+Splunk-App/
+
+# Local tooling
+deploy-local.sh
+
+# Generated knowledge graph (local, not versioned)
+graphify-out/
+
 # Playwright CLI output (may contain credentials)
 .playwright-cli/

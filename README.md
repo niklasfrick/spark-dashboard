@@ -98,6 +98,12 @@ for details on what each script does.
 - With several engines on a host, each panel names the one it is showing and
   marks the provider of the model it is serving
 
+**Splunk HEC Export** (opt-in)
+- Pushes each active snapshot to a HEC endpoint in the multiple-measurement
+  metrics format; GPU events are buffered and flushed on recovery
+- Header status indicator with honest failure reasons, plus a test-connection
+  probe against the in-progress (unsaved) edit
+
 **Dashboard**
 - A grid of panels you arrange yourself: drag, resize, add from a palette of
   every metric, remove what you do not want, save or discard
@@ -401,6 +407,48 @@ engines can be streamed. Per container, one background Docker log stream fans
 out to all clients watching it (same pattern as metrics) and stops when the
 last viewer disconnects. stdout and stderr are line-buffered so split frames
 don't produce partial lines.
+
+### Splunk HEC export (opt-in)
+
+The dashboard can push its metrics into a Splunk HTTP Event Collector. The
+target — HEC URL, token, metrics index, event index — lives in the shared
+dashboard document (the **Export settings** dialog), so there is nothing on
+the host, in `.env`, or on the CLI.
+
+- **Off by default.** The exporter only runs when the document carries a
+  usable `export.hec` target; a fresh or empty document exports nothing.
+- **Metrics-type index required.** Each snapshot is one JSON event in
+  Splunk's multiple-measurement format — `event: "metric"` with the
+  `metric_name:*` fields under `fields` — so point it at an index with
+  `datatype = metric`. A standard index accepts the events and indexes
+  nothing.
+- **Drop while down.** Once the endpoint is unreachable, new snapshots are
+  dropped immediately — no unbounded memory growth during an outage, and the
+  gap in the index is the outage. GPU events are the exception: they are the
+  page-worthy data, buffered (cap 1000, oldest dropped) and flushed on
+  recovery.
+- **Idle hosts export nothing.** The silent gap is the record of idleness;
+  GPU events are never idle-gated.
+- **The status indicator reports the truth.** The header's "HEC Connection"
+  badge is green while reachable and ingesting, red when the endpoint is down
+  *or* rejecting data (the tooltip carries the reason — bad token, an index
+  the token cannot write, rate limit), and gray when not configured. A
+  rejected probe is not a success: it does not clear the last error or stamp
+  a last-ok time.
+- **Test without saving.** "Test connection" fires a one-off test event at
+  the dialog's current URL/token/index. A field left blank falls back to the
+  stored value, and the masked token placeholder never leaves the browser —
+  the server keeps the stored token instead.
+
+```
+curl -s localhost:3000/api/export-status              # exporter state
+curl -s -X POST localhost:3000/api/export/test \
+  -H 'Content-Type: application/json' -d '{}'         # one-off connectivity event
+```
+
+The Splunk side — minting a HEC token, the metrics index, and the
+reverse-proxy topology for reaching HEC from outside the LAN — is covered in
+[docs/splunk-hec-setup.md](docs/splunk-hec-setup.md).
 
 ## Development
 
