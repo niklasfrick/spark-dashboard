@@ -514,6 +514,9 @@ pub fn build_gpu_event(event: &GpuEvent, host: &str, events_index: &str) -> Valu
 /// An engine model event as a plain JSON event for the conventional
 /// `events_index`. Never a metric, never idle-gated; the exporter emits one
 /// per distinct model per endpoint (first detection and model changes).
+/// `model_metadata_error` is `null` when the engine's own `/v1/models`
+/// metadata resolved; otherwise it names why the `model_id` is only a
+/// command-line fallback (provisional) and the operator should act.
 pub fn build_engine_model_event(
     engine: &EngineSnapshot,
     host: &str,
@@ -525,6 +528,10 @@ pub fn build_engine_model_event(
         .ok()?
         .as_str()?
         .to_lowercase();
+    // `ModelMetadataError` serializes to its unit-variant name (or null);
+    // serialize through serde so the wire spelling stays the single source
+    // of truth shared with the frontend.
+    let metadata_error = serde_json::to_value(engine.model_metadata_error).ok();
     Some(json!({
         "time": timestamp_ms / 1000,
         "host": host,
@@ -541,25 +548,30 @@ pub fn build_engine_model_event(
             "tensor_type": model.tensor_type,
             "model_type": model.model_type,
             "pipeline_tag": model.pipeline_tag,
+            "model_metadata_error": metadata_error,
         },
     }))
 }
 
 /// Stable identity of the served model: name plus the descriptive fields that
-/// can change on a model swap. One event per distinct signature per endpoint.
+/// can change on a model swap, plus the metadata-error state — a name that
+/// only becomes trustworthy once the engine's own answer arrives (or stops
+/// being a fallback) is a new state worth its own event. One event per
+/// distinct signature per endpoint.
 fn model_signature(engine: &EngineSnapshot) -> String {
     let Some(model) = &engine.model else {
         return String::new();
     };
     format!(
-        "{}/{:?}/{:?}/{:?}/{:?}/{:?}/{:?}",
+        "{}/{:?}/{:?}/{:?}/{:?}/{:?}/{:?}/{:?}",
         model.name,
         model.parameter_size,
         model.quantization,
         model.precision,
         model.tensor_type,
         model.model_type,
-        model.pipeline_tag
+        model.pipeline_tag,
+        engine.model_metadata_error
     )
 }
 
@@ -1014,7 +1026,8 @@ async fn flush_events(
 mod tests {
     use super::*;
     use crate::engines::{
-        EngineMetrics, EngineSnapshot, EngineStatus, EngineType, ModelInfo, RecentRequest,
+        EngineMetrics, EngineSnapshot, EngineStatus, EngineType, ModelInfo, ModelMetadataError,
+        RecentRequest,
     };
     use crate::metrics::{CpuMetrics, DiskMetrics, GpuMetrics, MemoryMetrics, NetworkMetrics};
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -2007,8 +2020,42 @@ mod tests {
         assert_eq!(event["event"]["model_id"], "org/model-x");
         assert_eq!(event["event"]["parameter_size"], "19.9B params");
         assert_eq!(event["event"]["tensor_type"], "BF16");
+        // Metadata resolved normally: the field is present and null, so the
+        // column exists in the index even when there is nothing to flag.
+        assert!(event["event"]["model_metadata_error"].is_null());
         // No model info: no event.
         assert!(build_engine_model_event(&engine_with(Some(1), None), "h", "main", 0).is_none());
+    }
+
+    #[test]
+    fn the_model_event_flags_a_provisional_name_and_the_signature_tracks_it() {
+        let mut engine = engine_with(Some(1), Some(0));
+        engine.model = Some(ModelInfo {
+            name: "fallback-from-cli".into(),
+            parameter_size: None,
+            quantization: None,
+            precision: None,
+            tensor_type: None,
+            model_type: None,
+            pipeline_tag: None,
+        });
+        // Unresolved metadata: the event carries the reason, so a query can
+        // tell a fallback name from the engine's own answer.
+        engine.model_metadata_error = Some(ModelMetadataError::AuthRequired);
+        let event = build_engine_model_event(&engine, "h", "main", 0).unwrap();
+        assert_eq!(event["event"]["model_id"], "fallback-from-cli");
+        assert_eq!(event["event"]["model_metadata_error"], "AuthRequired");
+
+        // Same name, metadata now resolved: the signature must change so the
+        // exporter emits a fresh event for the trustworthy state.
+        let provisional = model_signature(&engine);
+        engine.model_metadata_error = None;
+        assert_ne!(model_signature(&engine), provisional);
+        assert_eq!(
+            build_engine_model_event(&engine, "h", "main", 0).unwrap()["event"]
+                ["model_metadata_error"],
+            Value::Null
+        );
     }
 
     #[tokio::test]
