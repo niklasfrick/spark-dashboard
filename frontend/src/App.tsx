@@ -13,6 +13,8 @@ import { HecStatusDot } from './components/HecStatusDot'
 import { GridPageEditor } from './components/grid/GridPageEditor'
 import { PageBar } from './components/pages/PageBar'
 import { withPagePanels } from './lib/dashboard/editing'
+import { setPageSource } from './lib/dashboard/pages'
+import type { PageSource } from './lib/dashboard/pageSource'
 import type { SaveOutcome } from './lib/dashboard/client'
 import type { DashboardDocument, DashboardPage, DashboardPanel } from './lib/dashboard/schema'
 
@@ -50,6 +52,16 @@ function DashboardPageView({ pageId }: { pageId: string | null }) {
     (panels: DashboardPanel[]) =>
       document && page
         ? save(withPagePanels(document, page.id, panels))
+        : Promise.resolve<SaveOutcome['status']>('failed'),
+    [document, page, save],
+  )
+
+  // A page edit, written when it is made — the same rule as renaming a page,
+  // carried out here because this is where the document and the save live.
+  const saveSource = useCallback(
+    (source: PageSource | null) =>
+      document && page
+        ? save(setPageSource(document, page.id, source))
         : Promise.resolve<SaveOutcome['status']>('failed'),
     [document, page, save],
   )
@@ -107,6 +119,7 @@ function DashboardPageView({ pageId }: { pageId: string | null }) {
             page={page}
             readOnly={readOnly}
             onSave={savePanels}
+            onChangeSource={saveSource}
             onEditingChange={setEditing}
           />
         )}

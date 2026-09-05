@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { GRID_MAX_ROWS } from '@/lib/dashboard/grid'
 import type { PanelType } from '@/lib/dashboard/panels'
 import { BarButton } from './BarButton'
@@ -28,6 +29,12 @@ interface EditModeBarProps {
   narrow: boolean
   /** What the page would not take, or null when nothing stands refused. */
   refused: Refusal | null
+  /**
+   * The page-level configuration control, shown beside “Edit layout”. Withheld
+   * while a session is open: a source change writes the document immediately,
+   * and mid-session the document under the unsaved panels must hold still.
+   */
+  pageConfig?: ReactNode
   onBegin: () => void
   onAdd: (type: PanelType) => void
   onSave: () => void
@@ -51,6 +58,7 @@ export function EditModeBar({
   saving,
   narrow,
   refused,
+  pageConfig,
   onBegin,
   onAdd,
   onSave,
@@ -82,7 +90,12 @@ export function EditModeBar({
             </BarButton>
           </>
         ) : (
-          !narrow && <BarButton onClick={onBegin}>Edit layout</BarButton>
+          <>
+            {/* Unlike editing, the page's configuration is not geometry, so it
+                stays available on the stacked column too. */}
+            {pageConfig}
+            {!narrow && <BarButton onClick={onBegin}>Edit layout</BarButton>}
+          </>
         )}
       </div>
     </div>

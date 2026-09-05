@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { addPage, removePage, renamePage } from './pages'
+import { addPage, removePage, renamePage, setPageSource } from './pages'
+import { ALL_MODELS } from './pageSource'
 import { DASHBOARD_SCHEMA_VERSION, type DashboardDocument, type DashboardPage } from './schema'
 
 function documentOf(...pages: Array<Partial<DashboardPage>>): DashboardDocument {
@@ -8,6 +9,7 @@ function documentOf(...pages: Array<Partial<DashboardPage>>): DashboardDocument 
     pages: pages.map((page, index) => ({
       id: page.id ?? `page-${index + 1}`,
       name: page.name ?? `Page ${index + 1}`,
+      ...(page.source === undefined ? {} : { source: page.source }),
       panels: page.panels ?? [],
     })),
   }
@@ -96,6 +98,53 @@ describe('renamePage', () => {
     const before = documentOf({ id: 'a', name: 'Overview' })
 
     expect(renamePage(before, 'gone', 'Anything')).toBe(before)
+  })
+})
+
+describe('setPageSource', () => {
+  it('stores the chosen source on the named page and only there', () => {
+    const next = setPageSource(
+      documentOf({ id: 'overview' }, { id: 'global' }),
+      'global',
+      ALL_MODELS,
+    )
+
+    expect(next.pages[0].source).toBeUndefined()
+    expect(next.pages[1].source).toEqual({ kind: 'all' })
+  })
+
+  it('replaces one engine with another', () => {
+    const configured = documentOf({
+      id: 'p',
+      source: { kind: 'engine', endpoint: 'http://localhost:8000' },
+    })
+    const next = setPageSource(configured, 'p', { kind: 'engine', endpoint: 'http://localhost:8001' })
+
+    expect(next.pages[0].source).toEqual({ kind: 'engine', endpoint: 'http://localhost:8001' })
+  })
+
+  it('removes the field on the way back to automatic, rather than storing a sentinel', () => {
+    // Absent is what "never configured" looks like everywhere else in the
+    // document, and it is what lets the page follow a host that changes.
+    const configured = documentOf({ id: 'p', source: ALL_MODELS })
+    const next = setPageSource(configured, 'p', null)
+
+    expect(next.pages[0]).not.toHaveProperty('source')
+  })
+
+  it('returns the same document when nothing would change', () => {
+    const document = documentOf({ id: 'p', source: ALL_MODELS }, { id: 'q' })
+
+    expect(setPageSource(document, 'p', { kind: 'all' })).toBe(document)
+    expect(setPageSource(document, 'q', null)).toBe(document)
+    expect(setPageSource(document, 'missing', ALL_MODELS)).toBe(document)
+  })
+
+  it('keeps the untouched pages by identity', () => {
+    const document = documentOf({ id: 'p' }, { id: 'q' })
+    const next = setPageSource(document, 'p', ALL_MODELS)
+
+    expect(next.pages[1]).toBe(document.pages[1])
   })
 })
 

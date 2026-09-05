@@ -12,10 +12,12 @@ import {
   repointPanel,
   setPanelWindow,
 } from '@/lib/dashboard/editing'
+import type { PageSource } from '@/lib/dashboard/pageSource'
 import { defaultPanelTitle, type PanelType } from '@/lib/dashboard/panels'
 import type { DashboardPage, DashboardPanel } from '@/lib/dashboard/schema'
 import type { TimeWindow } from '@/types/events'
 import { EditModeBar, type Refusal } from './EditModeBar'
+import { PageConfig } from './PageConfig'
 import { PanelSettings } from './PanelSettings'
 import { isNarrow } from './breakpoint'
 import { GridPage, type GridEditing, type PanelChrome } from './GridPage'
@@ -40,6 +42,12 @@ interface GridPageEditorProps {
   readOnly: boolean
   onSave: (panels: DashboardPanel[]) => Promise<SaveOutcome['status']>
   /**
+   * Writes the page's source — what its following panels show by default.
+   * Immediate, like a page rename; not part of the edit session. Absent means
+   * nowhere to write it, and the control is withheld rather than dead.
+   */
+  onChangeSource?: (source: PageSource | null) => Promise<SaveOutcome['status']>
+  /**
    * Whether a session is open, for the page list in the header. The session is a
    * working copy that dies with this component, so switching pages while one is
    * open would throw it away — the header withholds that until it is settled.
@@ -58,14 +66,15 @@ interface GridPageEditorProps {
  * experimental layout and one every colleague on this instance loads.
  *
  * There is no undo. Discarding the session is the substitute — an undo stack
- * over a grid that reflows on collision is far deeper than what it would buy —
- * which is also why removing a panel is behind its settings rather than one
- * click on the frame.
+ * over a grid that reflows on collision is far deeper than what it would buy.
+ * That makes the one-click X on each frame safe enough to offer: a removal
+ * gone wrong costs the session, never the stored page.
  */
 export function GridPageEditor({
   page,
   readOnly,
   onSave,
+  onChangeSource,
   onEditingChange,
 }: GridPageEditorProps) {
   const [session, setSession] = useState<EditSession | null>(null)
@@ -136,15 +145,20 @@ export function GridPageEditor({
     [],
   )
 
-  const remove = useCallback(() => {
-    // The settings close with the panel: there is nothing left to configure,
-    // and a refusal about it is no longer about anything.
+  const remove = useCallback((panelId: string) => {
     setSession((current) =>
-      current?.configuringId
+      current
         ? {
-            panels: removePanel(current.panels, current.configuringId),
-            configuringId: null,
-            refused: null,
+            panels: removePanel(current.panels, panelId),
+            // The settings close with their panel — there is nothing left to
+            // configure — while another panel's stay open.
+            configuringId: current.configuringId === panelId ? null : current.configuringId,
+            // A refusal about the removed panel is no longer about anything;
+            // one about a different panel, or a refused addition, still is.
+            refused:
+              current.refused?.kind === 'drop' && current.refused.panelId === panelId
+                ? null
+                : current.refused,
           }
         : current,
     )
@@ -159,8 +173,9 @@ export function GridPageEditor({
             ? { ...current, configuringId: current.configuringId === panelId ? null : panelId }
             : current,
         ),
+      onRemove: remove,
     }),
-    [session?.configuringId],
+    [session?.configuringId, remove],
   )
 
   const shown = useMemo(
@@ -207,6 +222,11 @@ export function GridPageEditor({
         saving={saving}
         narrow={narrow}
         refused={refused}
+        pageConfig={
+          onChangeSource && (
+            <PageConfig source={page.source} readOnly={readOnly} onChange={onChangeSource} />
+          )
+        }
         onBegin={() => setSession({ panels: page.panels, refused: null, configuringId: null })}
         onAdd={add}
         onSave={() => void save()}
@@ -231,7 +251,7 @@ export function GridPageEditor({
             onRepoint={(binding: PanelBinding) =>
               editConfigured((panels, id) => repointPanel(panels, id, binding))
             }
-            onRemove={remove}
+            onRemove={() => remove(configured.id)}
             onClose={() =>
               setSession((current) => (current ? { ...current, configuringId: null } : current))
             }

@@ -82,10 +82,27 @@ on a one-GPU laptop and on a four-GPU server.
 _Avoid_: auto, inherit, default binding
 
 **Page selection**:
-The GPU and engine a page's `follow` panels resolve against. What the operator
-chose is stored sparsely, so an absent key means "never chose" rather than "chose
-nothing".
+The GPU and engine target a page's `follow` panels resolve against. Three layers,
+strongest first: what the operator chose this session (stored sparsely, so an
+absent key means "never chose" rather than "chose nothing"), the page's **page
+source**, then the host's defaults.
 _Avoid_: current GPU, active engine, global filter
+
+**Page source**:
+The persisted per-page default for what following engine panels show: one engine
+by endpoint, or **all models** — the aggregate. Absent means automatic (the host
+default), which is what every page starts as and what the preset ships with.
+Chosen from the **page config** control beside "Edit layout" and written the
+moment it is chosen, like a rename — not part of an edit session.
+_Avoid_: page filter, default engine (it may also be the aggregate), page binding
+
+**All models**:
+The combined view across every running engine: throughput and counters sum,
+latencies are request-weighted means (`lib/engineAggregate`). A following panel
+rendering it says so — a combined figure wearing no name would read as one
+engine's. Per-engine things (logs, engine identity, a pin) never aggregate.
+_Avoid_: global view, all engines (the panel type "All Engines" is the overview
+panel; the page source is about what following panels render)
 
 **Time window**:
 How much history a panel's chart covers (`5m`, `10m`, `15m`). Per panel, not per

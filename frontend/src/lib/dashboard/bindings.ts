@@ -20,6 +20,7 @@
 import { findEngineByEndpoint, findGpuByIndex, type GpuIdentity } from '@/lib/identity'
 import type { EngineSnapshot } from '@/types/metrics'
 import { isRecord } from './json'
+import type { PageEngineTarget } from './selection'
 
 /**
  * Where a panel gets its target.
@@ -130,20 +131,40 @@ export function resolveGpuBinding<T extends GpuIdentity>(
 }
 
 /**
+ * What an engine binding turned into: any single-target resolution, or the
+ * aggregate — every engine at once, which only a following panel on a page
+ * configured for all models resolves to. A pin always names one engine, so the
+ * aggregate never reaches a pinned panel.
+ */
+export type EngineBindingResolution<T> = BindingResolution<T> | { status: 'aggregate' }
+
+/**
  * Resolves an engine panel's binding against the engines detected on this host.
  *
- * `pageEngineEndpoint` is the page-level selection. A host with no engines, or a
- * page with no engine selected, is `unselected` — hardware monitoring is still
- * useful there, so it is a graceful state rather than a failure.
+ * `pageTarget` is the page-level selection: one engine, or all of them
+ * combined. A host with no engines, or a page with no engine selected, is
+ * `unselected` — hardware monitoring is still useful there, so it is a graceful
+ * state rather than a failure.
  */
 export function resolveEngineBinding<T extends Pick<EngineSnapshot, 'endpoint'>>(
   binding: PanelBinding,
   engines: readonly T[],
-  pageEngineEndpoint: string | null | undefined,
-): BindingResolution<T> {
+  pageTarget: PageEngineTarget | null | undefined,
+): EngineBindingResolution<T> {
   if (binding.kind !== 'follow' && binding.kind !== 'engine') return { status: 'unreadable' }
 
-  const endpoint = binding.kind === 'engine' ? binding.endpoint : pageEngineEndpoint
+  if (binding.kind === 'follow' && pageTarget?.kind === 'all') {
+    // Whether an aggregate over a host with nothing running is worth rendering
+    // is the caller's question — this side only says what the binding names.
+    return { status: 'aggregate' }
+  }
+
+  const endpoint =
+    binding.kind === 'engine'
+      ? binding.endpoint
+      : pageTarget?.kind === 'engine'
+        ? pageTarget.endpoint
+        : null
   if (!endpoint) return { status: 'unselected' }
 
   const target = findEngineByEndpoint(engines, endpoint)

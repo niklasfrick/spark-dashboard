@@ -359,6 +359,7 @@ mod tests {
             endpoint: endpoint.to_string(),
             status: EngineStatus::Running,
             model: None,
+            model_metadata_error: None,
             metrics: None,
             recent_requests: Vec::new(),
             deployment_mode: match container_id {

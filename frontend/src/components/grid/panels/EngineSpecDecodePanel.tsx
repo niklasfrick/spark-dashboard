@@ -15,7 +15,9 @@ import type { PanelContentProps } from '../panelRegistry'
  */
 export function EngineSpecDecodePanel({ panel }: PanelContentProps) {
   const resolution = useEnginePanel(panel)
-  if (resolution.status !== 'resolved') return <EnginePanelNotice resolution={resolution} />
+  if (resolution.status !== 'resolved' && resolution.status !== 'aggregate') {
+    return <EnginePanelNotice resolution={resolution} />
+  }
 
   const { metric } = resolution
   const draftTokens = metric('spec_decode_draft_tokens_total')
@@ -28,6 +30,18 @@ export function EngineSpecDecodePanel({ panel }: PanelContentProps) {
   // The engine is named on a multi-engine host for the same reason its data
   // would be: with two engines on a page, "this engine" does not say which.
   if (draftTokens === null || draftTokens === 0) {
+    // Under the aggregate the counters are combined, so their absence speaks
+    // for every model at once and "this engine" would name nothing.
+    if (resolution.status === 'aggregate') {
+      return (
+        <PanelNotice>
+          {draftTokens === null
+            ? 'No model is using speculative decoding.'
+            : 'No model has drafted a token yet.'}
+        </PanelNotice>
+      )
+    }
+
     const subject = engineLabel(resolution) ?? 'This engine'
     return (
       <PanelNotice>

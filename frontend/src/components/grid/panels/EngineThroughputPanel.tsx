@@ -56,7 +56,9 @@ export function EngineDecodeThroughputPanel({ panel }: PanelContentProps) {
 
 function ThroughputPanel({ panel, fields }: PanelContentProps & { fields: ThroughputFields }) {
   const resolution = useEnginePanel(panel)
-  if (resolution.status !== 'resolved') return <EnginePanelNotice resolution={resolution} />
+  if (resolution.status !== 'resolved' && resolution.status !== 'aggregate') {
+    return <EnginePanelNotice resolution={resolution} />
+  }
 
   const { metric, series } = resolution
   const live = series(fields.series.live)

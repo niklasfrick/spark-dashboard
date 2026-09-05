@@ -287,6 +287,42 @@ describe('removing a panel', () => {
 
     expect(screen.queryByRole('region', { name: 'CPU' })).not.toBeInTheDocument()
   })
+
+  it('is one click on the frame’s X, and the save writes it out', async () => {
+    const fetchMock = serveConfiguration({ document: storedDocument(onePanel()) })
+    await editPage(fetchMock)
+    await userEvent.click(screen.getByRole('button', { name: 'Remove CPU' }))
+
+    expect(screen.queryByRole('region', { name: 'CPU' })).not.toBeInTheDocument()
+
+    await saveAndReload(fetchMock)
+
+    expect(screen.queryByRole('region', { name: 'CPU' })).not.toBeInTheDocument()
+  })
+
+  it('offers the X only while the page is being edited', async () => {
+    const fetchMock = serveConfiguration({ document: storedDocument(onePanel()) })
+    await openPage(fetchMock)
+
+    expect(screen.queryByRole('button', { name: 'Remove CPU' })).not.toBeInTheDocument()
+  })
+
+  it('closes the removed panel’s settings, and leaves another panel’s open', async () => {
+    const fetchMock = serveConfiguration({ document: storedDocument(onePanel()) })
+    await editPage(fetchMock)
+    await addPanelOfType('GPU Power')
+
+    await configure('CPU')
+    await userEvent.click(screen.getByRole('button', { name: 'Remove GPU Power' }))
+
+    // The removal was of another panel; the open settings are still about a
+    // panel that exists and stay put.
+    expect(screen.getByRole('region', { name: 'Panel settings' })).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Remove CPU' }))
+
+    expect(screen.queryByRole('region', { name: 'Panel settings' })).not.toBeInTheDocument()
+  })
 })
 
 describe('renaming a panel', () => {

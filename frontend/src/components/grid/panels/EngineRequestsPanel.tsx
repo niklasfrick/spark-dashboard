@@ -16,7 +16,9 @@ import type { PanelContentProps } from '../panelRegistry'
  */
 export function EngineRequestsPanel({ panel }: PanelContentProps) {
   const resolution = useEnginePanel(panel)
-  if (resolution.status !== 'resolved') return <EnginePanelNotice resolution={resolution} />
+  if (resolution.status !== 'resolved' && resolution.status !== 'aggregate') {
+    return <EnginePanelNotice resolution={resolution} />
+  }
 
   const { metric, series } = resolution
   const swapped = metric('swapped_requests')
