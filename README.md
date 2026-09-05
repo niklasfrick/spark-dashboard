@@ -467,6 +467,14 @@ log stream fans out to every panel watching it (same pattern as metrics) and
 stops when the last viewer disconnects. stdout and stderr are line-buffered so
 split frames don't produce partial lines.
 
+When [Splunk HEC export](#splunk-hec-export-opt-in) is configured, the same
+container logs are also forwarded to the `export.hec` target's
+`events_index` as JSON events (sourcetype `spark_dashboard_engine_log` with a
+`container` field) — never to the metrics index. Unlike the viewer, the
+forwarding keeps running with no viewers connected, so the index stays
+continuous; lines are batched once per second into a bounded buffer (oldest
+dropped).
+
 ### Splunk HEC export (opt-in)
 
 The dashboard can push its metrics into a Splunk HTTP Event Collector. The
@@ -488,6 +496,9 @@ the host, in `.env`, or on the CLI.
   recovery.
 - **Idle hosts export nothing.** The silent gap is the record of idleness;
   GPU events are never idle-gated.
+- **Engine container logs** (when the log viewer is enabled) are also
+  forwarded to the events index as JSON events — see
+  [Log viewer](#log-viewer--enable-log-viewer-linux-only-opt-in).
 - **The status indicator reports the truth.** The header's "HEC Connection"
   badge is green while reachable and ingesting, red when the endpoint is down
   *or* rejecting data (the tooltip carries the reason — bad token, an index

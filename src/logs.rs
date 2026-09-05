@@ -35,13 +35,16 @@ use bollard::container::LogOutput;
 use bollard::query_parameters::LogsOptionsBuilder;
 use bollard::Docker;
 use futures_util::StreamExt;
-use std::collections::HashMap;
+use serde_json::{json, Value};
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{broadcast, RwLock};
 use tracing::{debug, warn};
 
 use crate::engines::EngineSnapshot;
+use crate::hec;
 
 /// Flag set at startup when `--enable-log-viewer` is passed.
 /// Read by `server.rs` to decide whether to register the `/ws/logs` route.
@@ -348,6 +351,189 @@ fn flush_trailing(buffer: &mut String, prefix: Option<&str>, tx: &broadcast::Sen
     let _ = tx.send(prefixed);
 }
 
+// ---------------------------------------------------------------------------
+// HEC forwarding for engine container logs
+// ---------------------------------------------------------------------------
+
+/// Engine log lines are *events*, never metrics: they go to the target's
+/// `events_index` (the same destination as GPU events) under their own
+/// sourcetype, and must never be pointed at the metrics index.
+const LOG_HEC_SOURCETYPE: &str = "spark_dashboard_engine_log";
+
+/// Bounded wait-for-sending buffer; the oldest line is dropped when the cap
+/// is exceeded. Engine logs are not the page-worthy data GPU events are,
+/// and an unbounded buffer would defeat the drop-while-down contract.
+const LOG_HEC_BUFFER_CAP: usize = 1000;
+
+/// Forwarder tick: lines are drained from the container streams and a
+/// non-empty buffer is flushed at most once per tick.
+const LOG_HEC_TICK: Duration = Duration::from_secs(1);
+
+/// One HEC event for a single engine log line. `time` is the send time —
+/// the Docker stream carries no per-line timestamps.
+pub fn build_log_event(
+    line: &str,
+    container: &str,
+    host: &str,
+    index: &str,
+    time_ms: u64,
+) -> Value {
+    json!({
+        "time": time_ms / 1000,
+        "host": host,
+        "source": "spark-dashboard",
+        "sourcetype": LOG_HEC_SOURCETYPE,
+        "index": index,
+        "event": {
+            "container": container,
+            "line": line,
+        },
+    })
+}
+
+/// Control lines the log viewer protocol puts on the shared channel
+/// (`ERR:…` / `LOG:…`) are UI messaging, not engine output — they never
+/// reach HEC. (An engine line that literally starts with `ERR:` is
+/// sacrificed to the filter; the prefixes are distinct enough in practice.)
+pub fn is_control_line(line: &str) -> bool {
+    line.starts_with("ERR:") || line.starts_with("LOG:")
+}
+
+/// Best-effort container id → display name; falls back to the short id when
+/// the daemon cannot be reached or the container vanished mid-flight.
+async fn container_display_name(container_id: &str) -> String {
+    if let Ok(docker) = Docker::connect_with_local_defaults() {
+        if let Ok(info) = docker.inspect_container(container_id, None).await {
+            if let Some(name) = info
+                .name
+                .and_then(|name| name.strip_prefix('/').map(str::to_string))
+            {
+                return name;
+            }
+        }
+    }
+    container_id.chars().take(12).collect()
+}
+
+/// Forwards tracked engine containers' log lines to the `export.hec`
+/// target's `events_index`. Spawned from `main.rs` only when
+/// `--enable-log-viewer` is set; the document's target is read live every
+/// tick, so toggling the export section in the UI turns forwarding on and
+/// off without a restart.
+///
+/// Reuses the per-container stream registry: the forwarder's receivers keep
+/// each container's Docker stream alive even while no UI viewer is
+/// connected, so the index stays continuous; a UI viewer just shares the
+/// same stream. Failure handling mirrors the metrics exporter: 429/5xx and
+/// unreachability keep the (bounded) buffer and back off one probe interval,
+/// 401/403/400 drop it — re-sending the same bad token cannot succeed.
+pub async fn run_log_exporter(hec_config: hec::SharedHecConfig, host: String) {
+    let client = reqwest::Client::builder()
+        .timeout(hec::POST_TIMEOUT)
+        .build()
+        .expect("reqwest client");
+    // container id → (display name, receiver)
+    let mut streams: HashMap<String, (String, broadcast::Receiver<String>)> = HashMap::new();
+    // (container, line) pairs waiting to be sent.
+    let mut buffer: VecDeque<(String, String)> = VecDeque::new();
+    let mut next_attempt = Instant::now();
+
+    loop {
+        let target = hec_config.read().await.clone().filter(|t| t.usable());
+
+        // Follow the tracked engine containers: subscribe to new ones, drop
+        // receivers whose container left the engine state (with the last UI
+        // viewer gone, the stream task stops on its own).
+        let wanted: Vec<String> = match ENGINE_STATE.get() {
+            Some(state) => {
+                let snapshots = state.read().await;
+                snapshots
+                    .iter()
+                    .filter_map(|s| s.container_id.clone())
+                    .collect()
+            }
+            None => Vec::new(),
+        };
+        for id in &wanted {
+            if !streams.contains_key(id) {
+                let name = container_display_name(id).await;
+                let rx = subscribe_container(id);
+                streams.insert(id.clone(), (name, rx));
+            }
+        }
+        streams.retain(|id, _| wanted.iter().any(|w| w == id));
+
+        // Drain fresh lines from every stream (non-blocking).
+        for (id, entry) in streams.iter_mut() {
+            let mut dropped = 0usize;
+            loop {
+                match entry.1.try_recv() {
+                    Ok(line) if !is_control_line(&line) => {
+                        // No target: nothing to send to — discard. The line
+                        // is still delivered to UI viewers on their own
+                        // receivers; a broadcast receiver only lags for
+                        // itself.
+                        if target.is_some() {
+                            if buffer.len() >= LOG_HEC_BUFFER_CAP {
+                                buffer.pop_front();
+                                dropped += 1;
+                            }
+                            buffer.push_back((entry.0.clone(), line));
+                        }
+                    }
+                    Ok(_) => {}
+                    // Missed lines are gone; keep draining what remains.
+                    Err(broadcast::error::TryRecvError::Lagged(_)) => {}
+                    Err(broadcast::error::TryRecvError::Empty)
+                    | Err(broadcast::error::TryRecvError::Closed) => break,
+                }
+            }
+            if dropped > 0 {
+                warn!(container = %id, dropped, "engine log buffer overflow; oldest lines dropped");
+            }
+        }
+
+        tokio::time::sleep(LOG_HEC_TICK).await;
+
+        // Flush.
+        let Some(target) = target else { continue };
+        if buffer.is_empty() || Instant::now() < next_attempt {
+            continue;
+        }
+        let time_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let batch: Vec<(String, String)> = buffer.iter().cloned().collect();
+        let events: Vec<Value> = batch
+            .iter()
+            .map(|(container, line)| {
+                build_log_event(line, container, &host, &target.events_index, time_ms)
+            })
+            .collect();
+
+        match hec::post_events(&client, &target, &events).await {
+            hec::SendOutcome::Ok => {
+                buffer.clear();
+                next_attempt = Instant::now();
+            }
+            // Retryable (429/5xx) or unreachable: keep the buffer and back
+            // off one probe interval; the next attempt re-sends the same
+            // lines.
+            hec::SendOutcome::Retry | hec::SendOutcome::Unreachable => {
+                next_attempt = Instant::now() + hec::PROBE_INTERVAL;
+            }
+            // 401/403/400: a configuration problem, not an outage — re-sending
+            // the same token cannot succeed, so drop the batch and back off.
+            hec::SendOutcome::Misconfigured(reason) => {
+                warn!(%reason, lines = events.len(), "HEC rejected engine log events; backing off");
+                buffer.clear();
+                next_attempt = Instant::now() + hec::PROBE_INTERVAL;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -536,6 +722,48 @@ mod tests {
         let _ = buffer_lines(&mut buf, b"leftover stderr", Some("[stderr] "));
         flush_trailing(&mut buf, Some("[stderr] "), &tx);
         assert_eq!(rx.recv().await.unwrap(), "[stderr] leftover stderr");
+    }
+
+    /// A log line becomes a plain JSON event aimed at the given index —
+    /// never a metrics event (no `event: "metric"` marker, no `metric_name:`
+    /// fields, no `fields` object).
+    #[test]
+    fn log_event_is_a_plain_event_for_the_events_index() {
+        let event = build_log_event(
+            "INFO: engine started",
+            "vllm-openai",
+            "splunk-ai",
+            "main",
+            1_723_800_000_123,
+        );
+        assert_eq!(event["time"], 1_723_800_000);
+        assert_eq!(event["host"], "splunk-ai");
+        assert_eq!(event["source"], "spark-dashboard");
+        assert_eq!(event["sourcetype"], "spark_dashboard_engine_log");
+        assert_eq!(event["index"], "main");
+        assert_eq!(event["event"]["container"], "vllm-openai");
+        assert_eq!(event["event"]["line"], "INFO: engine started");
+        assert!(
+            event.get("fields").is_none(),
+            "log events carry no metric fields"
+        );
+        assert!(
+            event["event"] != serde_json::json!("metric"),
+            "log events must not use the metrics marker"
+        );
+    }
+
+    /// Protocol lines are filtered out, engine lines (including ones that
+    /// merely start with `ERROR:`) pass through.
+    #[test]
+    fn control_lines_are_recognized() {
+        assert!(is_control_line("ERR:No container found for engine x"));
+        assert!(is_control_line("LOG:stream attached"));
+        assert!(is_control_line("LOG:Stream ended - container stopped"));
+        assert!(!is_control_line(
+            "INFO:     127.0.0.1:60870 - \"GET /health HTTP/1.1\" 200 OK"
+        ));
+        assert!(!is_control_line("ERROR: something the engine logged"));
     }
 
     /// `flush_trailing` on an empty buffer is a no-op (no spurious empty line).

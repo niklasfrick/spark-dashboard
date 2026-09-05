@@ -302,6 +302,14 @@ async fn run_server_inner(args: RunArgs) -> Result<(), Box<dyn std::error::Error
         hec::PROBE_INTERVAL,
     ));
 
+    // Engine container logs → HEC: only when the log viewer flag is set
+    // (Linux only). The document's `export.hec` target is read live per
+    // tick, so the same enable/disable path as the metrics exporter applies.
+    #[cfg(target_os = "linux")]
+    if args.enable_log_viewer {
+        tokio::spawn(logs::run_log_exporter(hec_config.clone(), hostname.clone()));
+    }
+
     let app = server::create_router(server::AppState {
         metrics_tx: tx,
         config,
