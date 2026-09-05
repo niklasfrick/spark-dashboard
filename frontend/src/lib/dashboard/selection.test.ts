@@ -5,6 +5,7 @@ import {
   withSelectedEngine,
   withSelectedGpu,
 } from './selection'
+import { ALL_MODELS } from './pageSource'
 import type { EngineSnapshot, GpuMetrics, MetricsSnapshot } from '@/types/metrics'
 
 function gpu(index: number | null): GpuMetrics {
@@ -44,13 +45,13 @@ function snapshot(gpus: GpuMetrics[], engines: EngineSnapshot[]): Pick<
 }
 
 describe('pageSelection', () => {
-  it('follows the primary GPU and the running engine when the operator has chosen neither', () => {
+  it('follows the primary GPU and the running engine when nothing is chosen or configured', () => {
     // This is what makes the shipped preset work unmodified on any machine.
     const host = snapshot([gpu(0), gpu(1)], [engine('http://localhost:8000')])
 
     expect(pageSelection(host, {})).toEqual({
       gpuIndex: 0,
-      engineEndpoint: 'http://localhost:8000',
+      engineTarget: { kind: 'engine', endpoint: 'http://localhost:8000' },
     })
   })
 
@@ -60,7 +61,10 @@ describe('pageSelection', () => {
       [engine('http://localhost:8000', { type: 'Stopped' }), engine('http://localhost:8001')],
     )
 
-    expect(pageSelection(host, {}).engineEndpoint).toBe('http://localhost:8001')
+    expect(pageSelection(host, {}).engineTarget).toEqual({
+      kind: 'engine',
+      endpoint: 'http://localhost:8001',
+    })
   })
 
   it('falls back to the first engine when none is running', () => {
@@ -72,7 +76,10 @@ describe('pageSelection', () => {
       ],
     )
 
-    expect(pageSelection(host, {}).engineEndpoint).toBe('http://localhost:8000')
+    expect(pageSelection(host, {}).engineTarget).toEqual({
+      kind: 'engine',
+      endpoint: 'http://localhost:8000',
+    })
   })
 
   it('normalizes the index of a GPU reported without one', () => {
@@ -82,7 +89,35 @@ describe('pageSelection', () => {
   it('selects nothing for an engine the host is not running', () => {
     // Engine panels degrade to an empty state here; the hardware panels beside
     // them keep working, which is the point.
-    expect(pageSelection(snapshot([gpu(0)], []), {}).engineEndpoint).toBeNull()
+    expect(pageSelection(snapshot([gpu(0)], []), {}).engineTarget).toBeNull()
+  })
+
+  it('resolves a page configured for one engine to that engine', () => {
+    const host = snapshot(
+      [gpu(0)],
+      [engine('http://localhost:8000'), engine('http://localhost:8001')],
+    )
+
+    expect(
+      pageSelection(host, {}, { kind: 'engine', endpoint: 'http://localhost:8001' }).engineTarget,
+    ).toEqual({ kind: 'engine', endpoint: 'http://localhost:8001' })
+  })
+
+  it('resolves a page configured for all models to the aggregate', () => {
+    const host = snapshot([gpu(0)], [engine('http://localhost:8000')])
+
+    expect(pageSelection(host, {}, ALL_MODELS).engineTarget).toEqual({ kind: 'all' })
+  })
+
+  it('keeps a configured engine whose target has gone away', () => {
+    // Panels report it as missing. Nudging the page back to whatever is
+    // running would hide from the operator that the engine their page names
+    // has stopped — and would show its numbers under the other engine's name.
+    const host = snapshot([gpu(0)], [engine('http://localhost:8000')])
+
+    expect(
+      pageSelection(host, {}, { kind: 'engine', endpoint: 'http://localhost:9999' }).engineTarget,
+    ).toEqual({ kind: 'engine', endpoint: 'http://localhost:9999' })
   })
 
   it('honours what the operator chose over the host defaults', () => {
@@ -93,18 +128,28 @@ describe('pageSelection', () => {
 
     expect(
       pageSelection(host, { gpuIndex: 1, engineEndpoint: 'http://localhost:8001' }),
-    ).toEqual({ gpuIndex: 1, engineEndpoint: 'http://localhost:8001' })
+    ).toEqual({ gpuIndex: 1, engineTarget: { kind: 'engine', endpoint: 'http://localhost:8001' } })
+  })
+
+  it('honours a session choice over the configured source', () => {
+    // The source is the page's default; a choice made while looking at the
+    // page is the operator asking to see something else right now.
+    const host = snapshot(
+      [gpu(0)],
+      [engine('http://localhost:8000'), engine('http://localhost:8001')],
+    )
+
+    expect(
+      pageSelection(host, { engineEndpoint: 'http://localhost:8000' }, ALL_MODELS).engineTarget,
+    ).toEqual({ kind: 'engine', endpoint: 'http://localhost:8000' })
   })
 
   it('keeps a choice whose target has gone away', () => {
-    // Panels report it as missing. Nudging the selection back to whatever is
-    // present would hide from the operator that the engine they picked has
-    // stopped — and would show its numbers under the other engine's name.
     const host = snapshot([gpu(0)], [engine('http://localhost:8000')])
 
     expect(pageSelection(host, { gpuIndex: 3, engineEndpoint: 'http://localhost:9999' })).toEqual({
       gpuIndex: 3,
-      engineEndpoint: 'http://localhost:9999',
+      engineTarget: { kind: 'engine', endpoint: 'http://localhost:9999' },
     })
   })
 
@@ -115,8 +160,14 @@ describe('pageSelection', () => {
   it('keeps a choice made before the first snapshot arrives', () => {
     expect(pageSelection(null, { gpuIndex: 1 })).toEqual({
       gpuIndex: 1,
-      engineEndpoint: null,
+      engineTarget: null,
     })
+  })
+
+  it('resolves a configured source before the first snapshot arrives', () => {
+    // A page configured for all models must not flash the host default while
+    // the socket connects.
+    expect(pageSelection(null, {}, ALL_MODELS).engineTarget).toEqual({ kind: 'all' })
   })
 })
 

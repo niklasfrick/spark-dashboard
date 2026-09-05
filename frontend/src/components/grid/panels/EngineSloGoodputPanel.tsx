@@ -26,6 +26,9 @@ import type { PanelContentProps } from '../panelRegistry'
 export function EngineSloGoodputPanel({ panel }: PanelContentProps) {
   const resolution = useEnginePanel(panel)
   const engine = resolution.status === 'resolved' ? resolution.engine : null
+  // Thresholds are per model, so the aggregate reads at the defaults: a page
+  // showing all models has no one model whose stored thresholds could honestly
+  // caption a combined figure. The control below is disabled on the same terms.
   const {
     thresholds,
     setThresholds,
@@ -33,7 +36,9 @@ export function EngineSloGoodputPanel({ panel }: PanelContentProps) {
     isCustomized,
   } = useSloSettings(engine && engineKey(engine), engine?.model?.name ?? null)
 
-  if (resolution.status !== 'resolved') return <EnginePanelNotice resolution={resolution} />
+  if (resolution.status !== 'resolved' && resolution.status !== 'aggregate') {
+    return <EnginePanelNotice resolution={resolution} />
+  }
 
   const { metric } = resolution
   const ttft = recomputeGoodputPct(metric('ttft_buckets'), thresholds.ttftMs)
@@ -52,7 +57,7 @@ export function EngineSloGoodputPanel({ panel }: PanelContentProps) {
         <SloSettingsControl
           thresholds={thresholds}
           isCustomized={isCustomized}
-          disabled={resolution.engine.model === null}
+          disabled={engine === null || engine.model === null}
           onChange={setThresholds}
           onReset={reset}
         />

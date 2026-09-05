@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
-import { gpuMemoryPercent, gpuSeries, MetricsHistoryStore } from '../lib/metricsHistoryStore'
+import {
+  ALL_ENGINES_KEY,
+  engineSeries,
+  gpuMemoryPercent,
+  gpuSeries,
+  MetricsHistoryStore,
+} from '../lib/metricsHistoryStore'
 import type { EngineSnapshot, GpuMetrics, MetricsSnapshot } from '../types/metrics'
 
 /** The GPU the snapshots below carry, for the specs that read one field of it. */
@@ -149,6 +155,45 @@ describe('MetricsHistoryStore windowed reads', () => {
       store.getChartData(engineSeries, '5m').length,
     )
     expect(store.getEvents('15m').length).toBeGreaterThan(store.getEvents('5m').length)
+  })
+})
+
+describe('MetricsHistoryStore all-engines aggregate series', () => {
+  it('ingests the combined series alongside the per-engine ones', () => {
+    const store = new MetricsHistoryStore()
+    store.ingest(
+      makeSnapshot(1_000, {
+        engines: [makeEngine(100), { ...makeEngine(150), endpoint: 'http://localhost:8001' }],
+      }),
+    )
+
+    // The sum, under its own key — what a page configured for all models charts…
+    expect(store.getChartData(engineSeries('tps', ALL_ENGINES_KEY), '15m')).toEqual([
+      { timestamp: 1_000, value: 250 },
+    ])
+    // …with the per-engine series untouched beside it.
+    expect(store.getChartData('Vllm-http://localhost:8000:tps', '15m')).toEqual([
+      { timestamp: 1_000, value: 100 },
+    ])
+  })
+
+  it('notifies a subscriber of the aggregate series', () => {
+    const store = new MetricsHistoryStore()
+    const listener = vi.fn()
+    store.subscribe(engineSeries('tps', ALL_ENGINES_KEY), listener)
+
+    store.ingest(makeSnapshot(1_000, { engines: [makeEngine(100)] }))
+
+    expect(listener).toHaveBeenCalledTimes(1)
+  })
+
+  it('ingests no aggregate sample when no engine is running', () => {
+    const store = new MetricsHistoryStore()
+    store.ingest(
+      makeSnapshot(1_000, { engines: [{ ...makeEngine(100), status: { type: 'Stopped' } }] }),
+    )
+
+    expect(store.getChartData(engineSeries('tps', ALL_ENGINES_KEY), '15m')).toEqual([])
   })
 })
 

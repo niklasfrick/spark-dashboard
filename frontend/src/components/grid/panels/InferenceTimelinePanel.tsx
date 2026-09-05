@@ -40,7 +40,12 @@ import type { PanelContentProps } from '../panelRegistry'
 export function InferenceTimelinePanel({ panel }: PanelContentProps) {
   const { target, requests } = useEngineRequests(panel)
   const snapshot = useLatestSnapshot()
-  if (target.status !== 'resolved') return <EnginePanelNotice resolution={target} />
+  // The aggregate renders here too: requests compose by interleaving, so the
+  // combined timeline is every engine's requests on one axis — the identity
+  // row says so, exactly as it does on the metric panels.
+  if (target.status !== 'resolved' && target.status !== 'aggregate') {
+    return <EnginePanelNotice resolution={target} />
+  }
 
   // The newest sample anchors the axis, not wall clock: the bars then hold
   // still between snapshots rather than creeping leftward every frame.

@@ -1,6 +1,6 @@
 /**
- * The page-level selection: the GPU and the engine a page's `follow` panels
- * point at.
+ * The page-level selection: the GPU and the engine target a page's `follow`
+ * panels point at.
  *
  * This is the other half of the binding model in `bindings.ts`. A pinned panel
  * names its own target; every other panel defers to the selection here, which is
@@ -9,29 +9,42 @@
  * page moves with it, coherently, because every following panel reads the same
  * value.
  *
- * The selection has two layers. What the operator **chose** is stored sparsely —
- * an absent key means they have never chosen, not that they chose nothing — and
- * the host's own defaults fill the gaps. Keeping them apart matters on a machine
- * whose engines come and go: an operator who chose nothing follows whatever is
- * running, while an operator who chose engine B keeps pointing at B, and the
- * panels say B is missing rather than quietly showing engine A.
+ * The selection has three layers, strongest first. What the operator **chose in
+ * this session** is stored sparsely — an absent key means they have never
+ * chosen, not that they chose nothing. Under that sits the page's **configured
+ * source** (`pageSource.ts`), which is the choice written into the document:
+ * one engine, or every engine combined. The host's own defaults fill what
+ * remains. Keeping the layers apart matters on a machine whose engines come and
+ * go: an unconfigured page follows whatever is running, while a page configured
+ * for engine B keeps pointing at B, and the panels say B is missing rather than
+ * quietly showing engine A.
  */
 
 import { gpuIndexOf, snapshotGpus } from '@/lib/identity'
 import type { EngineSnapshot, MetricsSnapshot } from '@/types/metrics'
+import type { PageSource } from './pageSource'
+
+/**
+ * What a page's following engine panels resolve to: one engine by endpoint, or
+ * the aggregate over all of them.
+ */
+export type PageEngineTarget =
+  | { kind: 'engine'; endpoint: string }
+  /** Every engine at once — the combined figures, not any one engine's. */
+  | { kind: 'all' }
 
 /** What a page's `follow` panels resolve against. */
 export interface PageSelection {
   /** The GPU index following panels show. Null when the host reports no GPU. */
   gpuIndex: number | null
-  /** The endpoint following panels show. Null when no engine is running. */
-  engineEndpoint: string | null
+  /** The engine target following panels show. Null when no engine is running. */
+  engineTarget: PageEngineTarget | null
 }
 
 /**
- * What the operator explicitly pointed the page at. A key is present only once
- * they have chosen; absent means "follow the host", which is where every page
- * starts.
+ * What the operator explicitly pointed the page at, for this session. A key is
+ * present only once they have chosen; absent means "defer to the page's source,
+ * then the host", which is where every page starts.
  */
 export interface SelectedTargets {
   readonly gpuIndex?: number
@@ -39,30 +52,25 @@ export interface SelectedTargets {
 }
 
 /** Nothing to point at: no snapshot, or a host with neither GPU nor engine. */
-export const NO_SELECTION: PageSelection = { gpuIndex: null, engineEndpoint: null }
+export const NO_SELECTION: PageSelection = { gpuIndex: null, engineTarget: null }
 
 /**
  * The selection a page resolves to on this host.
  *
- * An explicit choice is kept verbatim, including one naming a target that is no
- * longer here — panels report that as missing, which is the whole point: the
- * operator who changed an engine's port has to see which panels now point at
- * nothing. Only an unchosen target falls back to the host's default.
+ * An explicit choice — the session's, or the page's configured source — is kept
+ * verbatim, including one naming an engine that is no longer here: panels
+ * report that as missing, which is the whole point. The operator who changed an
+ * engine's port has to see which pages now point at nothing. Only an unchosen
+ * target falls back to the host's default.
  */
 export function pageSelection(
   snapshot: Pick<MetricsSnapshot, 'gpu' | 'gpus' | 'engines'> | null,
   chosen: SelectedTargets,
+  source?: PageSource,
 ): PageSelection {
-  if (!snapshot) {
-    return {
-      gpuIndex: chosen.gpuIndex ?? null,
-      engineEndpoint: chosen.engineEndpoint ?? null,
-    }
-  }
-
   return {
-    gpuIndex: chosen.gpuIndex ?? defaultGpuIndex(snapshot),
-    engineEndpoint: chosen.engineEndpoint ?? defaultEngineEndpoint(snapshot.engines),
+    gpuIndex: chosen.gpuIndex ?? (snapshot ? defaultGpuIndex(snapshot) : null),
+    engineTarget: engineTarget(snapshot, chosen, source),
   }
 }
 
@@ -79,6 +87,22 @@ export function withSelectedEngine(
   return endpoint === null
     ? without(chosen, 'engineEndpoint')
     : { ...chosen, engineEndpoint: endpoint }
+}
+
+/** The three layers, strongest first: session choice, configured source, host. */
+function engineTarget(
+  snapshot: Pick<MetricsSnapshot, 'engines'> | null,
+  chosen: SelectedTargets,
+  source: PageSource | undefined,
+): PageEngineTarget | null {
+  if (chosen.engineEndpoint !== undefined) {
+    return { kind: 'engine', endpoint: chosen.engineEndpoint }
+  }
+  if (source !== undefined) {
+    return source.kind === 'all' ? { kind: 'all' } : { kind: 'engine', endpoint: source.endpoint }
+  }
+  const endpoint = snapshot ? defaultEngineEndpoint(snapshot.engines) : null
+  return endpoint === null ? null : { kind: 'engine', endpoint }
 }
 
 /**

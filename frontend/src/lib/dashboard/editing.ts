@@ -227,8 +227,8 @@ export function addPanel(panels: readonly DashboardPanel[], type: PanelType): Ad
 
 /**
  * The page without the panel named. There is no undo — discarding the session
- * is the substitute — so removal is offered from the panel's own settings
- * rather than as a one-click affordance on the frame.
+ * is the substitute, which is what makes the one-click X on the frame (and the
+ * button in the panel's settings) safe: nothing is written until the save.
  */
 export function removePanel(
   panels: readonly DashboardPanel[],

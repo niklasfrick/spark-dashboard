@@ -994,6 +994,7 @@ mod tests {
             endpoint: "http://127.0.0.1:8000".into(),
             status: EngineStatus::Running,
             model: None,
+            model_metadata_error: None,
             metrics: Some(EngineMetrics {
                 active_requests: active,
                 queued_requests: queued,

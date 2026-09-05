@@ -28,7 +28,12 @@ interface EnginePanelBodyProps {
  * alone does not say whose.
  */
 export function EnginePanelBody({ identity, actions, tiles, chart }: EnginePanelBodyProps) {
-  const { label, model, logo } = identity ?? { label: null, model: null, logo: null }
+  const { label, model, logo, modelWarning } = identity ?? {
+    label: null,
+    model: null,
+    logo: null,
+    modelWarning: null,
+  }
   const [ref, size] = useElementSize<HTMLDivElement>()
   const mode = enginePanelMode(size)
 
@@ -47,8 +52,20 @@ export function EnginePanelBody({ identity, actions, tiles, chart }: EnginePanel
             // The model first, because that is what an operator is thinking
             // about; the endpoint after it, because that is what actually tells
             // two engines apart when both serve the same model.
-            <span className="flex items-center gap-1.5 min-w-0" title={model ? `${model} — ${label}` : label}>
+            <span
+              className="flex items-center gap-1.5 min-w-0"
+              title={
+                [model, label, modelWarning].filter(Boolean).join(' — ') || undefined
+              }
+            >
               {logo && <ProviderMark logo={logo} />}
+              {/* The row has no room for the warning's words, so it wears the
+                  mark and carries the words in the row's tooltip. */}
+              {modelWarning && (
+                <span aria-label={modelWarning} className="text-[10px] leading-none text-amber-400">
+                  ⚠
+                </span>
+              )}
               {model && (
                 <span className="text-[10px] font-medium text-zinc-300 truncate">{model}</span>
               )}

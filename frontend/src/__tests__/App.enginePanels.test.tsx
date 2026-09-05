@@ -343,6 +343,89 @@ describe('the engine panels on a grid page', () => {
     expect(within(status).getByText('Serving')).toBeInTheDocument()
   })
 
+  const AUTH_WARNING =
+    'Engine requires authentication — configure the provider API key to read the model name.'
+
+  it('warns beside the fallback name when /v1/models rejects the dashboard', async () => {
+    // Issue #90: the engine's /v1/models is auth-gated and the dashboard has
+    // no key. The name recovered from the launch command line still shows —
+    // it is the best guess there is — but the warning says it is only a
+    // guess, and what to configure to make it not one.
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        { id: 'who', type: 'engine-status', geometry: { x: 0, y: 0, w: 6, h: 4 } },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(
+      makeSnapshot(1000, [
+        makeEngine(ALPHA, {
+          model: modelNamed('google/gemma-4-31B-it'),
+          model_metadata_error: 'AuthRequired',
+        }),
+      ]),
+    )
+
+    const status = region('Engine')
+    expect(within(status).getByText('gemma-4-31B-it')).toBeInTheDocument()
+    expect(within(status).getByText(AUTH_WARNING)).toBeInTheDocument()
+    // The engine itself is fine — metrics flow, so it still reads as serving.
+    expect(within(status).getByText('Serving')).toBeInTheDocument()
+  })
+
+  it('lets the auth warning stand alone when no name resolved at all', async () => {
+    // No command-line hint either: nothing resolved, but "unavailable" is a
+    // better headline than "no model loaded" — the model may well be loaded,
+    // only its name is unreadable without the key.
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        { id: 'who', type: 'engine-status', geometry: { x: 0, y: 0, w: 6, h: 4 } },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(
+      makeSnapshot(1000, [
+        makeEngine(ALPHA, { model: null, model_metadata_error: 'AuthRequired' }),
+      ]),
+    )
+
+    const status = region('Engine')
+    expect(within(status).getByText('Model name unavailable')).toBeInTheDocument()
+    expect(within(status).getByText(AUTH_WARNING)).toBeInTheDocument()
+    expect(within(status).queryByText('No model loaded')).not.toBeInTheDocument()
+  })
+
+  it('does not warn when metadata resolved, or failed for non-auth reasons', async () => {
+    // A key would not fix an unreachable /v1/models, so no warning may send
+    // the operator configuring one. The resolved case is the everyday one:
+    // nothing to warn about at all.
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        { id: 'who', type: 'engine-status', geometry: { x: 0, y: 0, w: 6, h: 4 } },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(
+      makeSnapshot(1000, [
+        makeEngine(ALPHA, { model_metadata_error: 'Unavailable' }),
+      ]),
+    )
+
+    const status = region('Engine')
+    expect(within(status).getByText('Qwen3-8B')).toBeInTheDocument()
+    expect(within(status).queryByText(AUTH_WARNING)).not.toBeInTheDocument()
+
+    // Metadata resolves once the key is configured — the warning clears.
+    receive(makeSnapshot(2000, [makeEngine(ALPHA, { model_metadata_error: null })]))
+    expect(within(region('Engine')).queryByText(AUTH_WARNING)).not.toBeInTheDocument()
+  })
+
   it('sums every engine on the host into one overview', async () => {
     const fetchMock = serveConfiguration({
       document: storedDocument([
@@ -514,6 +597,47 @@ describe('the engine panels on a grid page', () => {
       'src',
       '/icons/providers/meta.svg',
     )
+  })
+
+  it('marks a provisional model name on the identity row too', async () => {
+    // The identity row a metric panel wears on a multi-engine host has no
+    // room for the warning's words, so it wears a mark carrying them — a
+    // panel must not present the command-line fallback as settled identity
+    // anywhere the name shows.
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        {
+          id: 'alpha',
+          type: 'engine-decode-throughput',
+          title: 'Alpha decode',
+          binding: { kind: 'engine', endpoint: ALPHA },
+          geometry: { x: 0, y: 0, w: 6, h: 4 },
+        },
+        {
+          id: 'beta',
+          type: 'engine-decode-throughput',
+          title: 'Beta decode',
+          binding: { kind: 'engine', endpoint: BETA },
+          geometry: { x: 6, y: 0, w: 6, h: 4 },
+        },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(
+      makeSnapshot(1000, [
+        makeEngine(ALPHA),
+        makeEngine(BETA, {
+          model: modelNamed('meta-llama/Llama-3.1-8B'),
+          model_metadata_error: 'AuthRequired',
+        }),
+      ]),
+    )
+
+    // Only the engine whose metadata was refused wears the mark.
+    expect(within(region('Beta decode')).getByLabelText(AUTH_WARNING)).toBeInTheDocument()
+    expect(within(region('Alpha decode')).queryByLabelText(AUTH_WARNING)).not.toBeInTheDocument()
   })
 
   it('keeps the slot of a panel pinned to an engine that is gone, naming it', async () => {

@@ -91,6 +91,12 @@ export type EngineStatus =
   | { type: 'Stopped' }
   | { type: 'Error'; message: string }
 
+/** Why model metadata could not be read from the engine's `/v1/models`
+ *  endpoint. `AuthRequired` means the request was rejected as unauthorized
+ *  (401/403) — the dashboard lacks the engine's API key; `Unavailable`
+ *  covers every non-auth cause (unreachable, error status, empty list). */
+export type ModelMetadataError = 'AuthRequired' | 'Unavailable'
+
 export interface ModelInfo {
   name: string
   parameter_size: string | null
@@ -196,6 +202,10 @@ export interface EngineSnapshot {
   endpoint: string
   status: EngineStatus
   model: ModelInfo | null
+  /** Why `model` is missing or only a command-line fallback. Null when
+   *  metadata resolved normally — optional so snapshots from older backends
+   *  still parse. */
+  model_metadata_error?: ModelMetadataError | null
   metrics: EngineMetrics | null
   recent_requests: InferenceRequestData[]
   deployment_mode: DeploymentMode

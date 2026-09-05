@@ -80,6 +80,8 @@ export interface PanelChrome {
   /** The panel whose settings are open, or null while none are. */
   configuringId: string | null
   onConfigure: (panelId: string) => void
+  /** The red X on the frame: take this panel off the page being edited. */
+  onRemove: (panelId: string) => void
 }
 
 /**
@@ -209,8 +211,9 @@ export function GridPage({
     >
       {/* The selection is per page and lives inside it: every following panel
           on this page reads the same GPU and engine, and a page mounted at
-          another id starts from the host's defaults again. */}
-      <PageSelectionProvider>
+          another id starts from its own configured source — or the host's
+          defaults — again. */}
+      <PageSelectionProvider source={page.source}>
         <GridStack
           options={options}
           onChange={draggable ? handleChange : undefined}
@@ -226,6 +229,7 @@ export function GridPage({
                 editing={Boolean(editing)}
                 configuring={chrome?.configuringId === panel.id}
                 onConfigure={chrome && (() => chrome.onConfigure(panel.id))}
+                onRemove={chrome && (() => chrome.onRemove(panel.id))}
               />
             </GridStackItem>
           ))}
