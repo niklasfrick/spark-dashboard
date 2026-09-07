@@ -70,7 +70,7 @@ image published to GHCR, then `docker compose pull` on the remote).
 Set `DOCKER_GID` in your repo-root `.env` to the **remote** host's docker group
 GID (`getent group docker | cut -d: -f3`) — `.env` is rsynced to the remote, and
 compose adds that GID so the container can read the Docker socket for engine
-discovery. See [`.env.docker.example`](../.env.docker.example).
+discovery. See [`.env.docker.example`](../deploy/docker/.env.docker.example).
 
 ## Required environment variables
 
@@ -123,7 +123,7 @@ per-endpoint keys across multiple engines, run the binary with `--engine-url`
 ### Simulating extra GPUs
 
 The DGX Spark has a single GB10, so multi-GPU UI paths (per-GPU history keys,
-the Dashboard's GPU selector, per-GPU event overlays) can't be exercised
+the page's GPU selection, per-GPU event overlays) can't be exercised
 against real hardware. Add to your repo-root `.env`:
 
 ```bash
@@ -145,6 +145,6 @@ remove the line to return to hardware-only metrics.
 ## Prerequisites
 
 - **Local machine**: Node.js 20+, npm, rsync, ssh
-- **Remote host**: Linux with NVIDIA drivers, Rust 1.75+ in `~/.cargo/env`, reachable over SSH
+- **Remote host**: Linux with NVIDIA drivers, Rust 1.95+ in `~/.cargo/env`, reachable over SSH
 - **SSH key auth** configured — the scripts make many non-interactive SSH calls and will block on password prompts
 - Optional: `brew install fswatch` for instant change detection (otherwise the watcher polls every 2s)
