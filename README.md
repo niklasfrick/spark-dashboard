@@ -279,6 +279,7 @@ spark-dashboard service status
       --engine-url <URL>      Manual engine endpoint (requires --engine) [env: SPARK_DASHBOARD_ENGINE_URL]
       --engine-api-key <KEY>  API key for an endpoint, paired by index with --engine-url [env: SPARK_DASHBOARD_ENGINE_API_KEY]
       --provider-api-key <KEY> Fallback API key for any endpoint [env: SPARK_DASHBOARD_PROVIDER_API_KEY]
+      --enable-log-viewer     Stream engine container logs at /ws/logs (Linux only, off by default) [env: SPARK_DASHBOARD_ENABLE_LOG_VIEWER]
 ```
 
 On multi-GPU hosts, Spark Dashboard monitors all available NVIDIA GPUs by
@@ -447,13 +448,18 @@ Docker API (no `docker` CLI or shell required — works in distroless images).
   a reverse proxy with auth, bind to `127.0.0.1`/`--bind 127.0.0.1`, or
   restrict the port with a firewall. Do not enable on a public-facing host.
 
-The stream follows the engine selected in the dashboard: the frontend passes
-the engine's endpoint as `/ws/logs?engine=<endpoint>`, which is validated
-against the tracked engine state — only containers the dashboard knows as
-engines can be streamed. Per container, one background Docker log stream fans
-out to all clients watching it (same pattern as metrics) and stops when the
-last viewer disconnects. stdout and stderr are line-buffered so split frames
-don't produce partial lines.
+Logs are a **panel**, added from the palette and bound to an engine like any
+other engine panel — following the page's selection, or pinned to one engine so
+two log panels can watch two engines side by side. The default preset places
+none; add one when you want it. (Before 0.14.0 this was a fixed drawer at the
+bottom of the page that followed the selected engine tab.)
+
+The panel passes its resolved engine's endpoint as `/ws/logs?engine=<endpoint>`,
+which is validated against the tracked engine state — only containers the
+dashboard knows as engines can be streamed. Per container, one background Docker
+log stream fans out to every panel watching it (same pattern as metrics) and
+stops when the last viewer disconnects. stdout and stderr are line-buffered so
+split frames don't produce partial lines.
 
 ## Development
 
