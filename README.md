@@ -98,17 +98,40 @@ for details on what each script does.
 - With several engines on a host, each panel names the one it is showing and
   marks the provider of the model it is serving
 
-**Dashboard**
-- A grid of panels you arrange yourself: drag, resize, add from a palette of
-  every metric, remove what you do not want, save or discard
-- Multiple named pages with their own URLs, so a wall display can be pointed
-  at one arrangement and stay there across reboots
-- Fits the viewport on desktop with no scrolling; stacks into one column on
-  a phone, derived from your desktop arrangement
-- Per-panel time window, arc gauges, time-series charts, per-core heatmap
-- 15-minute rolling history with circular buffers
-- Layout saved on the server, shared by everyone who opens the instance
+**Dashboard** (arranged by you, stored on the server)
+
+Not a fixed layout with a few toggles: every metric is a panel you place, and a
+page is whatever set of panels you choose to put on it.
+
+- **Edit mode** — *Edit layout* to drag, resize, add and remove; live motion
+  freezes while you work, and *Save layout* or *Discard* ends the session.
+  Outside it panels are fully interactive and never move
+- **A palette of every metric** — click a type and it lands in the first free
+  slot; in edit mode, click a panel's frame to take it off the page again
+- **Named pages, each with its own URL** — a training view and an idle health
+  view kept side by side rather than one compromise. Point a wall display at a
+  page's URL and it returns to that page after a reboot
+- **Per-page model selection** — a page can show one engine, every engine
+  combined, or whatever the host happens to be serving. See
+  [Configuring what a page shows](#configuring-what-a-page-shows)
+- **Per-panel settings** — retitle it, choose its time window (5m / 10m / 15m),
+  or pin it to a specific GPU or engine instead of following the page
+- **Fits the viewport** on desktop with no scrolling; stacks into one column on
+  a phone, derived from your desktop arrangement rather than authored twice
+- **Saved on the server**, shared by everyone who opens the instance, and
+  outliving restarts, upgrades and container replacement
+- 15-minute rolling history with circular buffers, arc gauges, time-series
+  charts, per-core heatmap
 - Connection status badge, staleness detection, auto-reconnect
+
+Every panel the palette offers:
+
+| Group | Binds to | Panels |
+| --- | --- | --- |
+| Per-GPU hardware | One GPU, by NVML index | GPU Utilization, GPU Temp, GPU Power, GPU Clock, GPU Memory, GPU Fan, GPU Events |
+| Host-wide hardware | Nothing | CPU, CPU Cores, Memory, Disk I/O, Network |
+| Engines | One engine, by endpoint | Engine, Prefill Throughput, Decode Throughput, Latency, SLO Goodput, Requests, Cache, Speculative Decoding, Inference Requests, Logs |
+| Engines | Nothing — every engine at once | All Engines |
 
 ## Architecture
 
@@ -375,6 +398,36 @@ stored document outright — which is the same `DELETE /api/dashboard` above, an
 leaves the dashboard rendering its default preset. The dashboard always keeps at
 least one page, so the last one cannot be deleted; resetting is the way to start
 over.
+
+### Configuring what a page shows
+
+Panels do not each carry their own engine. A panel is created **following** the
+page, and the page answers what it follows — which is what lets one saved
+arrangement be correct on a laptop running a single engine and on a server
+running four.
+
+You choose that answer from **Page config**, beside *Edit layout* in the header:
+
+| Choice | What following panels show |
+| --- | --- |
+| **Automatic** | Whatever the host is serving — the first running engine. What every page starts as, and what the shipped preset uses |
+| **One model** | That engine, named by its endpoint, for as long as the page exists — a *Qwen page* that opens on Qwen for every colleague and every kiosk |
+| **All models** | Every engine at once, combined: throughput and counters sum, latencies are request-weighted means. A panel rendering the combination says so, since a combined figure wearing one engine's name would misread |
+
+Two things this is not:
+
+- **Not part of an edit session.** Choosing what a page shows is a deliberate,
+  named request like renaming a page, so it is written the moment you choose it
+  — no *Save layout* required, and no need to open a session first.
+- **Not binding on pinned panels.** A panel pinned to a specific engine goes on
+  showing that engine whatever the page says. Pin one panel and leave the rest
+  following, and a page shows a chosen engine beside the aggregate.
+
+Per-engine things never aggregate: logs, engine identity, and anything pinned
+address one engine by endpoint. An engine that has gone away is still offered as
+a choice and marked as absent rather than hidden — hiding it is how a page
+silently ends up showing something else — and a pinned panel whose engine is
+gone keeps its slot and says the target is missing.
 
 ### Log viewer (`--enable-log-viewer`, Linux only, opt-in)
 
