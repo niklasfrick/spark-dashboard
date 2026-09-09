@@ -182,12 +182,23 @@ fn detect_by_process(sys: &sysinfo::System) -> Vec<DetectedEngine> {
         // port to surface as its own engine rather than collapsing to the first.
         let mut seen_endpoints: HashMap<String, usize> = HashMap::new();
         for p in &procs {
-            if p.cmd().is_empty() {
+            // sysinfo can report a live process with an empty command line —
+            // on some kernel/sysinfo combos every vllm entry (thread views
+            // included) comes back cmd-less even though /proc/<pid>/cmdline is
+            // readable. Re-read the file directly before giving up, otherwise
+            // a name-matched vLLM server is silently dropped and the engine
+            // only ever appears via a manual override.
+            let cmd = if p.cmd().is_empty() {
+                read_proc_cmdline(p.pid().as_u32()).unwrap_or_default()
+            } else {
+                p.cmd().to_vec()
+            };
+            if cmd.is_empty() {
                 continue;
             }
-            let endpoint = parse_endpoint_from_args(p.cmd(), default_endpoint)
+            let endpoint = parse_endpoint_from_args(&cmd, default_endpoint)
                 .unwrap_or_else(|| default_endpoint.to_string());
-            let served_model = parse_model_from_args(p.cmd());
+            let served_model = parse_model_from_args(&cmd);
             let pid = p.pid().as_u32();
             match seen_endpoints.get(&endpoint) {
                 Some(&slot) => detected[slot].pids.push(pid),
@@ -248,6 +259,31 @@ fn expand_pid_tree(roots: &[u32], processes: &[(u32, Option<u32>)]) -> Vec<u32> 
     }
     result.sort_unstable();
     result
+}
+
+/// Split raw `/proc/<pid>/cmdline` bytes (NUL-separated) into arguments.
+/// Lossy UTF-8: command lines in practice are ASCII (paths, flags, model ids);
+/// a non-UTF-8 byte only ever degrades the model *hint*, never the endpoint.
+fn cmdline_bytes_to_args(raw: &[u8]) -> Vec<OsString> {
+    raw.split(|b| *b == 0)
+        .filter(|a| !a.is_empty())
+        .map(|a| OsString::from(String::from_utf8_lossy(a).into_owned()))
+        .collect()
+}
+
+/// Fallback command-line read straight from `/proc/<pid>/cmdline` for a
+/// process whose sysinfo entry carries no command line. `None` when the file
+/// is missing or empty (thread views, kernel threads, gone processes).
+#[cfg(target_os = "linux")]
+fn read_proc_cmdline(pid: u32) -> Option<Vec<OsString>> {
+    let raw = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+    let args = cmdline_bytes_to_args(&raw);
+    (!args.is_empty()).then_some(args)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn read_proc_cmdline(_pid: u32) -> Option<Vec<OsString>> {
+    None
 }
 
 /// Parse `--port` and `--host` from a process's command-line arguments.
@@ -667,6 +703,51 @@ mod tests {
 
     fn to_args(parts: &[&str]) -> Vec<OsString> {
         parts.iter().map(OsString::from).collect()
+    }
+
+    #[test]
+    fn cmdline_bytes_split_on_nuls_and_drop_trailing_separator() {
+        let raw = b"/app/venv/bin/python3.12\x00/app/venv/bin/vllm\x00serve\x00--port\x008080\x00";
+        let args = cmdline_bytes_to_args(raw);
+        assert_eq!(
+            args.iter()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            vec![
+                "/app/venv/bin/python3.12",
+                "/app/venv/bin/vllm",
+                "serve",
+                "--port",
+                "8080"
+            ],
+        );
+    }
+
+    #[test]
+    fn cmdline_bytes_empty_or_blank_are_no_args() {
+        assert!(cmdline_bytes_to_args(b"").is_empty());
+        assert!(cmdline_bytes_to_args(b"\x00").is_empty());
+    }
+
+    #[test]
+    fn parsed_cmdline_fallback_args_yield_endpoint_model_and_vllm_match() {
+        let raw = b"/app/venv/bin/python3.12\x00/app/venv/bin/vllm\x00serve\x00--host\x000.0.0.0\x00--port\x008080\x00--model\x00Qwen/Qwen3-8B\x00";
+        let args = cmdline_bytes_to_args(raw);
+        assert_eq!(
+            parse_endpoint_from_args(&args, "http://localhost:8000").as_deref(),
+            Some("http://localhost:8080"),
+        );
+        assert_eq!(
+            parse_model_from_args(&args).as_deref(),
+            Some("Qwen/Qwen3-8B"),
+        );
+        assert!(is_vllm_process(
+            &args
+                .iter()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join(" ")
+        ));
     }
 
     #[test]
