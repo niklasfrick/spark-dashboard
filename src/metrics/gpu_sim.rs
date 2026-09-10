@@ -23,6 +23,10 @@ const VRAM_TOTAL_BYTES: u64 = 48 * 1024 * 1024 * 1024;
 /// mirroring NVML, where an active throttle reason reappears on every read.
 /// Reached near utilization peaks (~30s per cycle).
 const THERMAL_EVENT_CELSIUS: u32 = 79;
+/// PCIe throughput at the utilization peak, in bytes per second — the order
+/// of magnitude a tensor-parallel pair exchanges over a Gen5 x16 link, without
+/// pinning the wave to the link's ceiling.
+const PCIE_PEAK_BYTES_PER_SEC: f64 = 12.0 * 1024.0 * 1024.0 * 1024.0;
 
 /// Utilization in percent as a smooth 5..95 wave, phase-shifted per index.
 fn utilization(index: u32, timestamp_ms: u64) -> f64 {
@@ -61,6 +65,11 @@ pub fn simulated_gpus(count: u32, base_index: u32, timestamp_ms: u64) -> Vec<Gpu
                 clock_sm_mhz: Some(clock_mhz),
                 clock_memory_mhz: Some(9001),
                 fan_speed_percent: Some((30.0 + util / 2.0).round() as u32),
+                // Non-null so the PCIe panel can be exercised without a
+                // discrete card. RX leads TX a little: an inference GPU takes
+                // in more activations than it hands back.
+                pcie_rx_bytes_per_sec: Some((PCIE_PEAK_BYTES_PER_SEC * util / 100.0) as u64),
+                pcie_tx_bytes_per_sec: Some((PCIE_PEAK_BYTES_PER_SEC * 0.8 * util / 100.0) as u64),
             }
         })
         .collect()
@@ -124,8 +133,31 @@ mod tests {
                 let power = gpu.power_watts.unwrap();
                 assert!(power > 0.0 && power <= gpu.power_limit_watts.unwrap());
                 assert!(gpu.memory_used_bytes.unwrap() <= gpu.memory_total_bytes.unwrap());
+                // PCIe: present, and never above a Gen5 x16 link's ~64 GB/s.
+                let rx = gpu.pcie_rx_bytes_per_sec.unwrap();
+                let tx = gpu.pcie_tx_bytes_per_sec.unwrap();
+                let link_ceiling = 64 * 1024 * 1024 * 1024;
+                assert!(
+                    rx <= link_ceiling,
+                    "pcie rx {rx} above link ceiling at t={t_ms}"
+                );
+                assert!(
+                    tx <= link_ceiling,
+                    "pcie tx {tx} above link ceiling at t={t_ms}"
+                );
             }
         }
+    }
+
+    #[test]
+    fn simulated_pcie_traffic_follows_utilization() {
+        // The panel is for spotting a link that saturates under load, so the
+        // simulated wave must climb with utilization rather than sit flat.
+        let peak = &simulated_gpus(1, 0, PEAK_MS)[0];
+        let trough = &simulated_gpus(1, 0, TROUGH_MS)[0];
+        assert!(peak.pcie_rx_bytes_per_sec.unwrap() > trough.pcie_rx_bytes_per_sec.unwrap());
+        assert!(peak.pcie_tx_bytes_per_sec.unwrap() > trough.pcie_tx_bytes_per_sec.unwrap());
+        assert!(trough.pcie_rx_bytes_per_sec.unwrap() > 0);
     }
 
     #[test]
