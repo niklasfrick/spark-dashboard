@@ -17,10 +17,10 @@ const NUMBERED_PREFIXES: &[&str] = &["mmcblk", "md", "nbd", "rbd", "dm-"];
 /// Cumulative sector counters for one block device, as read from
 /// `/proc/diskstats`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DeviceCounters {
-    pub name: String,
-    pub sectors_read: u64,
-    pub sectors_written: u64,
+struct DeviceCounters {
+    name: String,
+    sectors_read: u64,
+    sectors_written: u64,
 }
 
 /// Parse the text of `/proc/diskstats` into per-device sector counters.
@@ -28,7 +28,7 @@ pub struct DeviceCounters {
 /// Accepts the 14-field (pre-4.18), 18-field (4.18+) and 20-field (5.5+)
 /// layouts; lines with fewer than 14 fields or non-numeric counters are
 /// skipped.
-pub fn parse_diskstats(text: &str) -> Vec<DeviceCounters> {
+fn parse_diskstats(text: &str) -> Vec<DeviceCounters> {
     text.lines().filter_map(parse_diskstats_line).collect()
 }
 
@@ -48,7 +48,7 @@ fn parse_diskstats_line(line: &str) -> Option<DeviceCounters> {
 
 /// True for whole block devices (`nvme0n1`, `sda`, `mmcblk0`, `dm-0`, `md0`),
 /// false for partitions and for excluded pseudo-devices.
-pub fn is_whole_device(name: &str) -> bool {
+fn is_whole_device(name: &str) -> bool {
     if name.is_empty() || EXCLUDED_PREFIXES.iter().any(|p| name.starts_with(p)) {
         return false;
     }
@@ -80,7 +80,7 @@ fn split_leading_digits(s: &str) -> (&str, &str) {
 
 /// One reading of the whole-device counters and the instant it was taken.
 #[derive(Clone, Debug)]
-struct Sample {
+struct Reading {
     taken_at: Instant,
     devices: Vec<DeviceCounters>,
 }
@@ -91,7 +91,7 @@ struct Sample {
 /// first sample after construction reports zero rates.
 #[derive(Debug, Default)]
 pub struct DiskIoSampler {
-    previous: Option<Sample>,
+    previous: Option<Reading>,
 }
 
 impl DiskIoSampler {
@@ -106,12 +106,12 @@ impl DiskIoSampler {
     /// Only devices present in both samples contribute. A device whose counter
     /// went backwards (wrap or reset) contributes zero for this tick, as does
     /// a zero elapsed time.
-    pub fn sample(&mut self, devices: Vec<DeviceCounters>, now: Instant) -> (u64, u64) {
+    fn sample(&mut self, devices: Vec<DeviceCounters>, now: Instant) -> (u64, u64) {
         let devices: Vec<DeviceCounters> = devices
             .into_iter()
             .filter(|d| is_whole_device(&d.name))
             .collect();
-        let current = Sample {
+        let current = Reading {
             taken_at: now,
             devices,
         };
@@ -125,7 +125,7 @@ impl DiskIoSampler {
 }
 
 /// Aggregate `(read, write)` bytes per second between two samples.
-fn io_rates(previous: &Sample, current: &Sample) -> (u64, u64) {
+fn io_rates(previous: &Reading, current: &Reading) -> (u64, u64) {
     let elapsed = current
         .taken_at
         .saturating_duration_since(previous.taken_at);
