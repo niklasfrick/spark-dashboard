@@ -33,6 +33,7 @@ import { GpuClockPanel } from './panels/GpuClockPanel'
 import { GpuEventsPanel } from './panels/GpuEventsPanel'
 import { GpuFanPanel } from './panels/GpuFanPanel'
 import { GpuMemoryPanel } from './panels/GpuMemoryPanel'
+import { GpuPciePanel } from './panels/GpuPciePanel'
 import { GpuPowerPanel } from './panels/GpuPowerPanel'
 import { GpuTemperaturePanel } from './panels/GpuTemperaturePanel'
 import { GpuUtilizationPanel } from './panels/GpuUtilizationPanel'
@@ -54,6 +55,7 @@ const PANEL_CONTENT: Partial<Record<PanelType, ComponentType<PanelContentProps>>
   'gpu-clock': GpuClockPanel,
   'gpu-memory': GpuMemoryPanel,
   'gpu-fan': GpuFanPanel,
+  'gpu-pcie': GpuPciePanel,
   'gpu-events': GpuEventsPanel,
   'cpu-utilization': CpuUtilizationPanel,
   'cpu-cores': CpuCoresPanel,

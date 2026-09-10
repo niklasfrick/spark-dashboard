@@ -39,6 +39,10 @@ export interface GpuMetrics {
   clock_sm_mhz: number | null
   clock_memory_mhz: number | null
   fan_speed_percent: number | null
+  /** PCIe throughput in bytes/sec, the unit the disk and network rates use.
+   *  Both null on a GPU with no PCIe link to report (unified-memory SoCs). */
+  pcie_rx_bytes_per_sec: number | null
+  pcie_tx_bytes_per_sec: number | null
 }
 
 export interface CpuMetrics {

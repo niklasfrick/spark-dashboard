@@ -89,6 +89,8 @@ function snapshot(engines: EngineSnapshot[], timestampMs = 1_000): MetricsSnapsh
       clock_sm_mhz: 1900,
       clock_memory_mhz: 8000,
       fan_speed_percent: 30,
+      pcie_rx_bytes_per_sec: null,
+      pcie_tx_bytes_per_sec: null,
     },
     cpu: { name: 'Grace CPU', aggregate_percent: 25, per_core: [] },
     memory: {

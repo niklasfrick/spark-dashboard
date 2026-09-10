@@ -21,6 +21,8 @@ type MetricKey =
   | 'gpuClockGraphics'
   | 'gpuMemory'
   | 'gpuFan'
+  | 'gpuPcieRx'
+  | 'gpuPcieTx'
   | 'cpuAggregate'
   | 'memoryUsedPercent'
   | 'diskRead'
@@ -35,6 +37,8 @@ const SYSTEM_METRIC_KEYS: MetricKey[] = [
   'gpuClockGraphics',
   'gpuMemory',
   'gpuFan',
+  'gpuPcieRx',
+  'gpuPcieTx',
   'cpuAggregate',
   'memoryUsedPercent',
   'diskRead',
@@ -50,6 +54,8 @@ const GPU_METRIC_KEYS: MetricKey[] = [
   'gpuClockGraphics',
   'gpuMemory',
   'gpuFan',
+  'gpuPcieRx',
+  'gpuPcieTx',
 ]
 
 /** The per-GPU series. Narrower than `MetricKey`: only these exist per GPU. */
@@ -60,6 +66,8 @@ export type GpuSeriesMetric =
   | 'gpuClockGraphics'
   | 'gpuMemory'
   | 'gpuFan'
+  | 'gpuPcieRx'
+  | 'gpuPcieTx'
 
 /**
  * The series key for one GPU's metric. Multi-GPU hosts read the
@@ -172,6 +180,10 @@ function extractGpuValue(gpu: MetricsSnapshot['gpu'], key: MetricKey): number | 
       return gpuMemoryPercent(gpu)
     case 'gpuFan':
       return gpu.fan_speed_percent
+    case 'gpuPcieRx':
+      return gpu.pcie_rx_bytes_per_sec
+    case 'gpuPcieTx':
+      return gpu.pcie_tx_bytes_per_sec
     default:
       return null
   }
@@ -196,6 +208,8 @@ function extractValue(metrics: MetricsSnapshot, key: MetricKey): number | null {
     case 'gpuClockGraphics':
     case 'gpuMemory':
     case 'gpuFan':
+    case 'gpuPcieRx':
+    case 'gpuPcieTx':
       return extractGpuValue(metrics.gpu, key)
     case 'cpuAggregate':
       return metrics.cpu.aggregate_percent
@@ -403,7 +417,7 @@ export class MetricsHistoryStore {
     if (systemBuffer) return systemBuffer
 
     const gpuMatch = metric.match(
-      /^gpu:(\d+):(gpuUtil|gpuTemp|gpuPower|gpuClockGraphics|gpuMemory|gpuFan)$/,
+      /^gpu:(\d+):(gpuUtil|gpuTemp|gpuPower|gpuClockGraphics|gpuMemory|gpuFan|gpuPcieRx|gpuPcieTx)$/,
     )
     if (gpuMatch) {
       return this.gpuBuffers[gpuMatch[1]]?.[gpuMatch[2] as MetricKey]
