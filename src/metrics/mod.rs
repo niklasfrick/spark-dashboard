@@ -30,7 +30,8 @@ pub struct MetricsSnapshot {
 /// Runs the metrics collection loop, broadcasting JSON snapshots to all subscribers.
 ///
 /// This function is intended to be spawned as a background tokio task. It maintains
-/// persistent sysinfo instances for accurate delta-based metrics (CPU, disk, network).
+/// persistent sysinfo instances for accurate delta-based metrics (CPU, network) and a
+/// `DiskIoSampler` that reads `/proc/diskstats` itself for disk I/O rates.
 #[cfg(target_os = "linux")]
 pub async fn metrics_collector(
     tx: broadcast::Sender<String>,
@@ -45,6 +46,7 @@ pub async fn metrics_collector(
     let mut sys = sysinfo::System::new();
     let mut networks = sysinfo::Networks::new_with_refreshed_list();
     let mut disks = sysinfo::Disks::new_with_refreshed_list();
+    let mut disk_io = disk::DiskIoSampler::new();
 
     // Initialize NVML (gracefully handle absence)
     let nvml = nvml_wrapper::Nvml::init().ok();
@@ -163,7 +165,7 @@ pub async fn metrics_collector(
             gpus,
             cpu: cpu::collect_cpu_metrics(&sys),
             memory: memory_metrics,
-            disk: disk::collect_disk_metrics(&disks),
+            disk: disk::collect_disk_metrics(&disks, &mut disk_io),
             network: network::collect_network_metrics(&networks),
             engines,
             gpu_events,
@@ -196,6 +198,7 @@ pub async fn metrics_collector(
     let mut sys = sysinfo::System::new();
     let mut networks = sysinfo::Networks::new_with_refreshed_list();
     let mut disks = sysinfo::Disks::new_with_refreshed_list();
+    let mut disk_io = disk::DiskIoSampler::new();
 
     tracing::warn!("Running on non-Linux platform -- GPU metrics will be stubs");
 
@@ -236,7 +239,7 @@ pub async fn metrics_collector(
             gpus,
             cpu: cpu::collect_cpu_metrics(&sys),
             memory: memory::collect_memory_metrics(&sys),
-            disk: disk::collect_disk_metrics(&disks),
+            disk: disk::collect_disk_metrics(&disks, &mut disk_io),
             network: network::collect_network_metrics(&networks),
             engines,
             gpu_events,
