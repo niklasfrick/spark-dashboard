@@ -81,7 +81,10 @@ function snapshot(): MetricsSnapshot {
     },
     disk: { name: 'disk', read_bytes_per_sec: 1, write_bytes_per_sec: 2 },
     network: { name: 'net', rx_bytes_per_sec: 3, tx_bytes_per_sec: 4 },
-    engines: [makeEngine(ALPHA, 120), makeEngine(BETA, 640)],
+    engines: [
+      { ...makeEngine(ALPHA, 120), gpu_indexes: [0] },
+      { ...makeEngine(BETA, 640), engine_type: 'LlamaCpp', gpu_indexes: [1] },
+    ],
     gpu_events: [],
   }
 }
@@ -100,7 +103,10 @@ function panel(id: string, type: string): DashboardPanel {
 function SelectGpu({ index }: { index: number | null }) {
   const { selectGpu } = usePageSelection()
   return (
-    <button type="button" onClick={() => selectGpu(index)}>
+    <button
+      type="button"
+      onClick={() => selectGpu(index === null ? null : { kind: 'gpu', index })}
+    >
       Select GPU {index ?? 'default'}
     </button>
   )
@@ -159,27 +165,42 @@ function click(name: string) {
 }
 
 describe('the page-level GPU selection', () => {
-  it('starts on the primary GPU, moves every following panel together, and leaves pins alone', () => {
+  it('shows every GPU by default, and moves following panels together when one is chosen', () => {
     render(<Page />)
 
-    // Nothing chosen: the page follows the host's primary GPU.
-    expect(within(region('GPU Utilization')).getByText('11')).toBeInTheDocument()
-    expect(within(region('GPU Temp')).getByText('40')).toBeInTheDocument()
+    // Nothing chosen: the page shows every GPU, one column each — on a two-GPU
+    // host, two charts in the following panel, GPU 0's and GPU 1's series.
+    const chartValues = (name: string) =>
+      within(region(name))
+        .getAllByTestId('chart')
+        .map((c) => c.getAttribute('data-values'))
+
+    expect(chartValues('GPU Utilization')).toEqual(['11', '77'])
+    expect(chartValues('GPU Temp')).toEqual(['40', '41'])
+
+    // The all-GPUs rows name the inference engine observed on each GPU (from
+    // NVML's per-device compute-process PIDs): vLLM on GPU 0, llama.cpp on GPU 1.
+    expect(within(region('GPU Utilization')).getByText('vLLM')).toBeInTheDocument()
+    expect(within(region('GPU Utilization')).getByText('llama.cpp')).toBeInTheDocument()
 
     click('Select GPU 1')
 
-    // One selection change, and every following panel moved with it — value and
-    // chart series, so no panel is showing another GPU's numbers.
-    const util = region('GPU Utilization')
-    expect(within(util).getByText('77')).toBeInTheDocument()
-    expect(within(util).getByTestId('chart')).toHaveAttribute('data-values', '77')
-    expect(within(region('GPU Temp')).getByText('41')).toBeInTheDocument()
+    // One selection change, and the following panel collapses to a single GPU —
+    // its chart series is GPU 1's, so it is no longer showing GPU 0's numbers.
+    expect(within(region('GPU Utilization')).getByTestId('chart').getAttribute('data-values')).toBe(
+      '77',
+    )
+    expect(within(region('GPU Temp')).getByTestId('chart').getAttribute('data-values')).toBe('41')
 
     // The pinned panel stayed where it was pinned.
-    expect(within(region('Pinned to GPU 0')).getByText('11')).toBeInTheDocument()
+    expect(
+      within(region('Pinned to GPU 0')).getByTestId('chart').getAttribute('data-values'),
+    ).toBe('11')
 
     click('Select GPU default')
-    expect(within(region('GPU Utilization')).getByText('11')).toBeInTheDocument()
+
+    // Back to every GPU.
+    expect(chartValues('GPU Utilization')).toEqual(['11', '77'])
   })
 })
 
@@ -209,13 +230,14 @@ describe('a page configured for all models', () => {
     )
   }
 
-  it('shows the combined figures on following panels and leaves pins alone', () => {
+  it('shows one row per engine on following panels and leaves pins alone', () => {
     render(<AllModelsPage />)
 
     const decode = region('Decode Throughput')
-    expect(within(decode).getByText('760.0')).toBeInTheDocument()
-    // The combined figure wears the aggregate's own name, never an engine's.
-    expect(within(decode).getByText('All models')).toBeInTheDocument()
+    // Every engine is a row under its own endpoint, never one figure summed
+    // across them.
+    expect(within(decode).getByText('120.0 tok/s')).toBeInTheDocument()
+    expect(within(decode).getByText('640.0 tok/s')).toBeInTheDocument()
     expect(within(region('Pinned to Alpha')).getByText('120.0')).toBeInTheDocument()
   })
 
@@ -249,7 +271,7 @@ describe('the page-level engine selection', () => {
 
     // Both following panels moved to the other engine…
     expect(within(region('Decode Throughput')).getByText('640.0')).toBeInTheDocument()
-    expect(within(region('Requests')).getByText('vLLM localhost:8001')).toBeInTheDocument()
+    expect(within(region('Requests')).getByText('llama.cpp localhost:8001')).toBeInTheDocument()
     // …and the pinned one stayed on the engine it names.
     expect(within(region('Pinned to Alpha')).getByText('120.0')).toBeInTheDocument()
   })

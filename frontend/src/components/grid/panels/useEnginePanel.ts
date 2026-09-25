@@ -32,7 +32,14 @@ export type EngineTargetResolution =
    * this panel follows it. Only reached with at least one engine serving — a
    * host running none is `unselected`, exactly as it is for a single target.
    */
-  | { status: 'aggregate'; running: number; total: number }
+  | {
+      status: 'aggregate'
+      running: number
+      total: number
+      /** Every engine on the host, in detection order — what the row view
+       *  divides the panel across. */
+      engines: EngineSnapshot[]
+    }
   | { status: 'missing'; requested: string }
   | { status: 'unselected' }
   | { status: 'unreadable' }
@@ -59,6 +66,9 @@ export type EnginePanelResolution =
     })
   /** The engine resolved, and has no metrics yet — starting, or loading a model. */
   | { status: 'starting'; engine: EngineSnapshot }
+  /** The engine is serving but its `/metrics` endpoint is disabled (llama.cpp
+   *  started without `--metrics`), so no metrics can arrive. */
+  | { status: 'metrics-disabled'; engine: EngineSnapshot }
   /** The engine resolved and is not serving; `detail` says why. */
   | { status: 'offline'; engine: EngineSnapshot; detail: string }
   | Exclude<EngineTargetResolution, { status: 'resolved' } | { status: 'aggregate' }>
@@ -97,7 +107,7 @@ export function useEngineTarget(panel: DashboardPanel): EngineTargetResolution {
       // the same "no inference engine running" state a single target has.
       return running === 0
         ? { status: 'unselected' }
-        : { status: 'aggregate', running, total: engines.length }
+        : { status: 'aggregate', running, total: engines.length, engines }
     }
     if (resolution.status !== 'resolved') return resolution
 
@@ -126,6 +136,74 @@ export function useEngineRequests(panel: DashboardPanel): {
   const key = target.status === 'resolved' ? engineKey(target.engine) : undefined
   const requests = useInferenceRequests(key, panel.window)
   return { target, requests }
+}
+
+/**
+ * One row of the row view: the engine, whether it can show numbers at all,
+ * and — when it can — its own metric reader and history, keyed the way the
+ * ingest side writes them, so a row charts the same series a pinned panel
+ * charts for that engine.
+ */
+export interface EngineRowTarget {
+  engine: EngineSnapshot
+  key: string
+  /** The engine's metrics, with the no-model rule applied. Null while the
+   *  engine has nothing to read. */
+  metric: EngineMetricReader | null
+  /** This engine's series over the panel's own time window. Null while
+   *  `metric` is null. */
+  series: ((name: EngineSeriesName) => DataPoint[]) | null
+  /** Why the row shows no numbers — starting, metrics disabled, or offline.
+   *  Null when the engine is serving. */
+  note: string | null
+}
+
+/**
+ * The all-models target as rows: one per engine on the host, each with its
+ * own numbers under its own name, in the panel's own box — the engine
+ * counterpart of the multi-GPU body a multi-GPU host renders for a following
+ * GPU panel.
+ *
+ * Returns `rows` exactly when the panel's target is the all-models aggregate,
+ * which is when a following panel should divide across the engines instead of
+ * naming one. For every other target it returns the target's own resolution
+ * state, so a panel that also resolves a single engine can branch on either
+ * hook in one render.
+ */
+export function useEngineRows(panel: DashboardPanel):
+  | { status: 'rows'; rows: EngineRowTarget[] }
+  | Exclude<EngineTargetResolution, { status: 'aggregate' }> {
+  const store = useMetricsStore()
+  const target = useEngineTarget(panel)
+
+  return useMemo(() => {
+    if (target.status !== 'aggregate') return target
+
+    return {
+      status: 'rows' as const,
+      rows: target.engines.map((engine) => {
+        const availability = engineAvailability(engine)
+        const ready = availability.kind === 'ready'
+        const key = engineKey(engine)
+        return {
+          engine,
+          key,
+          metric: ready ? engineMetricReader(engine) : null,
+          series: ready
+            ? (name: EngineSeriesName) => store.getChartData(engineSeries(name, key), panel.window)
+            : null,
+          note:
+            availability.kind === 'ready'
+              ? null
+              : availability.kind === 'offline'
+                ? availability.detail
+                : availability.kind === 'starting'
+                  ? 'Starting — no metrics yet.'
+                  : 'Metrics are disabled on this engine.',
+        }
+      }),
+    }
+  }, [store, target, panel.window])
 }
 
 /**
@@ -170,6 +248,7 @@ export function useEnginePanel(panel: DashboardPanel): EnginePanelResolution {
     const { engine } = target
     const availability = engineAvailability(engine)
     if (availability.kind === 'starting') return { status: 'starting', engine }
+    if (availability.kind === 'metrics-disabled') return { status: 'metrics-disabled', engine }
     if (availability.kind === 'offline') {
       return { status: 'offline', engine, detail: availability.detail }
     }

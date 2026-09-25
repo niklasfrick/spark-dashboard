@@ -81,7 +81,7 @@ export function renamePage(
 
 /**
  * The document with one page's source replaced — what it shows by default: one
- * model, all of them combined, or (with `null`) back to automatic.
+ * model, all of them at once, or (with `null`) back to automatic.
  *
  * A page edit like renaming, not a layout edit: choosing what a page shows is
  * already the deliberate, named request that an edit session exists to

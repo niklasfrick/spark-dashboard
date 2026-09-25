@@ -5,11 +5,13 @@ import { useLatencyMode } from '@/hooks/useLatencyMode'
 import { computeTrend } from '@/lib/engineStats'
 import { formatDurationMs, formatTtft, fmtVal } from '@/lib/format'
 import { pickLatencyValue, type LatencyMode } from '@/lib/latencyMode'
+import { supportsCapability } from '@/lib/engineCapabilities'
 import type { EngineSeriesName } from '@/lib/metricsHistoryStore'
 import { EnginePanelBody } from './EnginePanelBody'
 import { engineIdentity } from './engineLabel'
 import { EnginePanelNotice } from './PanelNotice'
-import { useEnginePanel } from './useEnginePanel'
+import { MultiEnginePanelBody } from './MultiEnginePanelBody'
+import { useEnginePanel, useEngineRows } from './useEnginePanel'
 import type { PanelContentProps } from '../panelRegistry'
 
 /**
@@ -22,30 +24,71 @@ import type { PanelContentProps } from '../panelRegistry'
  * choice made in the panel's own header.
  */
 export function EngineLatencyPanel({ panel }: PanelContentProps) {
+  const rows = useEngineRows(panel)
   const resolution = useEnginePanel(panel)
   const [mode, setMode] = useLatencyMode()
+  if (rows.status === 'rows') {
+    // One row per engine, each on its own TTFT. A row follows the panel's
+    // statistic unless its engine ships no histograms — llama.cpp rows fall
+    // back to the mean, exactly as a pinned panel for it does.
+    return (
+      <MultiEnginePanelBody
+        seriesLabel="TTFT"
+        rows={rows.rows}
+        pick={(row) => {
+          const metric = row.metric
+          const rowMode =
+            metric && supportsCapability(row.engine.engine_type, 'latencyPercentiles')
+              ? mode
+              : 'avg'
+          const value = metric
+            ? pickLatencyValue(rowMode, metric('ttft_ms'), metric('ttft_percentiles'))
+            : null
+          return {
+            value,
+            displayValue: metric ? `${fmtVal(value, formatTtft)} ms` : undefined,
+            unit: 'ms',
+            data: row.series ? row.series(LATENCY_SERIES.ttft[rowMode]) : [],
+          }
+        }}
+      />
+    )
+  }
   if (resolution.status !== 'resolved' && resolution.status !== 'aggregate') {
     return <EnginePanelNotice resolution={resolution} />
   }
 
   const { metric, series } = resolution
-  const ttft = pickLatencyValue(mode, metric('ttft_ms'), metric('ttft_percentiles'))
-  const itl = pickLatencyValue(mode, metric('inter_token_latency_ms'), metric('itl_percentiles'))
-  const e2e = pickLatencyValue(mode, metric('e2e_latency_ms'), metric('e2e_percentiles'))
-  const tpot = pickLatencyValue(mode, metric('tpot_ms'), metric('tpot_percentiles'))
+  // llama.cpp ships no latency histograms and no queue-time metric: fall back
+  // to the mean (and hide the percentile options) and drop the queue tile/line.
+  const engineType = resolution.status === 'resolved' ? resolution.engine.engine_type : null
+  const hasPercentiles = supportsCapability(engineType, 'latencyPercentiles')
+  const hasQueue = supportsCapability(engineType, 'queueTime')
+  const statMode: LatencyMode = hasPercentiles ? mode : 'avg'
+
+  const ttft = pickLatencyValue(statMode, metric('ttft_ms'), metric('ttft_percentiles'))
+  const itl = pickLatencyValue(statMode, metric('inter_token_latency_ms'), metric('itl_percentiles'))
+  const e2e = pickLatencyValue(statMode, metric('e2e_latency_ms'), metric('e2e_percentiles'))
+  const tpot = pickLatencyValue(statMode, metric('tpot_ms'), metric('tpot_percentiles'))
   const batchSize = metric('avg_batch_size')
   const e2eDisplay = formatDurationMs(e2e)
 
-  const ttftSeries = series(LATENCY_SERIES.ttft[mode])
-  const itlSeries = series(LATENCY_SERIES.itl[mode])
-  const tpotSeries = series(LATENCY_SERIES.tpot[mode])
-  const e2eSeries = series(LATENCY_SERIES.e2e[mode])
+  const ttftSeries = series(LATENCY_SERIES.ttft[statMode])
+  const itlSeries = series(LATENCY_SERIES.itl[statMode])
+  const tpotSeries = series(LATENCY_SERIES.tpot[statMode])
+  const e2eSeries = series(LATENCY_SERIES.e2e[statMode])
   const queueSeries = series('queueTime')
 
   return (
     <EnginePanelBody
       identity={engineIdentity(resolution)}
-      actions={<LatencyModeControl mode={mode} onModeChange={setMode} />}
+      actions={
+        <LatencyModeControl
+          mode={statMode}
+          onModeChange={setMode}
+          percentilesSupported={hasPercentiles}
+        />
+      }
       tiles={
         <div className="grid grid-cols-2 gap-1.5">
           <MetricTile
@@ -62,13 +105,15 @@ export function EngineLatencyPanel({ panel }: PanelContentProps) {
             trend={computeTrend(e2eSeries)}
             invertTrend
           />
-          <MetricTile
-            label="Queue"
-            value={fmtVal(metric('queue_time_ms'), formatTtft)}
-            unit="ms"
-            trend={computeTrend(queueSeries)}
-            invertTrend
-          />
+          {hasQueue && (
+            <MetricTile
+              label="Queue"
+              value={fmtVal(metric('queue_time_ms'), formatTtft)}
+              unit="ms"
+              trend={computeTrend(queueSeries)}
+              invertTrend
+            />
+          )}
           <MetricTile
             label="ITL"
             value={fmtVal(itl, formatTtft)}
@@ -99,7 +144,9 @@ export function EngineLatencyPanel({ panel }: PanelContentProps) {
             // ITL and TPOT share a right axis (often single or double digits)
             // so their variation stays visible against the TTFT scale.
             { data: ttftSeries, label: 'TTFT', color: '#f59e0b', axis: 'left' },
-            { data: queueSeries, label: 'Queue', color: '#8b5cf6', axis: 'right' },
+            ...(hasQueue
+              ? [{ data: queueSeries, label: 'Queue', color: '#8b5cf6', axis: 'right' as const }]
+              : []),
             { data: itlSeries, label: 'ITL', color: '#14b8a6', axis: 'right' },
             { data: tpotSeries, label: 'TPOT', color: '#ec4899', axis: 'right' },
           ]}

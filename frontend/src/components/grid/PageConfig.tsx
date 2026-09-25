@@ -20,7 +20,7 @@ interface PageConfigProps {
 }
 
 /**
- * What this page shows by default: one model, all of them combined, or
+ * What this page shows by default: one model, all of them at once, or
  * whatever the host is serving — the page-level dial the `follow` bindings
  * were built to point at.
  *

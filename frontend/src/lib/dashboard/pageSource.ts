@@ -1,13 +1,13 @@
 /**
  * What a page's following panels show by default: one model, every model
- * combined, or whatever the host happens to be serving.
+ * as its own row, or whatever the host happens to be serving.
  *
  * This is the page-level half of the binding model in `bindings.ts`, made
  * persistent. A panel bound `follow` defers to the page, and until now the page
  * could only answer with the host's default — the first running engine. The
  * source lets the operator author the answer into the document itself: a
  * "Qwen page" that opens on Qwen for every colleague and kiosk, or an overview
- * page whose engine panels show the combined figures across every engine.
+ * page whose engine panels show every engine's figures, one row each.
  *
  * **Absent means automatic.** A page with no source follows the host's default
  * exactly as every page did before the field existed, which is what lets the
@@ -29,7 +29,7 @@ import { isRecord } from './json'
  * replaced rather than edited.
  */
 export type PageSource =
-  /** Every engine at once — following engine panels show the combined figures. */
+  /** Every engine at once — following engine panels show one row each. */
   | { readonly kind: 'all' }
   /** One engine, named by its endpoint — the same identity a pinned panel uses. */
   | { readonly kind: 'engine'; readonly endpoint: string }
@@ -87,7 +87,7 @@ export function pageSourceChoices(
 ): PageSourceControlModel {
   const choices: PageSourceChoice[] = [
     { value: AUTO_CHOICE, label: 'Automatic — first serving model' },
-    { value: ALL_CHOICE, label: 'All models — combined' },
+    { value: ALL_CHOICE, label: 'All models — one row each' },
     ...engines.map(engineChoice),
   ]
 

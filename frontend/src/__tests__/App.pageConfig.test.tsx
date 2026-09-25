@@ -14,7 +14,7 @@ import { DASHBOARD_SCHEMA_VERSION } from '../lib/dashboard/schema'
 import type { EngineMetrics, EngineSnapshot, MetricsSnapshot } from '../types/metrics'
 
 // The page configuration control: what a page's following panels show — one
-// model, all of them combined, or the host default — chosen beside "Edit
+// model, all of them as one row each, or the host default — chosen beside "Edit
 // layout" and written to the shared document the moment it is chosen, the way
 // a page rename is. Driven through the application seam: real configuration
 // loading and saving over the fetch stub, real panels reading the real store.
@@ -136,14 +136,14 @@ describe('the page configuration control', () => {
     const options = within(configuration()).getAllByRole('button')
     expect(options.map((option) => option.textContent)).toEqual([
       'Automatic — first serving model',
-      'All models — combined',
+      'All models — one row each',
       'Qwen3-8B — vLLM localhost:8000',
       'Llama-3-8B — vLLM localhost:8001',
     ])
     expect(options[0]).toHaveAttribute('aria-pressed', 'true')
   })
 
-  it('writes the choice immediately and the following panels move to the combined figures', async () => {
+  it('writes the choice immediately and the following panels split into one row per engine', async () => {
     const fetchMock = serveConfiguration({ document: storedDocument(watchPage()) })
     await openPage(fetchMock)
     receive(snapshot())
@@ -153,7 +153,7 @@ describe('the page configuration control', () => {
 
     await userEvent.click(pageConfigButton())
     await userEvent.click(
-      within(configuration()).getByRole('button', { name: 'All models — combined' }),
+      within(configuration()).getByRole('button', { name: 'All models — one row each' }),
     )
 
     // One write, the moment the choice was made — no edit session, no save
@@ -167,15 +167,15 @@ describe('the page configuration control', () => {
       expect(screen.queryByRole('region', { name: 'Page configuration' })).not.toBeInTheDocument(),
     )
 
-    // The following panel shows the sum under the aggregate's own name — and
-    // the pinned panel stays on the engine its label promises.
-    expect(within(followPanel()).getByText('760.0')).toBeInTheDocument()
-    expect(within(followPanel()).getByText('All models')).toBeInTheDocument()
-    expect(within(followPanel()).getByText('2 of 2 serving')).toBeInTheDocument()
+    // The following panel shows one row per engine — each engine its own
+    // figure under its own name — and the pinned panel stays on the engine its
+    // label promises.
+    expect(within(followPanel()).getByText('120.0 tok/s')).toBeInTheDocument()
+    expect(within(followPanel()).getByText('640.0 tok/s')).toBeInTheDocument()
     expect(within(pinnedPanel()).getByText('120.0')).toBeInTheDocument()
   })
 
-  it('renders a stored all-models page as the combined view from the first paint', async () => {
+  it('renders a stored all-models page as the row view from the first paint', async () => {
     // The kiosk case: the configuration is in the document, so nobody has to
     // touch the control after a reboot.
     const fetchMock = serveConfiguration({
@@ -184,7 +184,8 @@ describe('the page configuration control', () => {
     await openPage(fetchMock)
     receive(snapshot())
 
-    expect(within(followPanel()).getByText('760.0')).toBeInTheDocument()
+    expect(within(followPanel()).getByText('120.0 tok/s')).toBeInTheDocument()
+    expect(within(followPanel()).getByText('640.0 tok/s')).toBeInTheDocument()
     expect(within(pinnedPanel()).getByText('120.0')).toBeInTheDocument()
     expect(configurationWrites(fetchMock)).toHaveLength(0)
   })

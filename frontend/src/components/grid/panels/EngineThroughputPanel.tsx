@@ -7,7 +7,8 @@ import type { EngineSeriesName } from '@/lib/metricsHistoryStore'
 import { EnginePanelBody } from './EnginePanelBody'
 import { engineIdentity } from './engineLabel'
 import { EnginePanelNotice } from './PanelNotice'
-import { useEnginePanel } from './useEnginePanel'
+import { MultiEnginePanelBody } from './MultiEnginePanelBody'
+import { useEnginePanel, useEngineRows } from './useEnginePanel'
 import type { PanelContentProps } from '../panelRegistry'
 
 /**
@@ -23,6 +24,8 @@ interface ThroughputFields {
   total: NumericEngineMetric
   /** What the cumulative total counts, as the tile labels it. */
   totalLabel: string
+  /** The panel's row-view caption, one per engine on an all-models page. */
+  rowLabel: string
   series: { live: EngineSeriesName; average: EngineSeriesName; perRequest: EngineSeriesName }
 }
 
@@ -32,6 +35,7 @@ const PREFILL: ThroughputFields = {
   perRequest: 'per_request_prompt_tps',
   total: 'total_prompt_tokens',
   totalLabel: 'Processed',
+  rowLabel: 'Prompt throughput',
   series: { live: 'promptTps', average: 'avgPromptTps', perRequest: 'perReqPromptTps' },
 }
 
@@ -41,6 +45,7 @@ const DECODE: ThroughputFields = {
   perRequest: 'per_request_tps',
   total: 'total_generation_tokens',
   totalLabel: 'Generated',
+  rowLabel: 'Decode throughput',
   series: { live: 'tps', average: 'avgTps', perRequest: 'perReqTps' },
 }
 
@@ -55,7 +60,26 @@ export function EngineDecodeThroughputPanel({ panel }: PanelContentProps) {
 }
 
 function ThroughputPanel({ panel, fields }: PanelContentProps & { fields: ThroughputFields }) {
+  const rows = useEngineRows(panel)
   const resolution = useEnginePanel(panel)
+  if (rows.status === 'rows') {
+    // One row per engine, each on its own live figure and trend line — the
+    // combined figure the panel wore on an all-models page is gone.
+    return (
+      <MultiEnginePanelBody
+        seriesLabel={fields.rowLabel}
+        rows={rows.rows}
+        pick={(row) => ({
+          value: row.metric ? row.metric(fields.live) : null,
+          displayValue: row.metric
+            ? `${fmtVal(row.metric(fields.live), formatTps)} tok/s`
+            : undefined,
+          unit: 'tok/s',
+          data: row.series ? row.series(fields.series.live) : [],
+        })}
+      />
+    )
+  }
   if (resolution.status !== 'resolved' && resolution.status !== 'aggregate') {
     return <EnginePanelNotice resolution={resolution} />
   }

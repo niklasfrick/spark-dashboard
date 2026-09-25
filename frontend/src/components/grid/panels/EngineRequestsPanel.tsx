@@ -4,7 +4,8 @@ import { fmtInt } from '@/lib/format'
 import { EnginePanelBody } from './EnginePanelBody'
 import { engineIdentity } from './engineLabel'
 import { EnginePanelNotice } from './PanelNotice'
-import { useEnginePanel } from './useEnginePanel'
+import { MultiEnginePanelBody } from './MultiEnginePanelBody'
+import { useEnginePanel, useEngineRows } from './useEnginePanel'
 import type { PanelContentProps } from '../panelRegistry'
 
 /**
@@ -15,7 +16,23 @@ import type { PanelContentProps } from '../panelRegistry'
  * healthy engine and the tile appearing at all is the signal.
  */
 export function EngineRequestsPanel({ panel }: PanelContentProps) {
+  const rows = useEngineRows(panel)
   const resolution = useEnginePanel(panel)
+  if (rows.status === 'rows') {
+    // One row per engine, each on its own in-flight count and trend.
+    return (
+      <MultiEnginePanelBody
+        seriesLabel="Active requests"
+        rows={rows.rows}
+        pick={(row) => ({
+          value: row.metric ? row.metric('active_requests') : null,
+          displayValue: row.metric ? fmtInt(row.metric('active_requests')) : undefined,
+          unit: '',
+          data: row.series ? row.series('activeRequests') : [],
+        })}
+      />
+    )
+  }
   if (resolution.status !== 'resolved' && resolution.status !== 'aggregate') {
     return <EnginePanelNotice resolution={resolution} />
   }

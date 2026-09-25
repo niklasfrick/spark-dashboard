@@ -44,11 +44,12 @@ vi.mock('@/components/charts/TimeSeriesChart', () => ({
 const ALPHA = 'http://localhost:8000'
 const BETA = 'http://localhost:8001'
 
-/** A stored page holding panels; binding omitted means `follow`. */
-function storedDocument(panels: unknown[]): string {
+/** A stored page holding panels; binding omitted means `follow`, and `source`
+ *  omitted means the page follows the host's default engine. */
+function storedDocument(panels: unknown[], source?: { kind: 'all' }): string {
   return JSON.stringify({
     version: DASHBOARD_SCHEMA_VERSION,
-    pages: [{ id: 'engines', name: 'Engines', panels }],
+    pages: [{ id: 'engines', name: 'Engines', panels, ...(source ? { source } : {}) }],
   })
 }
 
@@ -840,5 +841,104 @@ describe('the inference-request timeline', () => {
         'No engine at http://localhost:9999 — repoint this panel.',
       ),
     ).toBeInTheDocument()
+  })
+})
+
+describe('engine panels on a page configured for all models', () => {
+  const LAMM = 'http://localhost:8002'
+  const llama = (metricOverrides: Partial<EngineMetrics> = {}): EngineSnapshot =>
+    makeEngine(
+      LAMM,
+      { engine_type: 'LlamaCpp', model: modelNamed('Meta-Llama/Llama-3-8B') },
+      metricOverrides,
+    )
+
+  it('splits the panel into one row per engine, each with its own figure and trend', async () => {
+    const fetchMock = serveConfiguration({
+      document: storedDocument(
+        [{ id: 'decode', type: 'engine-decode-throughput', geometry: { x: 0, y: 0, w: 6, h: 4 } }],
+        { kind: 'all' },
+      ),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, [makeEngine(ALPHA), llama({ tokens_per_sec: 70 })]))
+    receive(
+      makeSnapshot(2000, [
+        makeEngine(ALPHA, {}, { tokens_per_sec: 140 }),
+        llama({ tokens_per_sec: 75 }),
+      ]),
+    )
+
+    const panel = region('Decode Throughput')
+    // Every engine is a row named by model and engine type — a vLLM and a
+    // llama.cpp sit in the same box, not a combined figure under one name.
+    expect(within(panel).getByText('Qwen3-8B')).toBeInTheDocument()
+    expect(within(panel).getByText('Llama-3-8B')).toBeInTheDocument()
+    expect(within(panel).getByText('vLLM')).toBeInTheDocument()
+    expect(within(panel).getByText('llama.cpp')).toBeInTheDocument()
+    // The rows carry the latest snapshot's figures...
+    expect(within(panel).getByText('140.0 tok/s')).toBeInTheDocument()
+    expect(within(panel).getByText('75.0 tok/s')).toBeInTheDocument()
+    // Each row trends its own engine's history, not the other engine's.
+    const values = within(panel)
+      .getAllByTestId('chart')
+      .map((chart) => chart.getAttribute('data-values'))
+    expect(values).toEqual(['120,140', '70,75'])
+  })
+
+  it('says why a row has no numbers instead of charting nothing', async () => {
+    const fetchMock = serveConfiguration({
+      document: storedDocument(
+        [{ id: 'decode', type: 'engine-decode-throughput', geometry: { x: 0, y: 0, w: 6, h: 4 } }],
+        { kind: 'all' },
+      ),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(
+      makeSnapshot(1000, [
+        makeEngine(ALPHA),
+        makeEngine('http://localhost:8002', {
+          engine_type: 'LlamaCpp',
+          status: { type: 'Stopped' },
+          model: modelNamed('Mistral/Mistral-7B'),
+        }),
+      ]),
+    )
+
+    const panel = region('Decode Throughput')
+    expect(within(panel).getByText('Mistral-7B')).toBeInTheDocument()
+    expect(within(panel).getByText('is not running.')).toBeInTheDocument()
+    // The stopped row charts nothing — only the serving engine has a chart.
+    expect(within(panel).getAllByTestId('chart')).toHaveLength(1)
+  })
+
+  it('labels each cache row with the metric that engine can show', async () => {
+    const fetchMock = serveConfiguration({
+      document: storedDocument(
+        [{ id: 'cache', type: 'engine-cache', geometry: { x: 0, y: 0, w: 6, h: 4 } }],
+        { kind: 'all' },
+      ),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(
+      makeSnapshot(1000, [
+        makeEngine(ALPHA),
+        llama({ kv_cache_percent: null, prefix_cache_hit_rate: 55 }),
+      ]),
+    )
+
+    const panel = region('Cache')
+    // The vLLM row is its KV cache; the llama.cpp row, which has no KV gauge,
+    // is its prefix hit rate — each labelled so the rows read honestly.
+    expect(within(panel).getByText('KV')).toBeInTheDocument()
+    expect(within(panel).getByText('42%')).toBeInTheDocument()
+    expect(within(panel).getByText('Prefix')).toBeInTheDocument()
+    expect(within(panel).getByText('55%')).toBeInTheDocument()
   })
 })
