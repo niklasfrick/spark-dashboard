@@ -884,11 +884,20 @@ describe('engine panels on a page configured for all models', () => {
     // The rows carry the latest snapshot's figures...
     expect(within(panel).getByText('140.0 tok/s')).toBeInTheDocument()
     expect(within(panel).getByText('75.0 tok/s')).toBeInTheDocument()
-    // Each row trends its own engine's history, not the other engine's.
+    // ...and the figures the single view tiles ride along under each
+    // headline, per engine: average, per-request and the lifetime total.
+    expect(within(panel).getAllByText('Avg')).toHaveLength(2)
+    expect(within(panel).getAllByText('100.0 tok/s')).toHaveLength(2)
+    expect(within(panel).getAllByText('40.0 tok/s')).toHaveLength(2)
+    expect(within(panel).getAllByText('500K tok')).toHaveLength(2)
+    // Each row trends its own engine's live line, not the other engine's.
     const values = within(panel)
-      .getAllByTestId('chart')
+      .getAllByTestId('chart-series-Decode throughput')
       .map((chart) => chart.getAttribute('data-values'))
     expect(values).toEqual(['120,140', '70,75'])
+    // and the row's chart wears the single view's three lines.
+    expect(within(panel).getAllByTestId('chart-series-Avg')).toHaveLength(2)
+    expect(within(panel).getAllByTestId('chart-series-Per-req')).toHaveLength(2)
   })
 
   it('says why a row has no numbers instead of charting nothing', async () => {

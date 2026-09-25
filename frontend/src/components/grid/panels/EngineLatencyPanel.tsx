@@ -44,11 +44,55 @@ export function EngineLatencyPanel({ panel }: PanelContentProps) {
           const value = metric
             ? pickLatencyValue(rowMode, metric('ttft_ms'), metric('ttft_percentiles'))
             : null
+          // The tiles the single view shows beside TTFT, kept on the row so a
+          // row reads like a card: E2E, queue time, ITL, TPOT and batch size.
+          const e2eDisplay = formatDurationMs(metric ? metric('e2e_latency_ms') : null)
+          const batch = metric ? metric('avg_batch_size') : null
           return {
             value,
             displayValue: metric ? `${fmtVal(value, formatTtft)} ms` : undefined,
             unit: 'ms',
             data: row.series ? row.series(LATENCY_SERIES.ttft[rowMode]) : [],
+            stats: metric
+              ? [
+                  {
+                    label: 'E2E',
+                    value: e2eDisplay.unit
+                      ? `${e2eDisplay.value} ${e2eDisplay.unit}`
+                      : e2eDisplay.value,
+                  },
+                  ...(supportsCapability(row.engine.engine_type, 'queueTime')
+                    ? [
+                        {
+                          label: 'Queue',
+                          value: `${fmtVal(metric('queue_time_ms'), formatTtft)} ms`,
+                        },
+                      ]
+                    : []),
+                  {
+                    label: 'ITL',
+                    value: `${fmtVal(
+                      pickLatencyValue(
+                        rowMode,
+                        metric('inter_token_latency_ms'),
+                        metric('itl_percentiles'),
+                      ),
+                      formatTtft,
+                    )} ms`,
+                  },
+                  {
+                    label: 'TPOT',
+                    value: `${fmtVal(
+                      pickLatencyValue(rowMode, metric('tpot_ms'), metric('tpot_percentiles')),
+                      formatTtft,
+                    )} ms`,
+                  },
+                  {
+                    label: 'Batch',
+                    value: batch !== null ? batch.toFixed(1) : '--',
+                  },
+                ]
+              : undefined,
           }
         }}
       />

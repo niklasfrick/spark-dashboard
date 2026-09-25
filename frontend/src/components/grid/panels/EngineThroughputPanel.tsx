@@ -1,7 +1,7 @@
 import { TimeSeriesChart } from '@/components/charts/TimeSeriesChart'
 import { LiveWithTotal, MetricTile } from '@/components/engines/EnginePanelPrimitives'
 import { computeTrend } from '@/lib/engineStats'
-import { formatTps, fmtVal } from '@/lib/format'
+import { formatCompactTokens, formatTps, fmtVal } from '@/lib/format'
 import type { NumericEngineMetric } from '@/lib/engineMetrics'
 import type { EngineSeriesName } from '@/lib/metricsHistoryStore'
 import { EnginePanelBody } from './EnginePanelBody'
@@ -69,14 +69,39 @@ function ThroughputPanel({ panel, fields }: PanelContentProps & { fields: Throug
       <MultiEnginePanelBody
         seriesLabel={fields.rowLabel}
         rows={rows.rows}
-        pick={(row) => ({
-          value: row.metric ? row.metric(fields.live) : null,
-          displayValue: row.metric
-            ? `${fmtVal(row.metric(fields.live), formatTps)} tok/s`
-            : undefined,
-          unit: 'tok/s',
-          data: row.series ? row.series(fields.series.live) : [],
-        })}
+        pick={(row) => {
+          const metric = row.metric
+          // The figures the single view tiles, one per row: live up top, the
+          // average and per-request beside it, the lifetime total kept
+          // visible. The row's chart wears the single view's three lines.
+          return {
+            value: metric ? metric(fields.live) : null,
+            displayValue: metric
+              ? `${fmtVal(metric(fields.live), formatTps)} tok/s`
+              : undefined,
+            unit: 'tok/s',
+            data: row.series ? row.series(fields.series.live) : [],
+            stats: metric
+              ? [
+                  { label: 'Avg', value: `${fmtVal(metric(fields.average), formatTps)} tok/s` },
+                  {
+                    label: 'Per-Req Avg',
+                    value: `${fmtVal(metric(fields.perRequest), formatTps)} tok/s`,
+                  },
+                  {
+                    label: fields.totalLabel,
+                    value: `${formatCompactTokens(metric(fields.total))} tok`,
+                  },
+                ]
+              : undefined,
+            series: row.series
+              ? [
+                  { data: row.series(fields.series.average), label: 'Avg', color: '#3b82f6' },
+                  { data: row.series(fields.series.perRequest), label: 'Per-req', color: '#a855f7' },
+                ]
+              : undefined,
+          }
+        }}
       />
     )
   }

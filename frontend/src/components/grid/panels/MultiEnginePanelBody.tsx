@@ -19,6 +19,12 @@ export interface MultiEngineRowValue {
   /** Replaces the row's `note` — e.g. a serving engine this panel has no
    *  number for. */
   note?: string
+  /** Extra lines the row's chart wears beside the primary one, the way the
+   *  single view wears avg and per-request beside live. */
+  series?: { data: DataPoint[]; label: string; color: string }[]
+  /** The figures the single view tiles beside the headline, kept on the row
+   *  as one small line so a row reads like a card, not just a big number. */
+  stats?: { label: string; value: string }[]
   yDomain?: [number, number]
   data: DataPoint[]
 }
@@ -85,9 +91,28 @@ export function MultiEnginePanelBody({
                 {display}
               </span>
             </div>
+            {value.stats && value.stats.length > 0 && (
+              <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5 px-0.5 text-[10px] tabular-nums text-zinc-500">
+                {value.stats.map((stat) => (
+                  <span key={stat.label} className="whitespace-nowrap">
+                    <span className="text-zinc-600">{stat.label}</span> {stat.value}
+                  </span>
+                ))}
+              </div>
+            )}
             <div className="min-h-0 min-w-0 flex-1">
               {note ? (
                 <p className="px-1 text-[11px] leading-snug text-zinc-500">{note}</p>
+              ) : value.series && value.series.length > 0 ? (
+                <TimeSeriesChart
+                  series={[
+                    { data: value.data, label: seriesLabel, color: '#76B900' },
+                    ...value.series,
+                  ]}
+                  unit={value.unit}
+                  yDomain={value.yDomain}
+                  hideTooltipLabel
+                />
               ) : (
                 <TimeSeriesChart
                   data={value.data}

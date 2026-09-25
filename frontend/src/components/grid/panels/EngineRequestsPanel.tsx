@@ -24,12 +24,31 @@ export function EngineRequestsPanel({ panel }: PanelContentProps) {
       <MultiEnginePanelBody
         seriesLabel="Active requests"
         rows={rows.rows}
-        pick={(row) => ({
-          value: row.metric ? row.metric('active_requests') : null,
-          displayValue: row.metric ? fmtInt(row.metric('active_requests')) : undefined,
-          unit: '',
-          data: row.series ? row.series('activeRequests') : [],
-        })}
+        pick={(row) => {
+          const metric = row.metric
+          const swapped = metric ? metric('swapped_requests') : null
+          const preemptions = metric ? metric('preemptions_total') : null
+          return {
+            value: metric ? metric('active_requests') : null,
+            displayValue: metric ? fmtInt(metric('active_requests')) : undefined,
+            unit: '',
+            data: row.series ? row.series('activeRequests') : [],
+            // The counts the single view tiles beside Active; swapped and
+            // preempted appear only once they have happened, as there.
+            stats: metric
+              ? [
+                  { label: 'Queued', value: fmtInt(metric('queued_requests')) },
+                  { label: 'Total', value: fmtInt(metric('total_requests')) },
+                  ...(swapped !== null && swapped > 0
+                    ? [{ label: 'Swapped', value: fmtInt(swapped) }]
+                    : []),
+                  ...(preemptions !== null && preemptions > 0
+                    ? [{ label: 'Preempt', value: fmtInt(preemptions) }]
+                    : []),
+                ]
+              : undefined,
+          }
+        }}
       />
     )
   }

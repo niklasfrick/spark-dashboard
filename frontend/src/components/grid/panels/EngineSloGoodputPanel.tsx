@@ -75,6 +75,14 @@ export function EngineSloGoodputPanel({ panel }: PanelContentProps) {
             displayValue: pct !== null ? `${Math.round(pct)}` : undefined,
             unit: '%',
             data: [],
+            // The per-SLO figures the single view tiles beside the combined
+            // score — the row is scored against the default thresholds, so
+            // these are.
+            stats: [
+              { label: 'TTFT', value: ttft !== null ? `${Math.round(ttft)}%` : '—' },
+              { label: 'ITL', value: itl !== null ? `${Math.round(itl)}%` : '—' },
+              { label: 'E2E', value: e2e !== null ? `${Math.round(e2e)}%` : '—' },
+            ],
           }
         }}
       />
