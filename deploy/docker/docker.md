@@ -8,13 +8,13 @@ to **`ghcr.io/niklasfrick/spark-dashboard`**, tagged `:vX.Y.Z`, `:vX.Y`, and
 ## Quick start
 
 ```bash
-docker run --rm --gpus all --pid=host -p 3000:3000 \
+docker run --rm --gpus all --pid=host -p 4000:4000 \
   -v /var/run/docker.sock:/var/run/docker.sock:ro \
   --group-add "$(getent group docker | cut -d: -f3)" \
   ghcr.io/niklasfrick/spark-dashboard:latest
 ```
 
-The dashboard is served on port 3000. `--group-add` joins the host's docker
+The dashboard is served on port 4000. `--group-add` joins the host's docker
 group so container-based engine discovery works — see
 [The DOCKER_GID gotcha](#the-docker_gid-gotcha). Prefer Compose for anything
 long-lived.
@@ -60,10 +60,10 @@ SPARK_DASHBOARD_IMAGE=ghcr.io/niklasfrick/spark-dashboard:v0.10.0
 
 `network_mode: host` lets the dashboard reach engines bound to the host network
 (e.g. vLLM started via sparkrun) and discover host processes. The dashboard
-listens directly on the host's port 3000. This is the right default for a
+listens directly on the host's port 4000. This is the right default for a
 single-tenant GPU box. In this mode `SPARK_DASHBOARD_PORT` is the port the app
 binds **directly on the host** (there's no port mapping) — set it to move the
-dashboard off `:3000`, e.g. when a `cargo install`ed instance already owns 3000.
+dashboard off `:4000`, e.g. when a `cargo install`ed instance already owns 4000.
 
 ### Bridge (opt-in)
 
@@ -73,7 +73,7 @@ For network isolation, layer the bridge override:
 docker compose -f docker-compose.yml -f docker-compose.bridge.yml up -d
 ```
 
-This switches to bridge networking, publishes `3000:3000`, and adds
+This switches to bridge networking, publishes `4000:4000`, and adds
 `host.docker.internal` (→ `host-gateway`) so the container can still reach host
 services. **Tradeoff:** engines bound only to the host network are no longer
 auto-discovered. Container-based discovery over the Docker socket still works
@@ -169,7 +169,7 @@ All are optional; defaults match the binary. Set them in `.env`.
 | ----------------------------------- | ----------- | ---------------------------------------------------- |
 | `DOCKER_GID`                        | `999`       | Host docker group GID for socket access (see below). |
 | `SPARK_DASHBOARD_IMAGE`             | `…:latest`  | Image Compose runs when not building from source.    |
-| `SPARK_DASHBOARD_PORT`              | `3000`      | Listen port.                                         |
+| `SPARK_DASHBOARD_PORT`              | `4000`      | Listen port.                                         |
 | `SPARK_DASHBOARD_BIND`              | `0.0.0.0`   | Bind address.                                        |
 | `SPARK_DASHBOARD_POLL_INTERVAL`     | `1000`      | Metrics polling interval (ms).                       |
 | `SPARK_DASHBOARD_STATE_DIR`         | `/var/lib/spark-dashboard` | Where saved dashboards live; move the volume mount with it. |

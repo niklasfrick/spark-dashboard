@@ -5,12 +5,30 @@ import { THRESHOLDS } from '@/lib/theme'
 import { gpuLabel } from './gpuLabel'
 import { GpuPanelNotice } from './PanelNotice'
 import { HardwarePanelBody } from './HardwarePanelBody'
-import { useGpuPanelSeries } from './useGpuPanel'
+import { MultiGpuPanelBody } from './MultiGpuPanelBody'
+import { useGpuPanelSeries, useGpuColumns } from './useGpuPanel'
 import type { PanelContentProps } from '../panelRegistry'
 
 /** One GPU's temperature, colored by the product's thermal thresholds. */
 export function GpuTemperaturePanel({ panel }: PanelContentProps) {
   const { resolution, data } = useGpuPanelSeries(panel, 'gpuTemp')
+  const columns = useGpuColumns(panel, 'gpuTemp')
+  if (resolution.status === 'aggregate') {
+    return (
+      <MultiGpuPanelBody
+        seriesLabel="Temp"
+        columns={(columns ?? []).map((c) => ({
+          index: c.index,
+          name: c.name,
+          engines: c.engines,
+          value: c.gpu.temperature_celsius,
+          unit: '°C',
+          yDomain: [0, 100] as [number, number],
+          data: c.data,
+        }))}
+      />
+    )
+  }
   if (resolution.status !== 'resolved') return <GpuPanelNotice resolution={resolution} />
 
   const value = resolution.gpu.temperature_celsius ?? 0

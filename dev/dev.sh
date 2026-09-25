@@ -16,7 +16,7 @@ Usage: dev.sh [--watch-frontend]
 
   --watch-frontend  Also watch frontend/ — on change, rebuild frontend/dist,
                     re-sync, and rebuild the backend so the embedded bundle on
-                    :3000 stays current. Off by default (Vite at :5173 is the
+                    :4000 stays current. Off by default (Vite at :5173 is the
                     fast path for frontend dev; this flag is for live-updating
                     the embedded build too, at the cost of a cargo rebuild per
                     frontend change).
@@ -77,7 +77,7 @@ trap cleanup EXIT INT TERM
 REMOTE_ENV="source ~/.cargo/env 2>/dev/null;"
 
 # --- Build the frontend bundle locally so rust-embed picks up a fresh dist ---
-# Direct hits to the backend on :3000 serve the embedded bundle, so this needs
+# Direct hits to the backend on :4000 serve the embedded bundle, so this needs
 # to run before we sync + rebuild the backend.
 build_frontend() {
     if [ ! -d "${PROJECT_ROOT}/frontend/node_modules" ]; then
@@ -222,7 +222,7 @@ ssh "${REMOTE}" "tail -n0 -f /tmp/spark-dashboard.log" 2>/dev/null &
 PIDS+=($!)
 
 # 3. Start Vite dev server
-BACKEND_URL="${VITE_BACKEND_URL:-http://localhost:3000}"
+BACKEND_URL="${VITE_BACKEND_URL:-http://localhost:4000}"
 echo "==> Starting Vite dev server (proxy -> ${BACKEND_URL})..."
 cd "${PROJECT_ROOT}/frontend"
 VITE_BACKEND_URL="${BACKEND_URL}" npx vite --host &
@@ -239,9 +239,9 @@ watch_backend &
 PIDS+=($!)
 
 # 5. Optionally watch frontend changes (off by default — Vite at :5173 is the
-#    fast path; this only matters if you want :3000 to stay current too).
+#    fast path; this only matters if you want :4000 to stay current too).
 if [ "$WATCH_FRONTEND" = true ]; then
-    echo "==> Watching frontend changes (--watch-frontend) — embedded :3000 will refresh on save"
+    echo "==> Watching frontend changes (--watch-frontend) — embedded :4000 will refresh on save"
     watch_frontend "Frontend change detected" &
     PIDS+=($!)
 fi

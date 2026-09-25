@@ -7,7 +7,8 @@ import { NVIDIA_THEME } from '@/lib/theme'
 import { gpuLabel } from './gpuLabel'
 import { GpuPanelNotice, PanelNotice } from './PanelNotice'
 import { HardwarePanelBody } from './HardwarePanelBody'
-import { useGpuPanelSeries } from './useGpuPanel'
+import { MultiGpuPanelBody } from './MultiGpuPanelBody'
+import { useGpuPanelSeries, useGpuColumns } from './useGpuPanel'
 import type { PanelContentProps } from '../panelRegistry'
 
 /**
@@ -21,6 +22,30 @@ import type { PanelContentProps } from '../panelRegistry'
  */
 export function GpuMemoryPanel({ panel }: PanelContentProps) {
   const { resolution, data } = useGpuPanelSeries(panel, 'gpuMemory')
+  const columns = useGpuColumns(panel, 'gpuMemory')
+  if (resolution.status === 'aggregate') {
+    return (
+      <MultiGpuPanelBody
+        seriesLabel="Memory"
+        columns={(columns ?? []).map((c) => {
+          const pct = gpuMemoryPercent(c.gpu)
+          return {
+            index: c.index,
+            name: c.name,
+            engines: c.engines,
+            value: pct,
+            displayValue:
+              pct === null
+                ? '—'
+                : `${formatGiB(c.gpu.memory_used_bytes ?? 0, 1)}/${formatGiB(c.gpu.memory_total_bytes ?? 0, 1)}`,
+            unit: '%',
+            yDomain: [0, 100] as [number, number],
+            data: c.data,
+          }
+        })}
+      />
+    )
+  }
   if (resolution.status !== 'resolved') return <GpuPanelNotice resolution={resolution} />
 
   const { gpu } = resolution

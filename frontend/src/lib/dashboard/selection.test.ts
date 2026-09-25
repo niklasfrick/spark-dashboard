@@ -45,14 +45,21 @@ function snapshot(gpus: GpuMetrics[], engines: EngineSnapshot[]): Pick<
 }
 
 describe('pageSelection', () => {
-  it('follows the primary GPU and the running engine when nothing is chosen or configured', () => {
-    // This is what makes the shipped preset work unmodified on any machine.
+  it('follows every GPU and the running engine when nothing is chosen or configured', () => {
+    // This is what makes the shipped preset work unmodified on any machine. On a
+    // multi-GPU host the default target is "all" GPUs — the divided view.
     const host = snapshot([gpu(0), gpu(1)], [engine('http://localhost:8000')])
 
     expect(pageSelection(host, {})).toEqual({
-      gpuIndex: 0,
+      gpuTarget: { kind: 'all' },
       engineTarget: { kind: 'engine', endpoint: 'http://localhost:8000' },
     })
+  })
+
+  it('defaults a one-GPU host to that GPU', () => {
+    const host = snapshot([gpu(0)], [engine('http://localhost:8000')])
+
+    expect(pageSelection(host, {}).gpuTarget).toEqual({ kind: 'gpu', index: 0 })
   })
 
   it('prefers a running engine over a stopped one listed first', () => {
@@ -83,7 +90,10 @@ describe('pageSelection', () => {
   })
 
   it('normalizes the index of a GPU reported without one', () => {
-    expect(pageSelection(snapshot([gpu(null)], []), {}).gpuIndex).toBe(0)
+    expect(pageSelection(snapshot([gpu(null)], []), {}).gpuTarget).toEqual({
+      kind: 'gpu',
+      index: 0,
+    })
   })
 
   it('selects nothing for an engine the host is not running', () => {
@@ -127,8 +137,14 @@ describe('pageSelection', () => {
     )
 
     expect(
-      pageSelection(host, { gpuIndex: 1, engineEndpoint: 'http://localhost:8001' }),
-    ).toEqual({ gpuIndex: 1, engineTarget: { kind: 'engine', endpoint: 'http://localhost:8001' } })
+      pageSelection(host, {
+        gpuTarget: { kind: 'gpu', index: 1 },
+        engineEndpoint: 'http://localhost:8001',
+      }),
+    ).toEqual({
+      gpuTarget: { kind: 'gpu', index: 1 },
+      engineTarget: { kind: 'engine', endpoint: 'http://localhost:8001' },
+    })
   })
 
   it('honours a session choice over the configured source', () => {
@@ -147,8 +163,13 @@ describe('pageSelection', () => {
   it('keeps a choice whose target has gone away', () => {
     const host = snapshot([gpu(0)], [engine('http://localhost:8000')])
 
-    expect(pageSelection(host, { gpuIndex: 3, engineEndpoint: 'http://localhost:9999' })).toEqual({
-      gpuIndex: 3,
+    expect(
+      pageSelection(host, {
+        gpuTarget: { kind: 'gpu', index: 3 },
+        engineEndpoint: 'http://localhost:9999',
+      }),
+    ).toEqual({
+      gpuTarget: { kind: 'gpu', index: 3 },
       engineTarget: { kind: 'engine', endpoint: 'http://localhost:9999' },
     })
   })
@@ -158,8 +179,8 @@ describe('pageSelection', () => {
   })
 
   it('keeps a choice made before the first snapshot arrives', () => {
-    expect(pageSelection(null, { gpuIndex: 1 })).toEqual({
-      gpuIndex: 1,
+    expect(pageSelection(null, { gpuTarget: { kind: 'gpu', index: 1 } })).toEqual({
+      gpuTarget: { kind: 'gpu', index: 1 },
       engineTarget: null,
     })
   })
@@ -173,9 +194,13 @@ describe('pageSelection', () => {
 
 describe('choosing what a page points at', () => {
   it('records a chosen GPU and engine', () => {
-    expect(withSelectedGpu({}, 2)).toEqual({ gpuIndex: 2 })
-    expect(withSelectedEngine({ gpuIndex: 2 }, 'http://localhost:8000')).toEqual({
-      gpuIndex: 2,
+    expect(withSelectedGpu({}, { kind: 'gpu', index: 2 })).toEqual({
+      gpuTarget: { kind: 'gpu', index: 2 },
+    })
+    expect(
+      withSelectedEngine({ gpuTarget: { kind: 'gpu', index: 2 } }, 'http://localhost:8000'),
+    ).toEqual({
+      gpuTarget: { kind: 'gpu', index: 2 },
       engineEndpoint: 'http://localhost:8000',
     })
   })
@@ -183,17 +208,21 @@ describe('choosing what a page points at', () => {
   it('goes back to following the host when the choice is cleared', () => {
     // Absent means "never chose", which is what a cleared selection has to
     // become — storing a null would freeze the page on a host that changes.
-    expect(withSelectedGpu({ gpuIndex: 2, engineEndpoint: 'http://x:1' }, null)).toEqual({
+    expect(
+      withSelectedGpu({ gpuTarget: { kind: 'gpu', index: 2 }, engineEndpoint: 'http://x:1' }, null),
+    ).toEqual({
       engineEndpoint: 'http://x:1',
     })
-    expect(withSelectedEngine({ gpuIndex: 2, engineEndpoint: 'http://x:1' }, null)).toEqual({
-      gpuIndex: 2,
+    expect(
+      withSelectedEngine({ gpuTarget: { kind: 'gpu', index: 2 }, engineEndpoint: 'http://x:1' }, null),
+    ).toEqual({
+      gpuTarget: { kind: 'gpu', index: 2 },
     })
   })
 
   it('leaves the selection it was given untouched', () => {
-    const chosen = { gpuIndex: 0 }
-    withSelectedGpu(chosen, 1)
-    expect(chosen).toEqual({ gpuIndex: 0 })
+    const chosen = { gpuTarget: { kind: 'gpu', index: 0 } } as const
+    withSelectedGpu(chosen, { kind: 'gpu', index: 1 })
+    expect(chosen).toEqual({ gpuTarget: { kind: 'gpu', index: 0 } })
   })
 })

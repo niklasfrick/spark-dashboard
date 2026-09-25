@@ -6,6 +6,9 @@ import {
   formatAcceptanceLength,
   formatEndpoint,
   engineDescription,
+  engineDisplayName,
+  engineIconSrc,
+  shortGpuName,
   modelMetadataWarning,
 } from '../lib/format'
 
@@ -127,5 +130,32 @@ describe('modelMetadataWarning', () => {
     expect(modelMetadataWarning('Unavailable')).toBeNull()
     expect(modelMetadataWarning(null)).toBeNull()
     expect(modelMetadataWarning(undefined)).toBeNull()
+  })
+})
+
+describe('engineDisplayName', () => {
+  it('names every engine type the wire can carry', () => {
+    expect(engineDisplayName('Vllm')).toBe('vLLM')
+    expect(engineDisplayName('LlamaCpp')).toBe('llama.cpp')
+  })
+})
+
+describe('engineIconSrc', () => {
+  it('maps every engine type to a shipped icon', () => {
+    expect(engineIconSrc('Vllm')).toBe('/icons/vllm.svg')
+    expect(engineIconSrc('LlamaCpp')).toBe('/icons/llama-cpp.svg')
+  })
+})
+
+describe('shortGpuName', () => {
+  it('strips the vendor prefix for compact column labels', () => {
+    expect(shortGpuName('NVIDIA GeForce RTX 3090')).toBe('RTX 3090')
+    expect(shortGpuName('NVIDIA RTX PRO 6000 Blackwell Workstation Edition')).toBe(
+      'RTX PRO 6000 Blackwell Workstation Edition',
+    )
+  })
+
+  it('leaves an already-short name untouched', () => {
+    expect(shortGpuName('RTX 3090')).toBe('RTX 3090')
   })
 })

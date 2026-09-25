@@ -25,7 +25,7 @@ Two URLs, two behaviors:
 
 - `http://localhost:5173` — Vite dev server. Frontend edits hot-reload in the
   browser, API/WS calls proxy to the remote backend.
-- `http://${DEPLOY_HOST}:3000` — the remote backend serving the **embedded**
+- `http://${DEPLOY_HOST}:4000` — the remote backend serving the **embedded**
   bundle that was built when `dev.sh` started. To refresh it during a session,
   re-run `npm run build` locally and trigger any backend file change (or just
   restart `dev.sh`) so the next sync + `cargo build --release` re-embeds the
@@ -40,7 +40,7 @@ Pass `./dev/dev.sh --watch-frontend` to also watch `frontend/src/`,
 `frontend/public/`, `frontend/index.html`, `vite.config.ts`, and
 `package.json`. On change the script rebuilds `frontend/dist/`, re-syncs to the
 remote, and rebuilds the backend — so direct hits on
-`http://${DEPLOY_HOST}:3000` refresh too.
+`http://${DEPLOY_HOST}:4000` refresh too.
 
 Off by default because each save triggers a full `npm run build` plus
 `cargo build --release` (~10–30s on a typical remote). For normal frontend dev,
@@ -79,7 +79,7 @@ discovery. See [`.env.docker.example`](../deploy/docker/.env.docker.example).
 | `DEPLOY_USER`      | SSH user on the remote host (required)                       |
 | `DEPLOY_HOST`      | Hostname or IP of the remote host (required)                 |
 | `DEPLOY_DIR`       | Project path on the remote host, relative to remote home (default `spark-dashboard`) |
-| `VITE_BACKEND_URL` | Where Vite proxies `/ws` and `/api` (default `http://localhost:3000`) |
+| `VITE_BACKEND_URL` | Where Vite proxies `/ws` and `/api` (default `http://localhost:4000`) |
 
 Missing `DEPLOY_USER` or `DEPLOY_HOST` causes the script to exit immediately
 with a clear message.

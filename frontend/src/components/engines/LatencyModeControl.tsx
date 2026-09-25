@@ -17,9 +17,16 @@ const OPTIONS: { value: LatencyMode; label: string }[] = [
 interface LatencyModeControlProps {
   mode: LatencyMode
   onModeChange: (next: LatencyMode) => void
+  /** Hide the percentile options for an engine that ships no latency histograms. */
+  percentilesSupported?: boolean
 }
 
-export function LatencyModeControl({ mode, onModeChange }: LatencyModeControlProps) {
+export function LatencyModeControl({
+  mode,
+  onModeChange,
+  percentilesSupported = true,
+}: LatencyModeControlProps) {
+  const options = percentilesSupported ? OPTIONS : OPTIONS.filter((o) => o.value === 'avg')
   return (
     <div className="shrink-0 flex items-center gap-2 text-[11px] text-zinc-500 select-none">
       <span className="leading-none">Statistic</span>
@@ -34,7 +41,7 @@ export function LatencyModeControl({ mode, onModeChange }: LatencyModeControlPro
           }}
           className="appearance-none border rounded-md pl-2 pr-6 py-1 text-[11px] tabular-nums leading-none focus:outline-none focus:ring-1 focus:ring-[#76B900]/60 transition-colors bg-white/[0.03] hover:bg-white/[0.06] border-white/[0.06] text-zinc-200 cursor-pointer"
         >
-          {OPTIONS.map((opt) => (
+          {options.map((opt) => (
             <option key={opt.value} value={opt.value} className="bg-[#0d0d10] text-zinc-200">
               {opt.label}
             </option>

@@ -4,6 +4,7 @@ use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::Router;
 use rust_embed::Embed;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tower_http::cors::CorsLayer;
@@ -32,6 +33,13 @@ pub struct AppState {
     /// exporter and the status endpoint do not re-read the file per tick.
     /// Updated by the dashboard write paths, which are the only writers.
     pub hec_config: SharedHecConfig,
+    /// Path to the shared HEC configuration file. Every instance on the host
+    /// reads and writes this same file, so the HEC target is configured once,
+    /// independent of each instance's per-instance dashboard document.
+    pub hec_path: PathBuf,
+    /// Accept a self-signed / invalid TLS cert for the HEC endpoint (opt-in,
+    /// `curl -k` behaviour); the default verifies the cert.
+    pub hec_insecure: bool,
     /// What the exporter is doing right now, published by the exporter task.
     pub export_status: SharedExportStatus,
     /// Hostname stamped into HEC events, so `_host` identifies this machine
@@ -101,14 +109,27 @@ async fn healthz() -> &'static str {
 /// stored. Absence is not an error — it is what a fresh install and a reset
 /// both look like, and the client renders the default preset for it.
 ///
-/// One deliberate exception to "stored verbatim": a stored `export.hec.token`
-/// comes back masked (`…abcd`). The token is write-only through the API —
-/// the client cannot read it back, and a save that sends an empty token keeps
-/// the stored one (see [`put_dashboard`]).
+/// One deliberate exception to "stored verbatim": the `export.hec` section is
+/// projected from the shared HEC file (token masked, `…abcd`), not from the
+/// stored bytes. The token is write-only through the API — the client cannot
+/// read it back, and a save that sends an empty token keeps the stored one
+/// (see [`put_dashboard`]).
 async fn get_dashboard(State(state): State<AppState>) -> impl IntoResponse {
     match state.config.load().await {
         Ok(Some(document)) => {
-            let body = hec::mask_token_in_document(&document).unwrap_or(document);
+            // The HEC section is served from the shared file, not the stored
+            // bytes: project the warm shared target (token masked) into the
+            // document so the settings dialog — which reads `export.hec` out
+            // of the served document — keeps working unchanged. With no shared
+            // target, strip any stale `export.hec` so the dialog reports the
+            // disabled state.
+            let shared = state.hec_config.read().await.clone();
+            let body = match shared {
+                Some(target) => {
+                    hec::project_hec_into_document(&document, &target).unwrap_or(document)
+                }
+                None => hec::strip_hec_from_document(&document).unwrap_or(document),
+            };
             (
                 axum::http::StatusCode::OK,
                 [
@@ -141,11 +162,11 @@ async fn get_dashboard(State(state): State<AppState>) -> impl IntoResponse {
     }
 }
 
-/// Replaces the document wholesale. The body is stored as received except
-/// for one schema-aware merge: the `export.hec` token. The client receives
-/// the token masked on read, so it cannot re-send it; a save with an empty
-/// token therefore keeps the stored token, and a save that drops the section
-/// drops the credential with it. Everything else stays opaque bytes.
+/// Replaces the document wholesale. The `export.hec` section is routed to the
+/// shared HEC file (not stored with the document): the dialog's token is filled
+/// from the shared file when re-sent empty, the resulting target is written to
+/// the shared file, and the stored document keeps layout only. A save that drops
+/// the section clears the shared credential. Everything else stays opaque bytes.
 async fn put_dashboard(State(state): State<AppState>, body: Bytes) -> impl IntoResponse {
     if body.len() > MAX_DOCUMENT_BYTES {
         return (
@@ -160,27 +181,43 @@ async fn put_dashboard(State(state): State<AppState>, body: Bytes) -> impl IntoR
         return read_only_response(&state);
     }
 
-    let stored = state
-        .config
-        .load()
-        .await
-        .ok()
-        .flatten()
-        .as_deref()
-        .and_then(hec::hec_target_from_document);
-    let bytes = match &stored {
+    // The HEC target is shared, not per-instance: fill the document's
+    // `export.hec` token from the shared file when the dialog re-sends it
+    // empty (its "keep the stored token" encoding), extract the resulting
+    // target, and persist it to the shared file. The stored document keeps
+    // layout only — `export.hec` is stripped so the shared file is the single
+    // source of truth for the credential.
+    let stored = state.hec_config.read().await.clone();
+    let filled = match &stored {
         Some(stored_target) => hec::retain_token_in_document(&body, &stored_target.token)
             .unwrap_or_else(|| body.to_vec()),
         None => body.to_vec(),
     };
+    match hec::hec_target_from_document(&filled) {
+        Some(target) if !target.token.is_empty() => {
+            if let Err(err) = hec::save_shared_hec(&state.hec_path, &target).await {
+                tracing::warn!(
+                    "writing the shared HEC file {} failed: {err}",
+                    state.hec_path.display()
+                );
+            }
+            // Keep the warm view in sync — the exporter and the test route
+            // read this, not the file.
+            *state.hec_config.write().await = Some(target);
+        }
+        _ => {
+            // No section, or a section without a usable token: the HEC is
+            // disabled. A token-less target cannot authenticate, so it is
+            // treated as off rather than stored.
+            let _ = hec::clear_shared_hec(&state.hec_path).await;
+            *state.hec_config.write().await = None;
+        }
+    }
+
+    let bytes = hec::strip_hec_from_document(&filled).unwrap_or_else(|| filled.to_vec());
 
     match state.config.store(&bytes).await {
-        Ok(()) => {
-            // Keep the shared view in sync — the exporter and the test route
-            // read this, not the file.
-            *state.hec_config.write().await = hec::hec_target_from_document(&bytes);
-            no_content(&state)
-        }
+        Ok(()) => no_content(&state),
         Err(err) => {
             tracing::error!("writing the dashboard configuration failed: {err}");
             write_failed_response(&state)
@@ -197,9 +234,10 @@ async fn delete_dashboard(State(state): State<AppState>) -> impl IntoResponse {
 
     match state.config.delete().await {
         Ok(()) => {
-            // No document, no export: the section is gone, including the
-            // token.
-            *state.hec_config.write().await = None;
+            // Resetting the layout does not clear the shared HEC target — it is
+            // a host-wide setting, not part of this instance's document. Re-read
+            // the shared file so the warm view stays accurate.
+            *state.hec_config.write().await = hec::load_shared_hec(&state.hec_path).await;
             no_content(&state)
         }
         Err(err) => {
@@ -238,10 +276,7 @@ async fn test_export(State(state): State<AppState>, body: Bytes) -> impl IntoRes
         .into_response();
     };
 
-    let client = reqwest::Client::builder()
-        .timeout(hec::POST_TIMEOUT)
-        .build()
-        .expect("reqwest client");
+    let client = hec::hec_client(state.hec_insecure);
     let outcome = hec::run_test(&client, &target, &state.hostname).await;
     axum::Json(serde_json::json!({
         "outcome": serde_json::to_value(outcome).expect("outcome serializes"),
@@ -344,6 +379,8 @@ mod tests {
             metrics_tx: tx,
             config: Arc::new(ConfigStore::new(state_dir).await),
             hec_config: Arc::new(RwLock::new(None)),
+            hec_path: state_dir.join("hec.json"),
+            hec_insecure: false,
             export_status: Arc::new(Mutex::new(ExportStatus::disabled())),
             hostname: "test-host".into(),
         };
@@ -756,9 +793,9 @@ mod tests {
             .json()
             .await
             .unwrap();
-        assert_eq!(
-            value["export"]["hec"]["token"], "",
-            "the token is gone for good"
+        assert!(
+            value["export"].get("hec").is_none(),
+            "the HEC section is gone for good (a token-less target is disabled, not saved)"
         );
     }
 

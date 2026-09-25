@@ -4,12 +4,30 @@ import { TimeSeriesChart } from '@/components/charts/TimeSeriesChart'
 import { gpuLabel } from './gpuLabel'
 import { GpuPanelNotice } from './PanelNotice'
 import { HardwarePanelBody } from './HardwarePanelBody'
-import { useGpuPanelSeries } from './useGpuPanel'
+import { MultiGpuPanelBody } from './MultiGpuPanelBody'
+import { useGpuPanelSeries, useGpuColumns } from './useGpuPanel'
 import type { PanelContentProps } from '../panelRegistry'
 
 /** One GPU's utilization: gauge plus trend over the panel's own window. */
 export function GpuUtilizationPanel({ panel }: PanelContentProps) {
   const { resolution, data } = useGpuPanelSeries(panel, 'gpuUtil')
+  const columns = useGpuColumns(panel, 'gpuUtil')
+  if (resolution.status === 'aggregate') {
+    return (
+      <MultiGpuPanelBody
+        seriesLabel="Util"
+        columns={(columns ?? []).map((c) => ({
+          index: c.index,
+          name: c.name,
+          engines: c.engines,
+          value: c.gpu.utilization_percent,
+          unit: '%',
+          yDomain: [0, 100] as [number, number],
+          data: c.data,
+        }))}
+      />
+    )
+  }
   if (resolution.status !== 'resolved') return <GpuPanelNotice resolution={resolution} />
 
   const value = resolution.gpu.utilization_percent ?? 0

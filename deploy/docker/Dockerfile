@@ -86,7 +86,7 @@ COPY --from=builder --chown=65532:65532 --chmod=750 /state /var/lib/spark-dashbo
 # /proc, and the docker socket all work non-root given the device/group access
 # supplied at run time (see docker-compose.yml: GPU reservation + group_add).
 USER nonroot
-EXPOSE 3000
+EXPOSE 4000
 
 # Liveness probe against /healthz. Distroless has no shell or wget, so this execs
 # the binary's own `healthcheck` subcommand, which reads SPARK_DASHBOARD_PORT.

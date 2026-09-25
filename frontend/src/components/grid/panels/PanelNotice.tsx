@@ -28,6 +28,13 @@ export function EnginePanelNotice({ resolution }: { resolution: EnginePanelNotic
       return <PanelNotice>Waiting for metrics</PanelNotice>
     case 'starting':
       return <PanelNotice>{engineDescription(resolution.engine)} has no metrics yet.</PanelNotice>
+    case 'metrics-disabled':
+      return (
+        <PanelNotice>
+          {engineDescription(resolution.engine)} is serving with metrics disabled — restart the
+          server with <code className="font-mono">--metrics</code> to populate this panel.
+        </PanelNotice>
+      )
     case 'offline':
       return (
         <PanelNotice>
@@ -50,7 +57,10 @@ export function EnginePanelNotice({ resolution }: { resolution: EnginePanelNotic
 export function GpuPanelNotice({
   resolution,
 }: {
-  resolution: Exclude<GpuPanelResolution, { status: 'resolved' }>
+  resolution: Exclude<
+    GpuPanelResolution,
+    { status: 'resolved' } | { status: 'aggregate' }
+  >
 }) {
   switch (resolution.status) {
     case 'waiting':

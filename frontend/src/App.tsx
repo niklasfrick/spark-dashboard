@@ -9,6 +9,7 @@ import { MetricsStoreProvider } from './hooks/MetricsStoreProvider'
 import { AppHeader } from './components/AppHeader'
 import { ConfigurationNotices } from './components/ConfigurationNotices'
 import { ExportSettingsDialog } from './components/ExportSettingsDialog'
+import { EngineStatusStrip } from './components/EngineStatusStrip'
 import { HecStatusDot } from './components/HecStatusDot'
 import { GridPageEditor } from './components/grid/GridPageEditor'
 import { PageBar } from './components/pages/PageBar'
@@ -88,6 +89,7 @@ function DashboardPageView({ pageId }: { pageId: string | null }) {
         }
         trailing={
           <>
+            <EngineStatusStrip />
             <HecStatusDot />
             <button
               type="button"

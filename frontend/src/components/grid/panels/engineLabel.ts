@@ -1,4 +1,6 @@
 import { engineDescription, modelMetadataWarning, shortModelName } from '@/lib/format'
+import { engineKey } from '@/lib/identity'
+import { readEngineLabel } from '@/lib/engineLabelStore'
 import { getProviderLogo, type ProviderLogo } from '@/lib/providerLogo'
 import type { AggregateEngineTarget, ResolvedEngineTarget } from './useEnginePanel'
 
@@ -70,9 +72,13 @@ export function engineIdentity(
   }
 
   const { model } = resolution.engine
+  // An operator-set label replaces the (often ugly) model filename. Read
+  // straight from storage: this runs on every panel render (each ~1s
+  // snapshot), so it stays in sync without a subscription.
+  const label = readEngineLabel(engineKey(resolution.engine))
   return {
     label: engineDescription(resolution.engine),
-    model: model?.name ? shortModelName(model.name) : null,
+    model: label ?? (model?.name ? shortModelName(model.name) : null),
     logo: getProviderLogo(model?.name),
     modelWarning: modelMetadataWarning(resolution.engine.model_metadata_error),
   }

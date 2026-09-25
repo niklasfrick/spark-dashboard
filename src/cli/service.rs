@@ -95,7 +95,7 @@ mod linux {
         println!("  systemctl status {SERVICE_NAME}");
         println!("  journalctl -u {SERVICE_NAME} -f");
         println!();
-        println!("Dashboard: http://<spark-host>:3000");
+        println!("Dashboard: http://<spark-host>:4000");
         Ok(())
     }
 

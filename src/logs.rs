@@ -427,11 +427,8 @@ async fn container_display_name(container_id: &str) -> String {
 /// same stream. Failure handling mirrors the metrics exporter: 429/5xx and
 /// unreachability keep the (bounded) buffer and back off one probe interval,
 /// 401/403/400 drop it — re-sending the same bad token cannot succeed.
-pub async fn run_log_exporter(hec_config: hec::SharedHecConfig, host: String) {
-    let client = reqwest::Client::builder()
-        .timeout(hec::POST_TIMEOUT)
-        .build()
-        .expect("reqwest client");
+pub async fn run_log_exporter(hec_config: hec::SharedHecConfig, host: String, insecure: bool) {
+    let client = hec::hec_client(insecure);
     // container id → (display name, receiver)
     let mut streams: HashMap<String, (String, broadcast::Receiver<String>)> = HashMap::new();
     // (container, line) pairs waiting to be sent.
@@ -547,6 +544,7 @@ mod tests {
             model: None,
             model_metadata_error: None,
             metrics: None,
+            metrics_disabled: false,
             recent_requests: Vec::new(),
             deployment_mode: match container_id {
                 Some(_) => DeploymentMode::Docker,

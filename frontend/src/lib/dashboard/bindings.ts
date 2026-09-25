@@ -20,7 +20,7 @@
 import { findEngineByEndpoint, findGpuByIndex, type GpuIdentity } from '@/lib/identity'
 import type { EngineSnapshot } from '@/types/metrics'
 import { isRecord } from './json'
-import type { PageEngineTarget } from './selection'
+import type { PageEngineTarget, PageGpuTarget } from './selection'
 
 /**
  * Where a panel gets its target.
@@ -100,10 +100,17 @@ export function readBinding(raw: unknown): PanelBinding {
   }
 }
 
+/** What a GPU binding turned into: any single-target resolution, or the
+ *  aggregate over every GPU on the host, which only a following panel on a
+ *  page whose GPU target is "all" resolves to. A pin always names one GPU. */
+export type GpuBindingResolution<T extends GpuIdentity> =
+  | BindingResolution<T>
+  | { status: 'aggregate' }
+
 /**
  * Resolves a GPU panel's binding against the GPUs on this host.
  *
- * `pageGpuIndex` is the page-level selection a following panel defers to, null
+ * `pageGpuTarget` is the page-level selection a following panel defers to, null
  * when there is nothing selected. A selection that is not on the host is
  * reported as missing rather than nudged to the primary GPU — the page label and
  * the panel's data have to agree.
@@ -111,23 +118,31 @@ export function readBinding(raw: unknown): PanelBinding {
 export function resolveGpuBinding<T extends GpuIdentity>(
   binding: PanelBinding,
   gpus: readonly T[],
-  pageGpuIndex: number | null,
-): BindingResolution<T> {
+  pageGpuTarget: PageGpuTarget | null,
+): GpuBindingResolution<T> {
   // Including a binding that names an engine: on a GPU panel that is a corrupt
   // document, and picking some GPU to show anyway is the prohibited failure.
   if (binding.kind !== 'follow' && binding.kind !== 'gpu') return { status: 'unreadable' }
 
-  const index = binding.kind === 'gpu' ? binding.index : pageGpuIndex
-
-  // Only a following panel can have nothing to follow. A pin names a GPU, so an
-  // empty host makes it missing rather than unselected — the operator asked for
-  // something specific and it is not here.
-  if (index === null || (binding.kind === 'follow' && gpus.length === 0)) {
-    return { status: 'unselected' }
+  // A pin names its own GPU; an empty host makes it missing, not unselected.
+  if (binding.kind === 'gpu') {
+    const target = findGpuByIndex(gpus, binding.index)
+    return target
+      ? { status: 'resolved', target }
+      : { status: 'missing', requested: `GPU ${binding.index}` }
   }
 
-  const target = findGpuByIndex(gpus, index)
-  return target ? { status: 'resolved', target } : { status: 'missing', requested: `GPU ${index}` }
+  // A following panel defers to the page's GPU target. Only it can have nothing
+  // to follow.
+  if (pageGpuTarget === null) return { status: 'unselected' }
+  // No GPUs on the host at all: nothing to follow, and not a misconfiguration.
+  if (gpus.length === 0) return { status: 'unselected' }
+  // Every GPU at once: the divided view, one column per GPU.
+  if (pageGpuTarget.kind === 'all') return { status: 'aggregate' }
+  const target = findGpuByIndex(gpus, pageGpuTarget.index)
+  return target
+    ? { status: 'resolved', target }
+    : { status: 'missing', requested: `GPU ${pageGpuTarget.index}` }
 }
 
 /**
@@ -142,7 +157,7 @@ export type EngineBindingResolution<T> = BindingResolution<T> | { status: 'aggre
  * Resolves an engine panel's binding against the engines detected on this host.
  *
  * `pageTarget` is the page-level selection: one engine, or all of them
- * combined. A host with no engines, or a page with no engine selected, is
+ * at once. A host with no engines, or a page with no engine selected, is
  * `unselected` — hardware monitoring is still useful there, so it is a graceful
  * state rather than a failure.
  */

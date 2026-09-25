@@ -27,8 +27,14 @@ pub struct DetectedEngine {
 }
 
 /// Known engine binaries and their default ports.
-const ENGINE_BINARIES: &[(&str, EngineType, &str)] =
-    &[("vllm", EngineType::Vllm, "http://localhost:8000")];
+const ENGINE_BINARIES: &[(&str, EngineType, &str)] = &[
+    ("vllm", EngineType::Vllm, "http://localhost:8000"),
+    (
+        "llama-server",
+        EngineType::LlamaCpp,
+        "http://localhost:8080",
+    ),
+];
 
 /// The port vLLM serves on when it is not told otherwise. Used wherever a
 /// candidate is found but its port cannot be read off the command line.
@@ -124,6 +130,19 @@ fn is_vllm_process(command: &str) -> bool {
         .any(|arg| arg == "vllm" || arg.ends_with("/vllm") || arg.contains("vllm.entrypoints"))
 }
 
+/// Whether a single command-line argument identifies `engine_type`. Used by the
+/// process-scan fallback that covers engines whose process name is not the
+/// binary name (vLLM run as `python -m vllm...`) and as a safety net for
+/// llama.cpp.
+fn cmdline_matches_engine(arg: &str, engine_type: &EngineType) -> bool {
+    match engine_type {
+        EngineType::Vllm => {
+            arg == "vllm" || arg.ends_with("/vllm") || arg.contains("vllm.entrypoints")
+        }
+        EngineType::LlamaCpp => arg == "llama-server" || arg.ends_with("/llama-server"),
+    }
+}
+
 /// The endpoint to probe a container's vLLM on, and whether the port had to be
 /// assumed.
 ///
@@ -155,26 +174,24 @@ fn detect_by_process(sys: &sysinfo::System) -> Vec<DetectedEngine> {
         // Direct binary match (e.g. process named "vllm")
         let mut procs: Vec<_> = sys.processes_by_name(OsStr::new(binary)).collect();
 
-        // Also check all processes for vllm in their command-line args.
-        // Covers: `python3 /usr/local/bin/vllm serve ...`  (Docker host-networking)
-        //         `python -m vllm.entrypoints.openai.api_server ...`
+        // Also check all processes for the engine in their command-line args.
+        // For vLLM this covers `python -m vllm.entrypoints...` (Docker
+        // host-networking) where the process name is `python`, not `vllm`.
+        // For llama.cpp the binary is natively named `llama-server`, so the
+        // direct name match above usually suffices — this is a safety net.
         if procs.is_empty() {
-            let vllm_procs: Vec<_> = sys
+            let matched: Vec<_> = sys
                 .processes()
                 .values()
                 .filter(|p| {
                     p.cmd().iter().any(|arg| {
                         arg.to_str()
-                            .map(|s| {
-                                s.contains("vllm.entrypoints")
-                                    || s.ends_with("/vllm")
-                                    || s == "vllm"
-                            })
+                            .map(|s| cmdline_matches_engine(s, engine_type))
                             .unwrap_or(false)
                     })
                 })
                 .collect();
-            procs = vllm_procs;
+            procs = matched;
         }
 
         // Emit one DetectedEngine per distinct endpoint. Multi-instance native
@@ -198,7 +215,10 @@ fn detect_by_process(sys: &sysinfo::System) -> Vec<DetectedEngine> {
             }
             let endpoint = parse_endpoint_from_args(&cmd, default_endpoint)
                 .unwrap_or_else(|| default_endpoint.to_string());
-            let served_model = parse_model_from_args(&cmd);
+            let served_model = match engine_type {
+                EngineType::Vllm => parse_model_from_args(&cmd),
+                EngineType::LlamaCpp => parse_model_from_args_llama(&cmd),
+            };
             let pid = p.pid().as_u32();
             match seen_endpoints.get(&endpoint) {
                 Some(&slot) => detected[slot].pids.push(pid),
@@ -498,25 +518,18 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
 
         // The image and the container's entrypoint are trustworthy signals on
         // their own. A container *name* is not: names are operator-chosen and
-        // commonly include "vllm" for unrelated sidecars (an OpenResty reverse
+        // commonly include an engine name for unrelated sidecars (a reverse
         // proxy called "vllm-proxy"), so a name match is only a candidate —
-        // confirmed below by finding an actual vLLM process inside it.
+        // confirmed below by finding an actual engine process inside it.
         //
         // The name has to count for something, though: a container built from a
-        // private image, started with `sleep infinity` and given vLLM by hand is
-        // otherwise invisible to the dashboard entirely, however plainly it is
-        // named.
-        let named_vllm = container
-            .names
-            .as_deref()
-            .unwrap_or_default()
-            .iter()
-            .any(|n| n.to_lowercase().contains("vllm"));
-        let is_vllm = image.contains("vllm") || command.contains("vllm");
-
-        if !is_vllm && !named_vllm {
-            continue;
-        }
+        // private image, started with `sleep infinity` and given an engine by
+        // hand is otherwise invisible to the dashboard entirely.
+        let names = container.names.as_deref().unwrap_or_default();
+        let (engine_type, trusted) = match container_engine_type(&image, &command, names) {
+            Some(v) => v,
+            None => continue,
+        };
 
         // 1. Try port from Docker port mappings (works for -p / port-forwarding)
         let mapped_port = container
@@ -527,7 +540,7 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
         // 2. Try port + model from the container's own command string
         let container_cmd = container.command.as_deref().unwrap_or_default();
         let cmd_port = parse_port_from_command_str(container_cmd);
-        let cmd_model = parse_model_from_command_str(container_cmd);
+        let cmd_model = parse_model_from_command_str_engine(container_cmd, &engine_type);
 
         let port = mapped_port.map(|p| p.to_string()).or(cmd_port);
 
@@ -539,7 +552,7 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
         //    argument, since `container.command` is just the container's
         //    *entrypoint* and often omits the child vllm-serve args.
         let mut pids: Vec<u32> = Vec::new();
-        let mut saw_vllm_process = false;
+        let mut saw_engine_process = false;
         let (port, served_model) = {
             let container_id = container.id.as_deref().unwrap_or_default();
             if container_id.is_empty() {
@@ -556,8 +569,8 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
                                     pids.push(pid);
                                 }
                                 let line = row.join(" ");
-                                if is_vllm_process(&line) {
-                                    saw_vllm_process = true;
+                                if is_engine_process(&line, &engine_type) {
+                                    saw_engine_process = true;
                                 }
                                 if found_port.is_none() {
                                     if let Some(p) = parse_port_from_command_str(&line) {
@@ -570,7 +583,9 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
                                     }
                                 }
                                 if found_model.is_none() {
-                                    if let Some(m) = parse_model_from_command_str(&line) {
+                                    if let Some(m) =
+                                        parse_model_from_command_str_engine(&line, &engine_type)
+                                    {
                                         tracing::debug!(
                                             "Docker top: found model {} in: {}",
                                             m,
@@ -594,10 +609,11 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
         pids.dedup();
 
         // A container that only matched by name has to prove itself. Nothing
-        // that merely calls itself vllm becomes an engine.
-        if !is_vllm && !saw_vllm_process {
+        // that merely calls itself an engine name becomes an engine.
+        if !trusted && !saw_engine_process {
             tracing::debug!(
-                "Container named like vLLM (image={}) runs no vLLM process; skipping",
+                "Container named like {} (image={}) runs no engine process; skipping",
+                engine_type,
                 container.image.as_deref().unwrap_or("?"),
             );
             continue;
@@ -615,14 +631,15 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
         // engine, metrics and logs alike.
         let (endpoint, guessed) = docker_endpoint(port.as_deref());
         tracing::debug!(
-            "Docker vLLM candidate: image={}, endpoint={}{}, model={:?}",
+            "Docker {} candidate: image={}, endpoint={}{}, model={:?}",
+            engine_type,
             container.image.as_deref().unwrap_or("?"),
             endpoint,
             if guessed { " (default port)" } else { "" },
             served_model,
         );
         detected.push(DetectedEngine {
-            engine_type: EngineType::Vllm,
+            engine_type,
             endpoint,
             deployment_mode: DeploymentMode::Docker,
             served_model,
@@ -640,12 +657,102 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
 ///
 /// Only reachable from the Linux Docker path in normal builds, but the unit
 /// tests exercise it on every platform — hence the `test` cfg.
+/// Which engine (if any) a container is most likely running, from its image and
+/// command (trusted signals) and name (weak signal). Returns `(EngineType,
+/// trusted)` where `trusted` is true when the image/command matched (strong)
+/// and false when only the container name matched (the caller must then prove
+/// it via an engine process match).
+#[cfg(any(target_os = "linux", test))]
+fn container_engine_type(
+    image: &str,
+    command: &str,
+    names: &[String],
+) -> Option<(EngineType, bool)> {
+    let named_vllm = names.iter().any(|n| n.to_lowercase().contains("vllm"));
+    let named_llama = names.iter().any(|n| n.to_lowercase().contains("llama"));
+    let is_vllm = image.contains("vllm") || command.contains("vllm");
+    let is_llama = image.contains("llama.cpp") || command.contains("llama-server");
+    if is_vllm {
+        Some((EngineType::Vllm, true))
+    } else if is_llama {
+        Some((EngineType::LlamaCpp, true))
+    } else if named_vllm {
+        Some((EngineType::Vllm, false))
+    } else if named_llama {
+        Some((EngineType::LlamaCpp, false))
+    } else {
+        None
+    }
+}
+
+/// Whether a `docker top` row's command line is a process for `engine_type`.
+#[cfg(any(target_os = "linux", test))]
+fn is_engine_process(line: &str, engine_type: &EngineType) -> bool {
+    match engine_type {
+        EngineType::Vllm => is_vllm_process(line),
+        EngineType::LlamaCpp => line
+            .split_whitespace()
+            .any(|arg| arg == "llama-server" || arg.ends_with("/llama-server")),
+    }
+}
+
+/// Parse the model identifier from a pre-joined command string for `engine_type`
+/// (the vLLM parser for vLLM, the llama.cpp parser for llama.cpp).
+#[cfg(any(target_os = "linux", test))]
+fn parse_model_from_command_str_engine(cmd: &str, engine_type: &EngineType) -> Option<String> {
+    match engine_type {
+        EngineType::Vllm => parse_model_from_command_str(cmd),
+        EngineType::LlamaCpp => {
+            let parts: Vec<&str> = cmd.split_whitespace().collect();
+            for (i, p) in parts.iter().enumerate() {
+                if *p == "-m" || *p == "-hf" {
+                    if let Some(val) = parts.get(i + 1) {
+                        if !val.is_empty() && !val.starts_with('-') {
+                            return Some(val.to_string());
+                        }
+                    }
+                }
+            }
+            None
+        }
+    }
+}
+
 #[cfg(any(target_os = "linux", test))]
 fn parse_pid_from_top_row(row: &[String]) -> Option<u32> {
     row.first().and_then(|cell| cell.trim().parse::<u32>().ok())
 }
 
-/// Parse `--port` value from a command string (space-separated).
+/// Parse the model identifier from a **llama.cpp** `llama-server` command line.
+/// llama.cpp takes the model via `-m`/`--model <path>` (a local GGUF file) or
+/// `-hf <repo>` (an Hugging Face repo id); `-m` is preferred. Returns the raw
+/// value — the adapter reduces it to a display name.
+fn parse_model_from_args_llama(args: &[OsString]) -> Option<String> {
+    let args: Vec<String> = args
+        .iter()
+        .filter_map(|a| a.to_str().map(String::from))
+        .collect();
+    for (idx, arg) in args.iter().enumerate() {
+        // Space form: `-m <path>`, `-hf <repo>`.
+        if (arg == "-m" || arg == "-hf") && idx + 1 < args.len() {
+            let val = &args[idx + 1];
+            if !val.is_empty() && !val.starts_with('-') {
+                return Some(val.clone());
+            }
+        }
+        // Equals form: `-m=<path>`, `--model=<path>`, `-hf=<repo>`.
+        for flag in ["-m=", "--model=", "-hf="] {
+            if let Some(val) = arg.strip_prefix(flag) {
+                if !val.is_empty() {
+                    return Some(val.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Parse `--model` value from a command string (space-separated).
 #[cfg(target_os = "linux")]
 fn parse_port_from_command_str(cmd: &str) -> Option<String> {
     let parts: Vec<&str> = cmd.split_whitespace().collect();
@@ -680,7 +787,8 @@ async fn probe_engine(client: &reqwest::Client, candidate: &DetectedEngine) -> b
     let timeout = Duration::from_secs(2);
 
     match candidate.engine_type {
-        EngineType::Vllm => {
+        // Both engines expose the same liveness endpoint.
+        EngineType::Vllm | EngineType::LlamaCpp => {
             // GET /health -- 200 = healthy
             client
                 .get(format!("{}/health", candidate.endpoint))
@@ -952,5 +1060,104 @@ mod tests {
         assert_eq!(candidates.len(), 2);
         assert_eq!(candidates[0].pids, vec![100]);
         assert_eq!(candidates[1].pids, vec![200]);
+    }
+
+    #[test]
+    fn llama_model_from_args_parses_m_and_hf_flags() {
+        // `-m <path>` (local GGUF), `-hf <repo>`, and the `-m=<path>` form.
+        assert_eq!(
+            parse_model_from_args_llama(&to_args(&[
+                "llama-server",
+                "-m",
+                "/models/Qwen3-27B-IQ3_S.gguf",
+                "-ngl",
+                "99",
+            ]))
+            .as_deref(),
+            Some("/models/Qwen3-27B-IQ3_S.gguf"),
+        );
+        assert_eq!(
+            parse_model_from_args_llama(&to_args(&["llama-server", "-m=/m/model.gguf"])).as_deref(),
+            Some("/m/model.gguf"),
+        );
+        // A path with spaces is a single argv element and is returned whole.
+        assert_eq!(
+            parse_model_from_args_llama(&to_args(&["llama-server", "-m", "/a/b c/d.gguf",]))
+                .as_deref(),
+            Some("/a/b c/d.gguf"),
+        );
+    }
+
+    #[test]
+    fn llama_model_from_args_none_when_absent() {
+        assert_eq!(
+            parse_model_from_args_llama(&to_args(&["llama-server", "--port", "8080"])),
+            None
+        );
+    }
+
+    #[test]
+    fn cmdline_matches_engine_is_engine_specific() {
+        assert!(cmdline_matches_engine(
+            "/x/bin/llama-server",
+            &EngineType::LlamaCpp
+        ));
+        assert!(cmdline_matches_engine(
+            "llama-server",
+            &EngineType::LlamaCpp
+        ));
+        assert!(!cmdline_matches_engine("llama-server", &EngineType::Vllm));
+        assert!(cmdline_matches_engine("vllm", &EngineType::Vllm));
+        assert!(!cmdline_matches_engine("vllm", &EngineType::LlamaCpp));
+    }
+
+    #[test]
+    fn container_engine_type_prefers_image_and_command_over_name() {
+        // Image signal → trusted vLLM.
+        assert_eq!(
+            container_engine_type("vllm/vllm-openai", "serve", &[]),
+            Some((EngineType::Vllm, true))
+        );
+        // Command signal → trusted llama.cpp.
+        assert_eq!(
+            container_engine_type("ghcr.io/llama.cpp", "llama-server -m m.gguf", &[]),
+            Some((EngineType::LlamaCpp, true))
+        );
+        // Name-only → untrusted candidate.
+        let names: Vec<String> = vec!["my-llama-box".to_string()];
+        assert_eq!(
+            container_engine_type("busybox", "sleep infinity", &names),
+            Some((EngineType::LlamaCpp, false))
+        );
+        // No signal at all.
+        assert_eq!(container_engine_type("nginx", "nginx", &[]), None);
+    }
+
+    #[test]
+    fn is_engine_process_recognizes_llama_server_rows() {
+        assert!(is_engine_process(
+            "1234 /usr/local/bin/llama-server -m m.gguf",
+            &EngineType::LlamaCpp
+        ));
+        assert!(!is_engine_process(
+            "1234 sleep infinity",
+            &EngineType::LlamaCpp
+        ));
+        assert!(!is_engine_process(
+            "1234 /usr/local/bin/llama-server -m m.gguf",
+            &EngineType::Vllm
+        ));
+    }
+
+    #[test]
+    fn command_str_engine_parses_llama_model_from_docker_top_line() {
+        assert_eq!(
+            parse_model_from_command_str_engine(
+                "llama-server -m /models/Qwen3-27B.gguf --port 8080",
+                &EngineType::LlamaCpp,
+            )
+            .as_deref(),
+            Some("/models/Qwen3-27B.gguf"),
+        );
     }
 }

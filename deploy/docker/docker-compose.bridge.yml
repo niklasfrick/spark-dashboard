@@ -9,6 +9,6 @@ services:
   spark-dashboard:
     network_mode: bridge
     ports:
-      - "${SPARK_DASHBOARD_PORT:-3000}:${SPARK_DASHBOARD_PORT:-3000}"
+      - "${SPARK_DASHBOARD_PORT:-4000}:${SPARK_DASHBOARD_PORT:-4000}"
     extra_hosts:
       - "host.docker.internal:host-gateway"

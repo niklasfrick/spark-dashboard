@@ -51,6 +51,8 @@ mod tests {
             metrics_tx: tx,
             config: std::sync::Arc::new(crate::config_store::ConfigStore::new(dir.path()).await),
             hec_config: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+            hec_path: dir.path().join("hec.json"),
+            hec_insecure: false,
             export_status: std::sync::Arc::new(tokio::sync::Mutex::new(
                 crate::hec::ExportStatus::disabled(),
             )),

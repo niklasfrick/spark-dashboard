@@ -30,9 +30,10 @@
 
 use crate::engines::{EngineSnapshot, EngineType};
 use crate::metrics::{gpu::GpuEvent, MetricsSnapshot};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::VecDeque;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{broadcast, Mutex, RwLock};
@@ -78,7 +79,7 @@ fn now_ms() -> u64 {
 
 /// The `export.hec` section of the dashboard document. Presence of the
 /// section means export is enabled; there is no `enabled` boolean.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct HecTarget {
     pub url: String,
     pub token: String,
@@ -111,24 +112,6 @@ pub fn hec_target_from_document(document: &[u8]) -> Option<HecTarget> {
 pub fn mask_token(token: &str) -> String {
     let tail: Vec<char> = token.chars().rev().take(4).collect();
     format!("…{}", tail.iter().rev().cloned().collect::<String>())
-}
-
-/// Re-serializes the document with `export.hec.token` masked. `None` when the
-/// document is not parseable JSON or carries no non-empty token — callers
-/// then serve the original bytes untouched.
-pub fn mask_token_in_document(document: &[u8]) -> Option<Vec<u8>> {
-    let mut value: Value = serde_json::from_slice(document).ok()?;
-    let token = value
-        .get("export")?
-        .get("hec")?
-        .get("token")?
-        .as_str()?
-        .to_string();
-    if token.is_empty() {
-        return None;
-    }
-    value["export"]["hec"]["token"] = Value::String(mask_token(&token));
-    serde_json::to_vec(&value).ok()
 }
 
 /// Merges a stored token into a document whose `export.hec` section is
@@ -192,6 +175,98 @@ pub fn resolve_test_target(
         index,
         events_index,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Shared HEC configuration file
+// ---------------------------------------------------------------------------
+//
+// The HEC target lives in a single host-wide file rather than inside each
+// instance's dashboard document, so every dashboard on the host exports to the
+// same Splunk endpoint. Instances still keep their own document for layout;
+// only the credential is shared. The file is read on startup, projected into
+// the served document (masked) for the settings dialog, and rewritten by a
+// document save that carries `export.hec`.
+
+/// Reads and parses the shared HEC file. `None` when the file is absent or not
+/// parseable as an `HecTarget` — either is "not configured".
+pub async fn load_shared_hec(path: &Path) -> Option<HecTarget> {
+    let bytes = tokio::fs::read(path).await.ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// Writes the shared HEC file, creating its parent directory and restricting
+/// the file to the owning user (it holds the token). The write is atomic —
+/// a uniquely named temporary file in the same directory, synced, then
+/// renamed over the target — so a crash mid-write leaves either the old file
+/// or the new one, never a truncated token file.
+pub async fn save_shared_hec(path: &Path, target: &HecTarget) -> std::io::Result<()> {
+    use tokio::io::AsyncWriteExt;
+
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+    }
+
+    let bytes = serde_json::to_vec_pretty(target)?;
+    let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
+    let mut file = tokio::fs::File::create(&tmp).await?;
+    file.write_all(&bytes).await?;
+    file.sync_all().await?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        tokio::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600)).await?;
+    }
+    tokio::fs::rename(&tmp, path).await?;
+    Ok(())
+}
+
+/// Removes the shared HEC file. Deleting an absent file succeeds: that is
+/// already the "disabled" state the caller asked for.
+pub async fn clear_shared_hec(path: &Path) -> std::io::Result<()> {
+    match tokio::fs::remove_file(path).await {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err),
+    }
+}
+
+/// Replaces the document's `export.hec` section with `target`, masking the
+/// token for display. Used by the read path so the settings dialog — which
+/// reads `export.hec` out of the served document — keeps working even though
+/// the HEC now lives in the shared file. `None` when the document is not
+/// parseable JSON; callers then serve the original bytes.
+pub fn project_hec_into_document(document: &[u8], target: &HecTarget) -> Option<Vec<u8>> {
+    let mut value: Value = serde_json::from_slice(document).ok()?;
+    value["export"] = json!({
+        "hec": {
+            "url": target.url,
+            "token": mask_token(&target.token),
+            "index": target.index,
+            "events_index": target.events_index,
+        }
+    });
+    serde_json::to_vec(&value).ok()
+}
+
+/// Removes the `export.hec` section from a document so the stored per-instance
+/// document holds layout only and the shared file is the single source of
+/// truth for the credential. `None` when there is nothing to strip (no
+/// `export.hec` section) or the document is not parseable JSON; callers then
+/// store the bytes unchanged.
+pub fn strip_hec_from_document(document: &[u8]) -> Option<Vec<u8>> {
+    let mut value: Value = serde_json::from_slice(document).ok()?;
+    let removed = value
+        .get_mut("export")
+        .and_then(Value::as_object_mut)
+        .and_then(|o| o.remove("hec"))
+        .is_some();
+    if !removed {
+        return None;
+    }
+    serde_json::to_vec(&value).ok()
 }
 
 // ---------------------------------------------------------------------------
@@ -787,6 +862,20 @@ impl Exporter {
     }
 }
 
+/// Builds the reqwest client used to talk to the HEC endpoint. `insecure`
+/// accepts a self-signed or otherwise invalid TLS certificate (the `curl -k`
+/// behaviour) for local HEC endpoints that present one; the default (false)
+/// verifies the certificate against the system trust store.
+pub fn hec_client(insecure: bool) -> reqwest::Client {
+    let mut builder = reqwest::Client::builder().timeout(POST_TIMEOUT);
+    if insecure {
+        builder = builder
+            .danger_accept_invalid_certs(true)
+            .danger_accept_invalid_hostnames(true);
+    }
+    builder.build().expect("reqwest client")
+}
+
 /// Runs the exporter loop. Spawned once from `main` with a second subscriber
 /// on the metrics broadcast channel. `probe_interval` is a parameter so tests
 /// do not wait a minute between liveness probes; production passes
@@ -794,17 +883,25 @@ impl Exporter {
 pub async fn run_exporter(
     mut rx: broadcast::Receiver<String>,
     config: SharedHecConfig,
+    hec_path: std::path::PathBuf,
+    insecure: bool,
     status: SharedExportStatus,
     host: String,
     probe_interval: Duration,
 ) {
-    let client = reqwest::Client::builder()
-        .timeout(POST_TIMEOUT)
-        .build()
-        .expect("reqwest client");
+    let client = hec_client(insecure);
     let mut exporter = Exporter::new(probe_interval);
 
     loop {
+        // The HEC target lives in a shared file that any instance can change;
+        // refresh the warm view from the file each tick so this instance always
+        // exports to the current shared target, not a startup-time snapshot.
+        // An empty path (tests) means "no shared file": the warm view is
+        // maintained by the dashboard handlers instead.
+        if !hec_path.as_os_str().is_empty() {
+            *config.write().await = load_shared_hec(&hec_path).await;
+        }
+
         // The liveness probe competes with the tick stream in every state:
         // an idle host drops its ticks without POSTing, so a steady tick
         // stream alone would starve the probe, and a silent host must still
@@ -1114,6 +1211,7 @@ mod tests {
                 queued_requests: queued,
                 ..EngineMetrics::default()
             }),
+            metrics_disabled: false,
             recent_requests: vec![],
             deployment_mode: crate::engines::DeploymentMode::Native,
             gpu_indexes: vec![],
@@ -1161,36 +1259,98 @@ mod tests {
         assert_eq!(target.events_index, "ev2");
     }
 
+    // -- shared HEC configuration file --------------------------------------
+
+    #[tokio::test]
+    async fn save_then_load_shared_hec_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hec.json");
+
+        assert_eq!(load_shared_hec(&path).await, None);
+
+        let target = target();
+        save_shared_hec(&path, &target).await.unwrap();
+
+        assert_eq!(load_shared_hec(&path).await, Some(target.clone()));
+    }
+
+    #[tokio::test]
+    async fn load_shared_hec_reports_absent_or_garbage_as_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hec.json");
+
+        assert_eq!(load_shared_hec(&path).await, None);
+        tokio::fs::write(&path, b"not json at all").await.unwrap();
+        assert_eq!(load_shared_hec(&path).await, None);
+    }
+
+    #[tokio::test]
+    async fn clear_shared_hec_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hec.json");
+
+        clear_shared_hec(&path).await.unwrap();
+
+        save_shared_hec(&path, &target()).await.unwrap();
+        clear_shared_hec(&path).await.unwrap();
+        assert_eq!(load_shared_hec(&path).await, None);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn save_shared_hec_restricts_the_file_to_the_owner() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hec.json");
+
+        save_shared_hec(&path, &target()).await.unwrap();
+
+        let mode = tokio::fs::metadata(&path)
+            .await
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[test]
+    fn project_hec_into_document_masks_the_token_and_preserves_layout() {
+        let document = b"{\"version\":1,\"pages\":[],\"export\":{\"hec\":{\"url\":\"old\",\"token\":\"old-token\"}}}";
+        let projected = project_hec_into_document(document, &target()).unwrap();
+        let value: Value = serde_json::from_slice(&projected).unwrap();
+        assert_eq!(
+            value["export"]["hec"]["url"],
+            "http://127.0.0.1:1/collector"
+        );
+        assert_eq!(value["export"]["hec"]["token"], "\u{2026}oken");
+        assert_eq!(value["export"]["hec"]["index"], "metrics");
+        assert_eq!(value["export"]["hec"]["events_index"], "main");
+        assert_eq!(value["version"], 1, "layout is preserved");
+    }
+
+    #[test]
+    fn strip_hec_from_document_removes_only_the_section() {
+        let document = b"{\"version\":1,\"pages\":[{\"name\":\"Overview\"}],\"export\":{\"hec\":{\"url\":\"https://x\",\"token\":\"t\"}}}";
+        let stripped = strip_hec_from_document(document).unwrap();
+        let value: Value = serde_json::from_slice(&stripped).unwrap();
+        assert!(value["export"].get("hec").is_none(), "hec section removed");
+        assert_eq!(value["version"], 1, "layout preserved");
+    }
+
+    #[test]
+    fn strip_hec_from_document_is_a_noop_without_the_section() {
+        assert_eq!(strip_hec_from_document(b"{}"), None);
+        assert_eq!(strip_hec_from_document(b"not json"), None);
+        assert_eq!(strip_hec_from_document(b"{\"export\":{}}"), None);
+    }
+
     // -- token masking / retention ------------------------------------------
 
     #[test]
     fn mask_token_keeps_the_last_four_characters() {
         assert_eq!(mask_token("secret-token-12345"), "…2345");
         assert_eq!(mask_token("ab"), "…ab");
-    }
-
-    #[test]
-    fn mask_token_in_document_masks_only_the_token() {
-        let document = b"{\"version\":1,\"pages\":[{\"name\":\"Overview\"}],\"export\":{\"hec\":{\"url\":\"https://x\",\"token\":\"super-secret\",\"index\":\"metrics\"}}}";
-        let masked = mask_token_in_document(document).unwrap();
-        let value: Value = serde_json::from_slice(&masked).unwrap();
-        assert_eq!(value["export"]["hec"]["token"], "…cret");
-        assert_eq!(value["export"]["hec"]["url"], "https://x");
-        assert_eq!(value["pages"][0]["name"], "Overview");
-        assert_eq!(value["version"], 1);
-    }
-
-    #[test]
-    fn mask_token_in_document_leaves_other_documents_alone() {
-        assert_eq!(mask_token_in_document(b"not json"), None);
-        assert_eq!(mask_token_in_document(b"{}"), None);
-        // Empty token: nothing to mask, and masking it would invent one.
-        assert_eq!(
-            mask_token_in_document(
-                b"{\"export\":{\"hec\":{\"url\":\"https://x\",\"token\":\"\"}}}"
-            ),
-            None
-        );
     }
 
     #[test]
@@ -1729,6 +1889,8 @@ mod tests {
         let task = tokio::spawn(run_exporter(
             rx,
             config,
+            std::path::PathBuf::new(),
+            false,
             status.clone(),
             "test-host".into(),
             Duration::from_secs(60),
@@ -1744,6 +1906,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_exporter_refreshes_the_target_from_the_shared_file() {
+        let mock = start_mock(None, 0).await;
+        let target = {
+            let mut t = target();
+            t.url = mock.url.clone();
+            t
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let hec_path = dir.path().join("hec.json");
+        save_shared_hec(&hec_path, &target).await.unwrap();
+
+        // The warm view starts empty (a stale startup snapshot); the exporter
+        // must refresh it from the shared file so it exports to the file's
+        // target, not the stale view.
+        let (tx, rx) = broadcast::channel::<String>(16);
+        let config = SharedHecConfig::new(RwLock::new(None));
+        let status = SharedExportStatus::new(Mutex::new(ExportStatus::disabled()));
+        let task = tokio::spawn(run_exporter(
+            rx,
+            config,
+            hec_path,
+            false,
+            status.clone(),
+            "test-host".into(),
+            Duration::from_secs(60),
+        ));
+
+        tx.send(active_json()).unwrap();
+
+        let st = wait_status(&status, Duration::from_secs(2), |s| {
+            s.state == ExportState::Exporting && s.last_ok_ms.is_some()
+        })
+        .await;
+        assert_eq!(st.state, ExportState::Exporting);
+        drop(task);
+    }
+
+    #[tokio::test]
     async fn the_exporter_sends_active_snapshots_and_reports_exporting() {
         let mock = start_mock(None, 0).await;
         let mut target = target();
@@ -1754,6 +1954,8 @@ mod tests {
         let task = tokio::spawn(run_exporter(
             rx,
             config,
+            std::path::PathBuf::new(),
+            false,
             status.clone(),
             "test-host".into(),
             Duration::from_secs(60), // keep the connection heartbeat out of this data-path test
@@ -1796,6 +1998,8 @@ mod tests {
         let task = tokio::spawn(run_exporter(
             rx,
             config,
+            std::path::PathBuf::new(),
+            false,
             status.clone(),
             "test-host".into(),
             // 60 s probe interval: this test asserts about the idle gate
@@ -1830,6 +2034,8 @@ mod tests {
         let task = tokio::spawn(run_exporter(
             rx,
             config,
+            std::path::PathBuf::new(),
+            false,
             status.clone(),
             "test-host".into(),
             Duration::from_secs(60), // keep the connection heartbeat out of this data-path test
@@ -1870,6 +2076,8 @@ mod tests {
         let task = tokio::spawn(run_exporter(
             rx,
             config,
+            std::path::PathBuf::new(),
+            false,
             status.clone(),
             "test-host".into(),
             Duration::from_secs(60), // keep the connection heartbeat out of this data-path test
@@ -1919,6 +2127,8 @@ mod tests {
         let task = tokio::spawn(run_exporter(
             rx,
             config,
+            std::path::PathBuf::new(),
+            false,
             status.clone(),
             "test-host".into(),
             Duration::from_millis(100),
@@ -1982,6 +2192,8 @@ mod tests {
         let task = tokio::spawn(run_exporter(
             rx,
             config,
+            std::path::PathBuf::new(),
+            false,
             status.clone(),
             "test-host".into(),
             Duration::from_millis(100),
@@ -2090,6 +2302,8 @@ mod tests {
         let task = tokio::spawn(run_exporter(
             rx,
             config,
+            std::path::PathBuf::new(),
+            false,
             status.clone(),
             "test-host".into(),
             Duration::from_secs(60), // keep the liveness probe out of this test
@@ -2142,6 +2356,8 @@ mod tests {
         let task = tokio::spawn(run_exporter(
             rx,
             config,
+            std::path::PathBuf::new(),
+            false,
             status.clone(),
             "test-host".into(),
             Duration::from_millis(100),

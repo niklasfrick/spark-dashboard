@@ -258,14 +258,17 @@ describe('the hardware panels on a grid page', () => {
       ]),
     )
 
-    // The following panel resolves to the primary GPU; the pinned one to GPU 1
-    // — both value and chart series, so the label and the data agree.
+    // The following panel shows every GPU, divided; the pinned one shows only
+    // its own — its chart is GPU 1's series, not the primary's, so the label and
+    // the data agree.
     const following = region('GPU Utilization')
-    expect(within(following).getByText('11')).toBeInTheDocument()
-    expect(within(following).getByTestId('chart')).toHaveAttribute('data-values', '11')
+    expect(
+      within(following)
+        .getAllByTestId('chart')
+        .map((c) => c.getAttribute('data-values')),
+    ).toEqual(['11', '77'])
 
     const pinned = region('Second GPU')
-    expect(within(pinned).getByText('77')).toBeInTheDocument()
     expect(within(pinned).getByTestId('chart')).toHaveAttribute('data-values', '77')
 
     // With several GPUs, each panel names the one it shows.
@@ -434,11 +437,12 @@ describe('the hardware panels the palette offered before anything rendered them'
       ]),
     )
 
-    // Each panel shows the events of the GPU it resolved to — never the
-    // neighbour's, which would read as this GPU throttling.
+    // The following panel shows every GPU's events, each tagged with its GPU. A
+    // pinned panel shows only its own GPU's events — never the neighbour's,
+    // which would read as this GPU throttling.
     const first = region('GPU Events')
     expect(within(first).getByText('Thermal throttling active')).toBeInTheDocument()
-    expect(within(first).queryByText('Power brake engaged')).not.toBeInTheDocument()
+    expect(within(first).getByText('Power brake engaged')).toBeInTheDocument()
 
     const second = region('Second GPU events')
     expect(within(second).getByText('Power brake engaged')).toBeInTheDocument()

@@ -104,8 +104,8 @@ DEPLOY_DIR="${DEPLOY_DIR/#$HOME\//}"
 REMOTE="${DEPLOY_USER:-}@${DEPLOY_HOST:-}"
 # Host port the dashboard is reachable on. In the default host-network mode this
 # is the port the app binds directly; set SPARK_DASHBOARD_PORT in .env to move it
-# (e.g. off :3000 when a cargo-installed instance already owns that port).
-DASH_PORT="${SPARK_DASHBOARD_PORT:-3000}"
+# (e.g. off :4000 when a cargo-installed instance already owns that port).
+DASH_PORT="${SPARK_DASHBOARD_PORT:-4000}"
 
 needs_remote() {
     : "${DEPLOY_USER:?Set DEPLOY_USER in .env}"

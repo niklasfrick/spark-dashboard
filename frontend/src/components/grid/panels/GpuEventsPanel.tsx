@@ -24,7 +24,38 @@ export function GpuEventsPanel({ panel }: PanelContentProps) {
   const snapshot = useLatestSnapshot()
   // Above the early return, like every hook here — a panel whose binding has
   // not resolved still has to call it, with nothing to report.
-  usePanelDevice(resolution.status === 'resolved' ? resolution.gpu.name : null)
+  usePanelDevice(
+    resolution.status === 'resolved'
+      ? resolution.gpu.name
+      : resolution.status === 'aggregate'
+        ? 'All GPUs'
+        : null,
+  )
+
+  // The newest sample, not wall clock: the ages then hold still between
+  // snapshots instead of ticking under a dashboard nobody is touching. Needed
+  // by both the single-GPU and the all-GPUs branches below.
+  const now = snapshot?.timestamp_ms ?? 0
+
+  // The all-GPUs view: every GPU's events together, each tagged with its GPU.
+  if (resolution.status === 'aggregate') {
+    if (events.length === 0) {
+      return <PanelNotice>Nothing reported in the last {panel.window}.</PanelNotice>
+    }
+    const newestFirst = [...events].sort((a, b) => b.timestamp_ms - a.timestamp_ms)
+    return (
+      <PanelList label="GPU events">
+        {newestFirst.map((event, i) => (
+          <EventRow
+            key={`${event.timestamp_ms}-${event.event_type}-${i}`}
+            event={event}
+            now={now}
+            gpuLabel={`GPU ${event.gpu_index ?? 0}`}
+          />
+        ))}
+      </PanelList>
+    )
+  }
 
   if (resolution.status !== 'resolved') return <GpuPanelNotice resolution={resolution} />
 
@@ -34,9 +65,6 @@ export function GpuEventsPanel({ panel }: PanelContentProps) {
   // collector could not attribute lands on the panel showing GPU 0 rather than
   // on none of them.
   const mine = events.filter((event) => (event.gpu_index ?? 0) === index)
-  // The newest sample, not wall clock: the ages then hold still between
-  // snapshots instead of ticking under a dashboard nobody is touching.
-  const now = snapshot?.timestamp_ms ?? 0
 
   if (mine.length === 0) {
     return <PanelNotice>Nothing reported in the last {panel.window}.</PanelNotice>
@@ -56,11 +84,24 @@ export function GpuEventsPanel({ panel }: PanelContentProps) {
   )
 }
 
-function EventRow({ event, now }: { event: GpuEventData; now: number }) {
+function EventRow({
+  event,
+  now,
+  gpuLabel,
+}: {
+  event: GpuEventData
+  now: number
+  gpuLabel?: string
+}) {
   const color = gpuEventColor(event.event_type)
 
   return (
     <li className="flex items-baseline gap-1.5 min-w-0 leading-tight">
+      {gpuLabel !== undefined && (
+        <span className="shrink-0 rounded px-1 text-[9px] font-medium text-zinc-400 bg-zinc-800">
+          {gpuLabel}
+        </span>
+      )}
       <span
         className="shrink-0 rounded px-1 text-[9px] font-medium uppercase tracking-wider"
         style={{ color, backgroundColor: `${color}1a` }}

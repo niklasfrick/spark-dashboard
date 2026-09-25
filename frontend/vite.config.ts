@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
 
-const backendUrl = process.env.VITE_BACKEND_URL || 'http://localhost:3000'
+const backendUrl = process.env.VITE_BACKEND_URL || 'http://localhost:4000'
 const wsBackendUrl = backendUrl.replace(/^http/, 'ws')
 
 export default defineConfig({

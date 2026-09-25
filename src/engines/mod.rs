@@ -1,5 +1,6 @@
 pub mod detector;
 pub mod histogram;
+pub mod llama_cpp;
 pub mod prometheus;
 pub mod vllm;
 pub mod warmup;
@@ -17,6 +18,7 @@ use tokio::sync::RwLock;
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
 pub enum EngineType {
     Vllm,
+    LlamaCpp,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
@@ -29,6 +31,7 @@ impl std::fmt::Display for EngineType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             EngineType::Vllm => write!(f, "vLLM"),
+            EngineType::LlamaCpp => write!(f, "llama.cpp"),
         }
     }
 }
@@ -234,6 +237,12 @@ pub struct EngineSnapshot {
     /// metadata resolved normally (or has not been attempted yet).
     pub model_metadata_error: Option<ModelMetadataError>,
     pub metrics: Option<EngineMetrics>,
+    /// True when the engine is up and serving but its `/metrics` endpoint is
+    /// disabled (llama.cpp started without `--metrics`, which returns 501). Lets
+    /// the UI say *why* there are no metrics instead of a generic "waiting".
+    /// `false` for engines whose metrics are always available.
+    #[serde(default)]
+    pub metrics_disabled: bool,
     pub recent_requests: Vec<RecentRequest>,
     pub deployment_mode: DeploymentMode,
     /// Indexes of the GPU(s) this engine was observed running on, derived by
@@ -267,6 +276,13 @@ pub trait EngineAdapter: Send + Sync {
     async fn health_check(&self) -> EngineStatus;
     async fn get_model_info(&self) -> ModelResolution;
     async fn get_metrics(&self) -> Option<EngineMetrics>;
+    /// Whether the engine's `/metrics` endpoint is known to be disabled (as
+    /// opposed to merely not-ready or transiently unreachable). Default false;
+    /// llama.cpp reports true when it sees HTTP 501 (started without
+    /// `--metrics`).
+    fn metrics_disabled(&self) -> bool {
+        false
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -507,6 +523,9 @@ pub fn create_adapter(
         EngineType::Vllm => Box::new(vllm::VllmAdapter::new(
             client, endpoint, model_hint, api_key,
         )),
+        EngineType::LlamaCpp => Box::new(llama_cpp::LlamaCppAdapter::new(
+            client, endpoint, model_hint, api_key,
+        )),
     }
 }
 
@@ -678,6 +697,13 @@ pub async fn engine_collector_loop(
                         } else {
                             None
                         };
+                        // Only meaningful while running (get_metrics is what saw
+                        // the 501); a stopped engine has nothing to report.
+                        let metrics_disabled = if success {
+                            state.adapter.metrics_disabled()
+                        } else {
+                            false
+                        };
 
                         snapshots.push(EngineSnapshot {
                             engine_type: state.adapter.engine_type(),
@@ -686,6 +712,7 @@ pub async fn engine_collector_loop(
                             model,
                             model_metadata_error: state.model_metadata_error,
                             metrics,
+                            metrics_disabled,
                             recent_requests: Vec::new(),
                             deployment_mode: state.deployment_mode.clone(),
                             gpu_indexes: Vec::new(),

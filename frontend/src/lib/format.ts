@@ -166,8 +166,26 @@ export function formatGpuIndexes(indexes: number[]): string {
 export function engineDisplayName(engineType: EngineType): string {
   const names: Record<EngineType, string> = {
     Vllm: 'vLLM',
+    LlamaCpp: 'llama.cpp',
   }
   return names[engineType]
+}
+
+/** The icon path for an engine type, shown beside its name chip. */
+export function engineIconSrc(engineType: EngineType): string {
+  const icons: Record<EngineType, string> = {
+    Vllm: '/icons/vllm.svg',
+    LlamaCpp: '/icons/llama-cpp.svg',
+  }
+  return icons[engineType]
+}
+
+/** A GPU's name without the vendor prefix, for compact per-GPU column labels:
+ *  "NVIDIA GeForce RTX 3090" → "RTX 3090", "NVIDIA RTX PRO 6000 …" →
+ *  "RTX PRO 6000 …". Callers still truncate the rest. */
+export function shortGpuName(name: string): string {
+  const trimmed = name.replace(/^NVIDIA\s+/i, '').replace(/^GeForce\s+/i, '').trim()
+  return trimmed || name
 }
 
 /**
