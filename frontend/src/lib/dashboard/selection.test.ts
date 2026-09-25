@@ -62,19 +62,21 @@ describe('pageSelection', () => {
     expect(pageSelection(host, {}).gpuTarget).toEqual({ kind: 'gpu', index: 0 })
   })
 
-  it('prefers a running engine over a stopped one listed first', () => {
+  it('follows every engine on a multi-engine host when nothing is chosen or configured', () => {
+    // The host's default is the one-row-per-engine view — the engine
+    // counterpart of the multi-GPU default — not one engine standing in for
+    // the rest. A stopped engine still gets its row.
     const host = snapshot(
       [gpu(0)],
       [engine('http://localhost:8000', { type: 'Stopped' }), engine('http://localhost:8001')],
     )
 
-    expect(pageSelection(host, {}).engineTarget).toEqual({
-      kind: 'engine',
-      endpoint: 'http://localhost:8001',
-    })
+    expect(pageSelection(host, {}).engineTarget).toEqual({ kind: 'all' })
   })
 
-  it('falls back to the first engine when none is running', () => {
+  it('still follows every engine when none of them is running', () => {
+    // The target stays "all"; a panel on such a page degrades to the
+    // "no engine running" state, the same as a page configured for all models.
     const host = snapshot(
       [gpu(0)],
       [
@@ -83,10 +85,7 @@ describe('pageSelection', () => {
       ],
     )
 
-    expect(pageSelection(host, {}).engineTarget).toEqual({
-      kind: 'engine',
-      endpoint: 'http://localhost:8000',
-    })
+    expect(pageSelection(host, {}).engineTarget).toEqual({ kind: 'all' })
   })
 
   it('normalizes the index of a GPU reported without one', () => {

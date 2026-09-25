@@ -21,7 +21,7 @@
  */
 
 import { gpuIndexOf, snapshotGpus } from '@/lib/identity'
-import type { EngineSnapshot, MetricsSnapshot } from '@/types/metrics'
+import type { MetricsSnapshot } from '@/types/metrics'
 import type { PageSource } from './pageSource'
 
 /**
@@ -113,8 +113,13 @@ function engineTarget(
   if (source !== undefined) {
     return source.kind === 'all' ? { kind: 'all' } : { kind: 'engine', endpoint: source.endpoint }
   }
-  const endpoint = snapshot ? defaultEngineEndpoint(snapshot.engines) : null
-  return endpoint === null ? null : { kind: 'engine', endpoint }
+  const engines = snapshot?.engines ?? []
+  // The host's default for a multi-engine host is every engine — one row
+  // each, the engine counterpart of the multi-GPU default — since naming one
+  // would hide the rest. A one-engine host follows its engine; a host with
+  // nothing detected has nothing to follow.
+  if (engines.length > 1) return { kind: 'all' }
+  return engines[0] ? { kind: 'engine', endpoint: engines[0].endpoint } : null
 }
 
 /**
@@ -136,14 +141,4 @@ function without(chosen: SelectedTargets, key: keyof SelectedTargets): SelectedT
 function defaultGpuTarget(snapshot: Pick<MetricsSnapshot, 'gpu' | 'gpus'>): PageGpuTarget {
   const gpus = snapshotGpus(snapshot)
   return gpus.length > 1 ? { kind: 'all' } : { kind: 'gpu', index: gpuIndexOf(gpus[0]) }
-}
-
-/**
- * The engine an unconfigured page follows: the first one actually running, and
- * only otherwise the first one detected. A host whose first-listed engine is
- * stopped still has something worth watching on the others.
- */
-function defaultEngineEndpoint(engines: readonly EngineSnapshot[]): string | null {
-  const running = engines.find((engine) => engine.status.type === 'Running')
-  return (running ?? engines[0])?.endpoint ?? null
 }

@@ -212,8 +212,9 @@ export function useEngineRows(panel: DashboardPanel):
  * its chart series over the panel's own window.
  *
  * A following panel resolves to the page-level engine selection, so a page of
- * following panels shows one engine coherently and moves to another together —
- * or, on a page configured for all models, shows the combined figures. A pinned
+ * following panels moves to another engine together when the operator chooses
+ * one — and, by default on a multi-engine host, divides across every engine
+ * as one row each, the way a multi-GPU host divides across its GPUs. A pinned
  * panel resolves to its own engine and to nothing else — two panels pinned to
  * two engines sit side by side, and a pin to an engine that is gone says so
  * rather than showing the neighbour's numbers.

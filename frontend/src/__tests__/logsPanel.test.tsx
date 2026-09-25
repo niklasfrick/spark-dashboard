@@ -172,7 +172,7 @@ describe('the log panel', () => {
     render(
       <Page
         engines={[makeEngine(ALPHA), makeEngine(BETA)]}
-        panels={[logPanel('logs', 'Engine Logs')]}
+        panels={[logPanel('logs', 'Engine Logs', { binding: { kind: 'engine', endpoint: ALPHA } })]}
       />,
     )
 
@@ -446,7 +446,10 @@ describe('the log panel', () => {
     expect(within(region('Engine Logs')).getByText('No inference engine running.')).toBeInTheDocument()
   })
 
-  it('names the engine it is streaming on a host running several', () => {
+  it('asks for a pin instead of guessing an engine on a multi-engine host', () => {
+    // The page's default on a multi-engine host is every engine as a row, and
+    // a log stream is one container's output — so a following log panel says
+    // so instead of streaming the first engine it finds.
     render(
       <Page
         engines={[makeEngine(ALPHA), makeEngine(BETA)]}
@@ -454,6 +457,9 @@ describe('the log panel', () => {
       />,
     )
 
-    expect(within(region('Engine Logs')).getByText('vLLM localhost:8000')).toBeInTheDocument()
+    expect(
+      within(region('Engine Logs')).getByText(/Logs are per-engine/),
+    ).toBeInTheDocument()
+    expect(sockets()).toHaveLength(0)
   })
 })

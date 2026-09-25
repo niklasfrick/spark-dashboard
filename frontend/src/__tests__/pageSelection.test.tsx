@@ -260,11 +260,13 @@ describe('a page configured for all models', () => {
 })
 
 describe('the page-level engine selection', () => {
-  it('starts on the running engine and moves every following panel together', () => {
+  it('starts with one row per engine and moves every following panel together', () => {
     render(<Page />)
 
-    // Nothing chosen: the page follows the first running engine.
-    expect(within(region('Decode Throughput')).getByText('120.0')).toBeInTheDocument()
+    // Nothing chosen: the multi-engine host's default is every engine as its
+    // own row — both engines' figures in the same panel.
+    expect(within(region('Decode Throughput')).getByText('120.0 tok/s')).toBeInTheDocument()
+    expect(within(region('Decode Throughput')).getByText('640.0 tok/s')).toBeInTheDocument()
     expect(within(region('Pinned to Alpha')).getByText('120.0')).toBeInTheDocument()
 
     click(`Select ${BETA}`)

@@ -775,7 +775,7 @@ describe('the inference-request timeline', () => {
     expect(screen.queryByText('This panel is not available yet.')).not.toBeInTheDocument()
   })
 
-  it('shows a pinned engine only its own requests', async () => {
+  it('interleaves every engine on a following panel, and only the pinned engine on a pinned one', async () => {
     const fetchMock = serveConfiguration({
       document: storedDocument([
         timelinePanel({ id: 'alpha', title: 'Alpha timeline' }),
@@ -802,11 +802,14 @@ describe('the inference-request timeline', () => {
       ]),
     )
 
-    // Never the other engine's requests under this engine's name.
-    expect(within(region('Alpha timeline')).getByText('4')).toBeInTheDocument()
+    // The following panel is the page's view: on a multi-engine host that is
+    // every engine's requests, interleaved on one axis — the identity row
+    // says so.
+    expect(within(region('Alpha timeline')).getByText('5')).toBeInTheDocument()
+    expect(requestRows('Alpha timeline').map((row) => row.textContent)).toContain('7.0')
+    // The pinned panel is still only the engine it names.
     expect(within(region('Beta timeline')).getByText('1')).toBeInTheDocument()
     expect(requestRows('Beta timeline').map((row) => row.textContent)).toEqual(['7.0'])
-    expect(within(region('Alpha timeline')).queryByText('7.0')).not.toBeInTheDocument()
   })
 
   it('says the window was quiet rather than drawing an empty axis', async () => {
@@ -940,5 +943,51 @@ describe('engine panels on a page configured for all models', () => {
     expect(within(panel).getByText('42%')).toBeInTheDocument()
     expect(within(panel).getByText('Prefix')).toBeInTheDocument()
     expect(within(panel).getByText('55%')).toBeInTheDocument()
+  })
+})
+
+describe('engine panels on an unconfigured page of a multi-engine host', () => {
+  const LAMM = 'http://localhost:8002'
+  const llama = (metricOverrides: Partial<EngineMetrics> = {}): EngineSnapshot =>
+    makeEngine(LAMM, { engine_type: 'LlamaCpp', model: modelNamed('Meta-Llama/Llama-3-8B') }, metricOverrides)
+
+  it('shows one row per engine without any source set', async () => {
+    // No source on the page: the host's default on a multi-engine host is
+    // every engine as its own row — the panel that used to name only the
+    // first running engine now shows the whole host.
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        { id: 'decode', type: 'engine-decode-throughput', geometry: { x: 0, y: 0, w: 6, h: 4 } },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, [makeEngine(ALPHA), llama({ tokens_per_sec: 70 })]))
+
+    const panel = region('Decode Throughput')
+    expect(within(panel).getByText('Qwen3-8B')).toBeInTheDocument()
+    expect(within(panel).getByText('Llama-3-8B')).toBeInTheDocument()
+    expect(within(panel).getByText('120.0 tok/s')).toBeInTheDocument()
+    expect(within(panel).getByText('70.0 tok/s')).toBeInTheDocument()
+    expect(within(panel).getAllByTestId('chart')).toHaveLength(2)
+  })
+
+  it('keeps the single-engine view on a one-engine host', async () => {
+    // One engine detected: the panel renders the engine's figures the way it
+    // always has — no row chrome for an engine standing alone.
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        { id: 'decode', type: 'engine-decode-throughput', geometry: { x: 0, y: 0, w: 6, h: 4 } },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, [makeEngine(ALPHA)]))
+
+    const panel = region('Decode Throughput')
+    expect(within(panel).getByText('120.0')).toBeInTheDocument()
+    expect(within(panel).getAllByTestId('chart')).toHaveLength(1)
   })
 })

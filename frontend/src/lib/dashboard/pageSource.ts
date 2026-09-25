@@ -3,14 +3,15 @@
  * as its own row, or whatever the host happens to be serving.
  *
  * This is the page-level half of the binding model in `bindings.ts`, made
- * persistent. A panel bound `follow` defers to the page, and until now the page
- * could only answer with the host's default — the first running engine. The
- * source lets the operator author the answer into the document itself: a
- * "Qwen page" that opens on Qwen for every colleague and kiosk, or an overview
- * page whose engine panels show every engine's figures, one row each.
+ * persistent. A panel bound `follow` defers to the page, which otherwise
+ * answers with the host's default — every engine, one row each, on a
+ * multi-engine host, the single engine on a one-engine host. The source lets
+ * the operator author a different answer into the document itself: a "Qwen
+ * page" that opens on Qwen for every colleague and kiosk, or an overview page
+ * pinned to all models by name rather than by default.
  *
- * **Absent means automatic.** A page with no source follows the host's default
- * exactly as every page did before the field existed, which is what lets the
+ * **Absent means automatic.** A page with no source keeps whatever the
+ * host's default resolves to as the host changes, which is what lets the
  * schema migration be a no-op and the shipped preset stay a single static
  * document.
  */
@@ -86,7 +87,7 @@ export function pageSourceChoices(
   engines: readonly EngineSnapshot[],
 ): PageSourceControlModel {
   const choices: PageSourceChoice[] = [
-    { value: AUTO_CHOICE, label: 'Automatic — first serving model' },
+    { value: AUTO_CHOICE, label: 'Automatic — host default' },
     { value: ALL_CHOICE, label: 'All models — one row each' },
     ...engines.map(engineChoice),
   ]

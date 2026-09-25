@@ -135,7 +135,7 @@ describe('the page configuration control', () => {
 
     const options = within(configuration()).getAllByRole('button')
     expect(options.map((option) => option.textContent)).toEqual([
-      'Automatic — first serving model',
+      'Automatic — host default',
       'All models — one row each',
       'Qwen3-8B — vLLM localhost:8000',
       'Llama-3-8B — vLLM localhost:8001',
@@ -144,11 +144,13 @@ describe('the page configuration control', () => {
   })
 
   it('writes the choice immediately and the following panels split into one row per engine', async () => {
-    const fetchMock = serveConfiguration({ document: storedDocument(watchPage()) })
+    const fetchMock = serveConfiguration({
+      document: storedDocument(watchPage({ kind: 'engine', endpoint: ALPHA })),
+    })
     await openPage(fetchMock)
     receive(snapshot())
 
-    // Nothing configured: the page follows the first running engine.
+    // The page opens on its configured engine — a single figure, not a row.
     expect(within(followPanel()).getByText('120.0')).toBeInTheDocument()
 
     await userEvent.click(pageConfigButton())
@@ -202,13 +204,16 @@ describe('the page configuration control', () => {
 
     await userEvent.click(pageConfigButton())
     await userEvent.click(
-      within(configuration()).getByRole('button', { name: 'Automatic — first serving model' }),
+      within(configuration()).getByRole('button', { name: 'Automatic — host default' }),
     )
 
     await waitFor(() => expect(configurationWrites(fetchMock)).toHaveLength(1))
     // Automatic is the absence of the field, not a stored sentinel.
     expect(JSON.parse(configurationWrites(fetchMock)[0]).pages[0]).not.toHaveProperty('source')
-    expect(within(followPanel()).getByText('120.0')).toBeInTheDocument()
+    // Back on the host default: a multi-engine host follows every engine,
+    // one row each.
+    expect(within(followPanel()).getByText('120.0 tok/s')).toBeInTheDocument()
+    expect(within(followPanel()).getByText('640.0 tok/s')).toBeInTheDocument()
   })
 
   it('keeps a configured engine that is not on this host on offer, marked', async () => {
