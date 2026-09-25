@@ -98,13 +98,71 @@ impl Baseline {
     }
 }
 
-/// One `/slots` entry, reduced to the fields the adapter uses. llama.cpp
-/// returns extra fields (`n_prompt_tokens`, `params`, `next_token`, …); we
-/// only need the slot id and its processing state for request counting.
+/// One `/slots` entry, reduced to the fields the adapter uses: the slot id,
+/// its processing state (request counting), and the live per-token progress
+/// of the in-flight task (`id_task` + `next_token[].n_decoded`, the live
+/// generation rate).
 #[derive(Deserialize)]
 struct Slot {
     id: u32,
     is_processing: bool,
+    /// Task id of the in-flight request; changes when the slot starts a new
+    /// task (re-baseline signal for the live rate).
+    #[serde(default)]
+    id_task: u64,
+    /// Per-token progress of the in-flight task (`n_decoded` = tokens
+    /// generated so far). Absent or empty while the slot is idle.
+    #[serde(default)]
+    next_token: Vec<NextToken>,
+}
+
+/// A `next_token` array element of a `/slots` entry. `n_decoded` is the
+/// number of tokens generated so far in the current task — it advances per
+/// token while the slot processes, unlike the lifetime
+/// `tokens_predicted_total` metric counter.
+#[derive(Deserialize)]
+struct NextToken {
+    #[serde(default)]
+    n_decoded: i64,
+}
+
+/// Live generation rate (tokens/s) from per-slot `/slots` progress.
+///
+/// `prev` maps slot id → (id_task, n_decoded, timestamp) from the last
+/// poll. Returns `Some(0.0)` when no slot is processing, `Some(rate)` when
+/// at least one processing slot has a usable delta, and `None` when slots
+/// are processing but none has a baseline yet (first tick of a new task).
+fn live_generation_rate(
+    prev: &HashMap<u32, (u64, i64, Instant)>,
+    now: Instant,
+    slots: &[Slot],
+) -> Option<f64> {
+    let mut rate = 0.0;
+    let mut have_delta = false;
+    let mut any_processing = false;
+    for slot in slots {
+        if !slot.is_processing {
+            continue;
+        }
+        any_processing = true;
+        let decoded: i64 = slot.next_token.iter().map(|t| t.n_decoded).sum();
+        if let Some(&(task, prev_n, pt)) = prev.get(&slot.id) {
+            // Re-baseline (no rate this tick) when the task changed or the
+            // counter regressed — `decoded` is not comparable then.
+            if slot.id_task == task && decoded >= prev_n {
+                let elapsed = now.duration_since(pt).as_secs_f64();
+                if elapsed > 0.0 {
+                    rate += (decoded - prev_n) as f64 / elapsed;
+                    have_delta = true;
+                }
+            }
+        }
+    }
+    match (any_processing, have_delta) {
+        (false, _) => Some(0.0),
+        (true, true) => Some(rate),
+        (true, false) => None,
+    }
 }
 
 pub struct LlamaCppAdapter {
@@ -120,9 +178,17 @@ pub struct LlamaCppAdapter {
 
     /// Attach baseline for mean fields (None until the first successful poll).
     baseline: Mutex<Option<Baseline>>,
-    /// Per-poll rate state: previous raw counter value + timestamp.
-    prev_gen_tokens: Mutex<Option<(f64, Instant)>>,
+    /// Per-poll rate state: previous raw counter value + timestamp (prompt
+    /// rate only — the generation rate comes from `/slots`, see `slot_gen`).
     prev_prompt_tokens: Mutex<Option<(f64, Instant)>>,
+    /// Per-slot live generation progress: slot id → (id_task, n_decoded,
+    /// Instant). The lifetime `tokens_predicted_total` counter is only
+    /// flushed at request completion in current llama.cpp builds (the server
+    /// adds a slot's whole `n_gen` in `metrics_on_prediction`, fired from the
+    /// slot's reset callback), so per-poll deltas of it read 0 during a
+    /// running job and spike by the full request size on completion. The
+    /// per-slot `next_token[].n_decoded` counter advances per token instead.
+    slot_gen: Mutex<HashMap<u32, (u64, i64, Instant)>>,
     /// Previous (accepted, draft) spec-decode counters for the live TAR.
     prev_spec_decode: Mutex<Option<(f64, f64)>>,
     /// Running averages of the live rates: (sum of non-zero readings, count).
@@ -153,8 +219,8 @@ impl LlamaCppAdapter {
             api_key,
             served_model,
             baseline: Mutex::new(None),
-            prev_gen_tokens: Mutex::new(None),
             prev_prompt_tokens: Mutex::new(None),
+            slot_gen: Mutex::new(HashMap::new()),
             prev_spec_decode: Mutex::new(None),
             avg_accum: Mutex::new((0.0, 0)),
             avg_prompt_accum: Mutex::new((0.0, 0)),
@@ -187,26 +253,29 @@ impl LlamaCppAdapter {
         resp.text().await.ok()
     }
 
-    /// Poll `/slots` and fold the per-slot `is_processing` transitions into the
-    /// request count. Returns the post-attach request count. On a `/slots`
-    /// failure (endpoint disabled / error) the previous count is returned
-    /// unchanged — request counting degrades gracefully rather than resetting.
-    async fn observe_slots(&self) -> u64 {
+    /// Poll `/slots`, fold the per-slot `is_processing` transitions into the
+    /// request count, and track per-slot generation progress for the live
+    /// rate. Returns (post-attach request count, live tokens/s). On a
+    /// `/slots` failure (endpoint disabled / error) the previous count is
+    /// returned unchanged and the live rate is `None` — request counting
+    /// degrades gracefully rather than resetting.
+    async fn observe_slots(&self) -> (u64, Option<f64>) {
         let url = format!("{}/slots", self.endpoint);
         let body = match self.get_text(url).await {
             Some(b) => b,
             None => {
-                return *self.requests_started.lock().await;
+                return (*self.requests_started.lock().await, None);
             }
         };
         let slots: Vec<Slot> = match serde_json::from_str(&body) {
             Ok(s) => s,
             Err(e) => {
                 tracing::debug!(endpoint = %self.endpoint, error = %e, "/slots parse failed");
-                return *self.requests_started.lock().await;
+                return (*self.requests_started.lock().await, None);
             }
         };
 
+        let now = Instant::now();
         let mut state = self.slot_state.lock().await;
         let mut started = self.requests_started.lock().await;
 
@@ -215,13 +284,28 @@ impl LlamaCppAdapter {
         // a request already in flight at attach is not double-counted later.
         for slot in &slots {
             let was = *state.get(&slot.id).unwrap_or(&false);
-            let now = slot.is_processing;
-            if !was && now {
+            let processing = slot.is_processing;
+            if !was && processing {
                 *started += 1;
             }
-            state.insert(slot.id, now);
+            state.insert(slot.id, processing);
         }
-        *started
+
+        // Live generation rate against the previous tick's per-slot progress,
+        // then re-baseline the slots still processing.
+        let live;
+        {
+            let mut gen = self.slot_gen.lock().await;
+            live = live_generation_rate(&gen, now, &slots);
+            gen.retain(|id, _| slots.iter().any(|s| s.id == *id && s.is_processing));
+            for slot in &slots {
+                if slot.is_processing {
+                    let decoded: i64 = slot.next_token.iter().map(|t| t.n_decoded).sum();
+                    gen.insert(slot.id, (slot.id_task, decoded, now));
+                }
+            }
+        }
+        (*started, live)
     }
 }
 
@@ -345,8 +429,9 @@ impl EngineAdapter for LlamaCppAdapter {
         let body = resp.text().await.ok()?;
         let raw = parse_prometheus_text(&body)?;
 
-        // Request count from /slots (post-attach, approximate).
-        let requests = self.observe_slots().await;
+        // Request count from /slots (post-attach, approximate) + the live
+        // generation rate from per-slot progress (see `slot_gen`).
+        let (requests, live_gen_tps) = self.observe_slots().await;
         let warming_up = requests < 1;
 
         // Baseline at attach + restart detection.
@@ -361,8 +446,8 @@ impl EngineAdapter for LlamaCppAdapter {
                 // per-poll rate state, the running averages, and the spec-decode
                 // delta state so nothing diffs against a stale pre-restart value.
                 *self.requests_started.lock().await = 0;
-                *self.prev_gen_tokens.lock().await = None;
                 *self.prev_prompt_tokens.lock().await = None;
+                *self.slot_gen.lock().await = HashMap::new();
                 *self.prev_spec_decode.lock().await = None;
                 *self.avg_accum.lock().await = (0.0, 0);
                 *self.avg_prompt_accum.lock().await = (0.0, 0);
@@ -379,29 +464,15 @@ impl EngineAdapter for LlamaCppAdapter {
         drop(baseline_lock);
 
         // --- Live per-poll rates (window throughput; 0 when idle) ---
-        let now = Instant::now();
-        let gen_now = raw.counters.get(C_PREDICT_TOKENS).copied();
-        let prompt_now = raw.counters.get(C_PROMPT_TOKENS).copied();
-
-        let tokens_per_sec = {
-            let mut prev = self.prev_gen_tokens.lock().await;
-            let tps = match (gen_now, prev.as_ref()) {
-                (Some(cur), Some(&(pv, pt))) => {
-                    let elapsed = now.duration_since(pt).as_secs_f64();
-                    if elapsed > 0.0 {
-                        Some((cur - pv) / elapsed)
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            };
-            if let Some(v) = gen_now {
-                *prev = Some((v, now));
-            }
-            tps
-        };
+        // Generation: live per-slot `n_decoded` progress from `/slots` (the
+        // lifetime counter only flushes at request completion — `slot_gen`).
+        let tokens_per_sec = live_gen_tps;
+        // Prompt: per-poll delta of the lifetime counter (prefill completes
+        // within a few ticks, so its completion-time flush is not
+        // misleadingly spiky).
         let prompt_tokens_per_sec = {
+            let now = Instant::now();
+            let prompt_now = raw.counters.get(C_PROMPT_TOKENS).copied();
             let mut prev = self.prev_prompt_tokens.lock().await;
             let tps = match (prompt_now, prev.as_ref()) {
                 (Some(cur), Some(&(pv, pt))) => {
@@ -739,6 +810,83 @@ mod tests {
             .map(|(k, v)| (k.to_string(), *v))
             .collect();
         assert!(base.regressed(&counters));
+    }
+
+    /// A realistic `/slots` body (current llama.cpp build) deserializes with
+    /// the task id and live per-token progress; idle slots without
+    /// `next_token` data still parse.
+    #[test]
+    fn parses_slots_live_progress() {
+        let body = r#"[
+            {"id":0,"n_ctx":8192,"is_processing":false,"id_task":7,"next_token":[{"n_remain":-1,"n_decoded":0}]},
+            {"id":1,"n_ctx":8192,"is_processing":true,"id_task":8,"next_token":[{"n_remain":100,"n_decoded":42}]},
+            {"id":2,"n_ctx":8192,"is_processing":true}
+        ]"#;
+        let slots: Vec<Slot> = serde_json::from_str(body).expect("parse");
+        assert_eq!(slots[1].id_task, 8);
+        assert_eq!(slots[1].next_token[0].n_decoded, 42);
+        // `next_token`/`id_task` are optional (older builds may omit them).
+        assert_eq!(slots[2].id_task, 0);
+        assert!(slots[2].next_token.is_empty());
+    }
+
+    /// Live generation rate from per-slot progress: 0 when idle, the sum of
+    /// per-slot deltas while decoding, None on the first tick of a new task,
+    /// and re-baselined when a task changes or the counter regresses.
+    #[test]
+    fn live_rate_tracks_per_slot_progress() {
+        let t0 = Instant::now();
+        let t1 = t0 + Duration::from_secs(1);
+
+        let idle: [Slot; 0] = [];
+        assert_eq!(live_generation_rate(&HashMap::new(), t1, &idle), Some(0.0));
+
+        fn slot(id: u32, task: u64, decoded: i64) -> Slot {
+            Slot {
+                id,
+                is_processing: true,
+                id_task: task,
+                next_token: vec![NextToken { n_decoded: decoded }],
+            }
+        }
+
+        // First tick of a new task: no baseline yet → None.
+        assert_eq!(
+            live_generation_rate(&HashMap::new(), t0, &[slot(0, 100, 0)]),
+            None
+        );
+
+        // One second later the same task has 60 decoded tokens → 60 tok/s.
+        let mut prev: HashMap<u32, (u64, i64, Instant)> = HashMap::new();
+        prev.insert(0, (100, 0, t0));
+        assert_eq!(
+            live_generation_rate(&prev, t1, &[slot(0, 100, 60)]),
+            Some(60.0)
+        );
+
+        // Second slot joins with its own baseline → rates sum.
+        prev.insert(1, (101, 0, t0));
+        let slots = [slot(0, 100, 90), slot(1, 101, 30)];
+        // 90/1s + 30/1s = 120 tok/s.
+        assert_eq!(live_generation_rate(&prev, t1, &slots), Some(120.0));
+
+        // Task change on slot 0: no comparable baseline for it, slot 0
+        // re-baselines silently; slot 1 still rates (45/1s).
+        let slots = [slot(0, 101, 0), slot(1, 101, 45)];
+        assert_eq!(live_generation_rate(&prev, t1, &slots), Some(45.0));
+
+        // Both tasks changed → no usable delta while slots are processing.
+        let mut prev2: HashMap<u32, (u64, i64, Instant)> = HashMap::new();
+        prev2.insert(0, (100, 5, t0));
+        let slots = [slot(0, 200, 0)];
+        assert_eq!(live_generation_rate(&prev2, t1, &slots), None);
+
+        // Counter regression on the same task re-baselines instead of
+        // emitting a negative rate.
+        let mut prev3: HashMap<u32, (u64, i64, Instant)> = HashMap::new();
+        prev3.insert(0, (100, 50, t0));
+        let slots = [slot(0, 100, 5)];
+        assert_eq!(live_generation_rate(&prev3, t1, &slots), None);
     }
 
     /// `/metrics` returning 501 (llama-server started without `--metrics`)

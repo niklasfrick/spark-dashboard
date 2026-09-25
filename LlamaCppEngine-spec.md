@@ -62,7 +62,7 @@ tests (synthetic `/metrics` + `/slots` bodies) still need no server.
 | `prompt_seconds_total` | counter | prefill time (s) |
 | `prompt_tokens_seconds` | gauge | last request prefill tok/s; **0 when idle** |
 | `prompt_tokens_cached_total` | counter | prompt tokens served from cache (**present on this build**) |
-| `tokens_predicted_total` | counter | generated tokens |
+| `tokens_predicted_total` | counter | generated tokens — **flushed per request, not per token** (see below) |
 | `tokens_predicted_seconds_total` | counter | decode time (s) |
 | `predicted_tokens_seconds` | gauge | last request gen tok/s; **0 when idle** |
 | `requests_processing` | gauge | active requests (= slots busy) |
@@ -84,9 +84,19 @@ Key structural facts:
 - `GET /slots` is **on by default**. On this build, at rest: `{id, n_ctx,
   speculative, is_processing}`; mid/after a request it adds `id_task`,
   `n_prompt_tokens`, `n_prompt_tokens_processed`, `n_prompt_tokens_cache`, and
-  `next_token[]` (with `n_decoded`). **No field gives live KV tokens-in-use** —
+  `next_token[]` (with `n_decoded` — **live per-token progress of the
+  in-flight task**). **No field gives live KV tokens-in-use** —
   `n_prompt_tokens` persists after the request completes, and `n_tokens_max`
   tracks the *prompt* high-water, not total context. See §4.3.
+- **`tokens_predicted_total` (and the other `_total` counters) only advance
+  when a slot resets — i.e. at request completion** (verified on this build,
+  2026-09-25: a running job held `requests_processing=1` for minutes while the
+  counter stayed flat, then jumped +1647 tokens the moment a request
+  finished; upstream `metrics_on_prediction` runs from the slot's reset
+  callback and adds the slot's whole `n_gen`). Per-poll deltas therefore read
+  0 mid-job and spike by the full request size at completion — they cannot
+  drive a live rate. The live generation rate comes from `/slots`
+  `next_token[].n_decoded` deltas instead (§4.1).
 
 ## 4. KPI contract — what fills, what's derived, what's hidden
 
@@ -98,7 +108,7 @@ Key structural facts:
 | `queued_requests` | `requests_deferred` |
 | `total_generation_tokens` | `tokens_predicted_total` |
 | `total_prompt_tokens` | `prompt_tokens_total` |
-| `tokens_per_sec` / `avg_tokens_per_sec` | `Δtokens_predicted_total / Δtokens_predicted_seconds_total` + running avg (reuse `prev_*` machinery) |
+| `tokens_per_sec` / `avg_tokens_per_sec` | **live**: per-slot Δ`/slots` `next_token[].n_decoded` / Δt (summed across processing slots; `None` on the first tick of a new task) + running avg — the lifetime counter only flushes at request completion (§3 note) |
 | `prompt_tokens_per_sec` / `avg_prompt_tokens_per_sec` | `Δprompt_tokens_total / Δprompt_seconds_total` + running avg |
 | `tpot_ms` | `1000 · tokens_predicted_seconds_total / tokens_predicted_total` (mean) |
 | `per_request_tps` | `tokens_predicted_total / tokens_predicted_seconds_total` |
