@@ -47,7 +47,7 @@ pub enum EngineStatus {
 /// *why* a name is missing (or provisional) instead of silently showing the
 /// command-line fallback. `None` on the snapshot means metadata resolved
 /// normally.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ModelMetadataError {
     /// `/v1/models` rejected the request as unauthorized (401/403) — the
     /// dashboard lacks the engine's API key. Actionable: configure a
