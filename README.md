@@ -80,13 +80,15 @@ for details on what each script does.
   (e.g. DGX Spark GB10, GH200)
 - Disk and network I/O throughput
 
-**LLM Engine Monitoring** (vLLM via Prometheus metrics)
-- Tokens per second (generation + prompt)
-- Time to first token, inter-token latency, end-to-end latency, queue time
-- Active/queued requests, batch size
-- KV cache utilization, prefix cache hit rate
+**LLM Engine Monitoring** (vLLM and llama.cpp)
+- vLLM (Prometheus): tokens per second (generation + prompt), time to first
+  token, inter-token and end-to-end latency, queue time, active/queued
+  requests, batch size, KV cache and prefix-cache utilization, SLO goodput
+- llama.cpp (server `/metrics` + `/slots`): token totals and throughput, mean
+  TTFT / TPOT / end-to-end latency, prefix cache, speculative decoding,
+  request count, live generation rate
+- Fields an engine does not expose are hidden, not shown as a confident zero
 - Automatic engine discovery via process scan and Docker API
-- SLO Goodput
 
 **Multi-Engine Support**
 - Run and monitor any number of inference engines side by side — each
@@ -525,6 +527,30 @@ curl -s -X POST localhost:3000/api/export/test \
 The Splunk side — minting a HEC token, the metrics index, and the
 reverse-proxy topology for reaching HEC from outside the LAN — is covered in
 [docs/splunk-hec-setup.md](docs/splunk-hec-setup.md).
+
+### llama.cpp engine
+
+llama.cpp servers are discovered the same way as vLLM — process scan plus the
+Docker API — so there is nothing to configure: start `llama-server` against a
+model and it appears in the engine list. The model name comes from the launch
+arguments (`-m` / `-hf`), falling back to `/v1/models`, and is shown as the
+model's basename.
+
+The panels show what the llama.cpp server API actually provides — token
+totals and throughput, mean time-to-first-token / inter-token / end-to-end
+latency, prefix-cache hits, speculative-decoding statistics, the in-flight
+request count, and a live generation rate — and hide the rest (KV usage,
+batch size, latency histograms) rather than drawing a confident zero.
+
+**Why llama.cpp's numbers step while vLLM's tick.** llama.cpp publishes its
+token statistics as counters that advance while the engine is generating, and
+exposes no in-flight gauges. The dashboard therefore reads the live rate from
+the per-token progress on `/slots` — which updates as each token lands — and
+derives the request count from `/slots` state changes at the 1-second poll.
+With both engines running side by side, vLLM's Prometheus gauges keep its
+counters smooth per second, while llama.cpp's figures step in bursts during
+generation and hold flat between requests: a property of the server API's
+granularity, not a polling or detection defect.
 
 ## Development
 
