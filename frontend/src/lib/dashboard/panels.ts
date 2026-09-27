@@ -42,6 +42,12 @@ export interface PanelTypeSpec {
    * declares `false` when its window would be a control that changes nothing.
    */
   windowed?: boolean
+  /**
+   * The frame gives the title its larger type. Declared when the panel's
+   * content is the figures themselves, so a standard-size title would read as
+   * an afterthought beside numbers that fill the panel.
+   */
+  bigTitle?: boolean
 }
 
 /**
@@ -83,6 +89,7 @@ export const PANEL_TYPES = {
   'engine-status': { binds: 'engine', title: 'Engine' },
   'engine-prefill-throughput': { binds: 'engine', title: 'Prefill Throughput' },
   'engine-decode-throughput': { binds: 'engine', title: 'Decode Throughput' },
+  'engine-tokens': { binds: 'engine', title: 'Tokens', bigTitle: true },
   'engine-latency': { binds: 'engine', title: 'Latency' },
   'engine-slo-goodput': { binds: 'engine', title: 'SLO Goodput' },
   'engine-requests': { binds: 'engine', title: 'Requests' },
@@ -157,8 +164,9 @@ export function panelUsesWindow(type: string): boolean {
 /**
  * One type's declaration, read as the interface rather than as its own literal
  * type — which is what makes the optional fields readable on the types that
- * leave them out.
+ * leave them out. Exported so callers outside the vocabulary can read a spec
+ * the same way this file does.
  */
-function panelSpec(type: PanelType): PanelTypeSpec {
+export function panelSpec(type: PanelType): PanelTypeSpec {
   return PANEL_TYPES[type]
 }

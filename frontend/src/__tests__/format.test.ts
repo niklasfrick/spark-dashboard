@@ -3,6 +3,7 @@ import {
   formatAge,
   formatBytes,
   formatCompactTokens,
+  formatExactTokens,
   formatAcceptanceLength,
   formatEndpoint,
   engineDescription,
@@ -48,6 +49,22 @@ describe('formatCompactTokens', () => {
     expect(formatCompactTokens(1_000_000)).toBe('1M')
     expect(formatCompactTokens(1_250_000_000)).toBe('1.3B')
     expect(formatCompactTokens(3.4e12)).toBe('3.4T')
+  })
+})
+
+describe('formatExactTokens', () => {
+  it('renders -- for null, negative, or non-finite', () => {
+    expect(formatExactTokens(null)).toBe('--')
+    expect(formatExactTokens(-5)).toBe('--')
+    expect(formatExactTokens(Number.NaN)).toBe('--')
+  })
+
+  it('shows the full figure with thousands separators', () => {
+    expect(formatExactTokens(0)).toBe('0')
+    expect(formatExactTokens(999)).toBe('999')
+    expect(formatExactTokens(1_000_000)).toBe('1,000,000')
+    expect(formatExactTokens(156_042_324)).toBe('156,042,324')
+    expect(formatExactTokens(1_234_567.8)).toBe('1,234,568')
   })
 })
 

@@ -36,15 +36,23 @@ export interface MultiEngineRowValue {
  * panel gives every engine a full-width chart instead of N cramped
  * side-by-side ones. A row whose engine cannot serve numbers shows its reason
  * instead of a chart, so a starting engine reads as starting.
+ *
+ * `valueClass` and `statsClass` let a figure-only panel (tokens) wear
+ * bigger numbers than the row chrome's compact defaults; panels that chart
+ * leave them unset and get the sizes every row has always worn.
  */
 export function MultiEnginePanelBody({
   rows,
   pick,
   seriesLabel,
+  valueClass,
+  statsClass,
 }: {
   rows: EngineRowTarget[]
   pick: (row: EngineRowTarget) => MultiEngineRowValue
   seriesLabel: string
+  valueClass?: string
+  statsClass?: string
 }) {
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col gap-1.5 overflow-hidden">
@@ -82,7 +90,9 @@ export function MultiEnginePanelBody({
                   {formatEndpoint(engine.endpoint)}
                 </span>
               </span>
-              <span className="shrink-0 text-sm font-semibold tabular-nums text-zinc-100">
+              <span
+                className={`shrink-0 font-semibold tabular-nums text-zinc-100 ${valueClass ?? 'text-sm'}`}
+              >
                 {value.valueLabel && (
                   <span className="mr-1 text-[10px] font-normal text-zinc-500">
                     {value.valueLabel}
@@ -92,7 +102,9 @@ export function MultiEnginePanelBody({
               </span>
             </div>
             {value.stats && value.stats.length > 0 && (
-              <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5 px-0.5 text-[10px] tabular-nums text-zinc-500">
+              <div
+                className={`flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5 px-0.5 tabular-nums text-zinc-500 ${statsClass ?? 'text-[10px]'}`}
+              >
                 {value.stats.map((stat) => (
                   <span key={stat.label} className="whitespace-nowrap">
                     <span className="text-zinc-600">{stat.label}</span> {stat.value}
@@ -100,29 +112,34 @@ export function MultiEnginePanelBody({
                 ))}
               </div>
             )}
-            <div className="min-h-0 min-w-0 flex-1">
-              {note ? (
-                <p className="px-1 text-[11px] leading-snug text-zinc-500">{note}</p>
-              ) : value.series && value.series.length > 0 ? (
-                <TimeSeriesChart
-                  series={[
-                    { data: value.data, label: seriesLabel, color: '#76B900' },
-                    ...value.series,
-                  ]}
-                  unit={value.unit}
-                  yDomain={value.yDomain}
-                  hideTooltipLabel
-                />
-              ) : (
-                <TimeSeriesChart
-                  data={value.data}
-                  unit={value.unit}
-                  yDomain={value.yDomain}
-                  seriesLabel={seriesLabel}
-                  hideTooltipLabel
-                />
-              )}
-            </div>
+            {/* A row with no note, no line and no points has nothing a chart
+                box could show — the empty box would be dead space under the
+                figures (the token rows, the spec-decoding rows). */}
+            {(note || (value.series?.length ?? 0) > 0 || value.data.length > 0) && (
+              <div className="min-h-0 min-w-0 flex-1">
+                {note ? (
+                  <p className="px-1 text-[11px] leading-snug text-zinc-500">{note}</p>
+                ) : value.series && value.series.length > 0 ? (
+                  <TimeSeriesChart
+                    series={[
+                      { data: value.data, label: seriesLabel, color: '#76B900' },
+                      ...value.series,
+                    ]}
+                    unit={value.unit}
+                    yDomain={value.yDomain}
+                    hideTooltipLabel
+                  />
+                ) : (
+                  <TimeSeriesChart
+                    data={value.data}
+                    unit={value.unit}
+                    yDomain={value.yDomain}
+                    seriesLabel={seriesLabel}
+                    hideTooltipLabel
+                  />
+                )}
+              </div>
+            )}
           </div>
         )
       })}

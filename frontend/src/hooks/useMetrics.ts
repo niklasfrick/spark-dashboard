@@ -85,7 +85,7 @@ export function useMetrics() {
       if (!document.hidden) flush()
     }
 
-    const id = setInterval(flush, 2000)
+    const id = setInterval(flush, 1000)
     document.addEventListener('visibilitychange', onVisible)
 
     return () => {

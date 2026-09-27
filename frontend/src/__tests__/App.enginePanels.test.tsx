@@ -176,7 +176,7 @@ async function configurationSettles(fetchMock: FetchMock) {
 }
 
 /** The metrics socket delivers one snapshot; the first frame flushes at once,
- *  later ones on the 2s coalescing timer the socket hook runs. */
+ *  later ones on the 1s flush timer the socket hook runs. */
 function receive(snapshot: MetricsSnapshot) {
   act(() => {
     MockWebSocket.instances[0].receive(JSON.stringify(snapshot))
@@ -197,9 +197,10 @@ function enginePanels(): unknown[] {
     { id: 'decode', type: 'engine-decode-throughput', geometry: { x: 3, y: 0, w: 3, h: 4 } },
     { id: 'latency', type: 'engine-latency', geometry: { x: 6, y: 0, w: 3, h: 4 } },
     { id: 'requests', type: 'engine-requests', geometry: { x: 9, y: 0, w: 3, h: 4 } },
-    { id: 'goodput', type: 'engine-slo-goodput', geometry: { x: 0, y: 4, w: 4, h: 4 } },
-    { id: 'cache', type: 'engine-cache', geometry: { x: 4, y: 4, w: 4, h: 4 } },
-    { id: 'spec', type: 'engine-spec-decode', geometry: { x: 8, y: 4, w: 4, h: 4 } },
+    { id: 'goodput', type: 'engine-slo-goodput', geometry: { x: 0, y: 4, w: 3, h: 4 } },
+    { id: 'cache', type: 'engine-cache', geometry: { x: 3, y: 4, w: 3, h: 4 } },
+    { id: 'spec', type: 'engine-spec-decode', geometry: { x: 6, y: 4, w: 3, h: 4 } },
+    { id: 'tokens', type: 'engine-tokens', geometry: { x: 9, y: 4, w: 3, h: 4 } },
   ]
 }
 
@@ -275,6 +276,17 @@ describe('the engine panels on a grid page', () => {
         'This engine is not using speculative decoding.',
       ),
     ).toBeInTheDocument()
+
+    // The token panel reads the two lifetime counters and sums them: 1M
+    // prompt + 500K generation, shown exact rather than abbreviated — the
+    // compact form would hide the per-second motion at these magnitudes.
+    const tokens = region('Tokens')
+    expect(within(tokens).getByText('Input')).toBeInTheDocument()
+    expect(within(tokens).getByText('1,000,000')).toBeInTheDocument()
+    expect(within(tokens).getByText('Output')).toBeInTheDocument()
+    expect(within(tokens).getByText('500,000')).toBeInTheDocument()
+    expect(within(tokens).getByText('Total Tokens')).toBeInTheDocument()
+    expect(within(tokens).getByText('1,500,000')).toBeInTheDocument()
 
     // Every panel on the page is implemented — no slot-keeping placeholders.
     expect(screen.queryByText('This panel is not available yet.')).not.toBeInTheDocument()
@@ -675,7 +687,7 @@ describe('the engine panels on a grid page', () => {
 
     // Every panel keeps its slot and says why it is empty; nothing breaks the
     // page, which is what keeps the dashboard useful for hardware alone.
-    expect(screen.getAllByText('No inference engine running.')).toHaveLength(7)
+    expect(screen.getAllByText('No inference engine running.')).toHaveLength(8)
   })
 
   it('tells an engine that is still starting apart from one that is not running', async () => {
@@ -721,7 +733,7 @@ describe('the engine panels on a grid page', () => {
     render(<App />)
     await configurationSettles(fetchMock)
 
-    expect(screen.getAllByText('Waiting for metrics')).toHaveLength(7)
+    expect(screen.getAllByText('Waiting for metrics')).toHaveLength(8)
 
     // The first snapshot must not trip the changed-hook-count trap.
     receive(makeSnapshot(1000, [makeEngine(ALPHA)]))
@@ -926,6 +938,41 @@ describe('engine panels on a page configured for all models', () => {
     expect(within(panel).getByText('is not running.')).toBeInTheDocument()
     // The stopped row charts nothing — only the serving engine has a chart.
     expect(within(panel).getAllByTestId('chart')).toHaveLength(1)
+  })
+
+  it('keeps each engine’s lifetime token counters on its own row', async () => {
+    const fetchMock = serveConfiguration({
+      document: storedDocument(
+        [{ id: 'tokens', type: 'engine-tokens', geometry: { x: 0, y: 0, w: 6, h: 4 } }],
+        { kind: 'all' },
+      ),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(
+      makeSnapshot(1000, [
+        makeEngine(ALPHA),
+        llama({ total_prompt_tokens: 2_000_000, total_generation_tokens: 1_000_000 }),
+      ]),
+    )
+
+    const panel = region('Tokens')
+    // The vLLM row sums its own two counters (1M + 500K), never the other
+    // engine's; the llama.cpp row sums to 3M. Exact figures, not compact —
+    // the row is the panel's home view on this host.
+    expect(within(panel).getByText('1,500,000 tok')).toBeInTheDocument()
+    expect(within(panel).getByText('3,000,000 tok')).toBeInTheDocument()
+    expect(within(panel).getAllByText('In')).toHaveLength(2)
+    expect(within(panel).getAllByText('2,000,000 tok')).toHaveLength(1)
+    expect(within(panel).getAllByText('Out')).toHaveLength(2)
+    // 1,000,000 tok appears twice — the vLLM row's input and the llama.cpp row's output.
+    expect(within(panel).getAllByText('1,000,000 tok')).toHaveLength(2)
+    expect(within(panel).getAllByText('500,000 tok')).toHaveLength(1)
+    // Each row labels its aggregate the way the single view does, and a row
+    // with nothing to chart wears no empty chart box under its figures.
+    expect(within(panel).getAllByText('Total Tokens')).toHaveLength(2)
+    expect(within(panel).queryAllByTestId('chart')).toHaveLength(0)
   })
 
   it('labels each cache row with the metric that engine can show', async () => {

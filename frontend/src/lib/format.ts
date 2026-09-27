@@ -147,6 +147,17 @@ export function formatCompactTokens(n: number | null): string {
   return `${text}${unit.suffix}`
 }
 
+const exactTokensFormatter = new Intl.NumberFormat('en-US')
+
+/** Exact token count with thousands separators. Null -> '--'.
+ *  For cumulative counters where the compact K/M abbreviation hides the
+ *  per-second motion — at 156M tokens a "+238" tick is invisible inside
+ *  "156.0M" but plain to see in "156,042,324". */
+export function formatExactTokens(n: number | null): string {
+  if (n === null || !Number.isFinite(n) || n < 0) return '--'
+  return exactTokensFormatter.format(Math.round(n))
+}
+
 /** Format mean acceptance length (accepted tokens per draft attempt): two
  *  decimals, e.g. "3.42". Null/non-finite/negative -> '--'. */
 export function formatAcceptanceLength(n: number | null): string {
