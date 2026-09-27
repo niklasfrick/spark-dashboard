@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { TimeSeriesChart } from '@/components/charts/TimeSeriesChart'
 import { engineDisplayName, engineIconSrc, formatEndpoint, shortModelName } from '@/lib/format'
 import { readEngineLabel } from '@/lib/engineLabelStore'
@@ -22,9 +23,11 @@ export interface MultiEngineRowValue {
   /** Extra lines the row's chart wears beside the primary one, the way the
    *  single view wears avg and per-request beside live. */
   series?: { data: DataPoint[]; label: string; color: string }[]
-  /** The figures the single view tiles beside the headline, kept on the row
-   *  as one small line so a row reads like a card, not just a big number. */
-  stats?: { label: string; value: string }[]
+  /** The figures the single view tiles beside the headline, at full tile size
+   *  — the same block the panel's single view renders, parameterised on the
+   *  row's metric and series, so a row reads like a mini version of the
+   *  single-engine card. */
+  tiles?: ReactNode
   yDomain?: [number, number]
   data: DataPoint[]
 }
@@ -37,22 +40,23 @@ export interface MultiEngineRowValue {
  * side-by-side ones. A row whose engine cannot serve numbers shows its reason
  * instead of a chart, so a starting engine reads as starting.
  *
- * `valueClass` and `statsClass` let a figure-only panel (tokens) wear
- * bigger numbers than the row chrome's compact defaults; panels that chart
- * leave them unset and get the sizes every row has always worn.
+ * Rows size to their own content — header, tiles, chart — rather than
+ * splitting the panel evenly: a tile block no longer divides a fixed row
+ * cleanly, and the chart's fixed height is what keeps the rows aligned.
+ * `valueClass` lets a figure-only panel (tokens) wear bigger numbers than
+ * the row chrome's compact defaults; panels that chart leave it unset and
+ * get the size every row has always worn.
  */
 export function MultiEnginePanelBody({
   rows,
   pick,
   seriesLabel,
   valueClass,
-  statsClass,
 }: {
   rows: EngineRowTarget[]
   pick: (row: EngineRowTarget) => MultiEngineRowValue
   seriesLabel: string
   valueClass?: string
-  statsClass?: string
 }) {
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col gap-1.5 overflow-hidden">
@@ -69,7 +73,7 @@ export function MultiEnginePanelBody({
         const logo = getProviderLogo(engine.model?.name)
 
         return (
-          <div key={key} className="flex min-h-0 min-w-0 flex-1 flex-col gap-0.5">
+          <div key={key} className="flex min-h-0 min-w-0 flex-col gap-0.5">
             <div className="flex items-baseline justify-between gap-2">
               <span className="flex min-w-0 items-center gap-1.5">
                 {logo && <ProviderMark logo={logo} />}
@@ -101,44 +105,36 @@ export function MultiEnginePanelBody({
                 {display}
               </span>
             </div>
-            {value.stats && value.stats.length > 0 && (
-              <div
-                className={`flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5 px-0.5 tabular-nums text-zinc-500 ${statsClass ?? 'text-[10px]'}`}
-              >
-                {value.stats.map((stat) => (
-                  <span key={stat.label} className="whitespace-nowrap">
-                    <span className="text-zinc-600">{stat.label}</span> {stat.value}
-                  </span>
-                ))}
-              </div>
-            )}
-            {/* A row with no note, no line and no points has nothing a chart
-                box could show — the empty box would be dead space under the
-                figures (the token rows, the spec-decoding rows). */}
-            {(note || (value.series?.length ?? 0) > 0 || value.data.length > 0) && (
-              <div className="min-h-0 min-w-0 flex-1">
-                {note ? (
-                  <p className="px-1 text-[11px] leading-snug text-zinc-500">{note}</p>
-                ) : value.series && value.series.length > 0 ? (
-                  <TimeSeriesChart
-                    series={[
-                      { data: value.data, label: seriesLabel, color: '#76B900' },
-                      ...value.series,
-                    ]}
-                    unit={value.unit}
-                    yDomain={value.yDomain}
-                    hideTooltipLabel
-                  />
-                ) : (
-                  <TimeSeriesChart
-                    data={value.data}
-                    unit={value.unit}
-                    yDomain={value.yDomain}
-                    seriesLabel={seriesLabel}
-                    hideTooltipLabel
-                  />
-                )}
-              </div>
+            {value.tiles}
+            {note ? (
+              <p className="px-1 text-[11px] leading-snug text-zinc-500">{note}</p>
+            ) : (
+              // A row with no note, no line and no points has nothing a chart
+              // box could show — the empty box would be dead space under the
+              // figures (the token rows, the spec-decoding rows).
+              (((value.series?.length ?? 0) > 0 || value.data.length > 0) && (
+                <div className="h-20 min-w-0">
+                  {value.series && value.series.length > 0 ? (
+                    <TimeSeriesChart
+                      series={[
+                        { data: value.data, label: seriesLabel, color: '#76B900' },
+                        ...value.series,
+                      ]}
+                      unit={value.unit}
+                      yDomain={value.yDomain}
+                      hideTooltipLabel
+                    />
+                  ) : (
+                    <TimeSeriesChart
+                      data={value.data}
+                      unit={value.unit}
+                      yDomain={value.yDomain}
+                      seriesLabel={seriesLabel}
+                      hideTooltipLabel
+                    />
+                  )}
+                </div>
+              ))
             )}
           </div>
         )

@@ -69,6 +69,8 @@ export function EngineSloGoodputPanel({ panel }: PanelContentProps) {
             metric('itl_goodput_pct')
           const e2e = recomputeGoodputPct(metric('e2e_buckets'), DEFAULT_SLO.e2eMs) ??
             metric('e2e_goodput_pct')
+          const tpot = recomputeGoodputPct(metric('tpot_buckets'), DEFAULT_SLO.tpotMs) ??
+            metric('tpot_goodput_pct')
           const pct = combinedGoodput(ttft, itl, e2e)
           return {
             value: pct,
@@ -77,12 +79,30 @@ export function EngineSloGoodputPanel({ panel }: PanelContentProps) {
             data: [],
             // The per-SLO figures the single view tiles beside the combined
             // score — the row is scored against the default thresholds, so
-            // these are.
-            stats: [
-              { label: 'TTFT', value: ttft !== null ? `${Math.round(ttft)}%` : '—' },
-              { label: 'ITL', value: itl !== null ? `${Math.round(itl)}%` : '—' },
-              { label: 'E2E', value: e2e !== null ? `${Math.round(e2e)}%` : '—' },
-            ],
+            // these are, and the labels say which thresholds they are.
+            tiles: (
+              <div className="grid grid-cols-2 gap-1.5">
+                <div className="col-span-2">
+                  <GoodputTile label="Combined" pct={pct} emphasize />
+                </div>
+                <GoodputTile
+                  label={`TTFT ≤ ${formatSloThreshold(DEFAULT_SLO.ttftMs)}`}
+                  pct={ttft}
+                />
+                <GoodputTile
+                  label={`ITL ≤ ${formatSloThreshold(DEFAULT_SLO.itlMs)}`}
+                  pct={itl}
+                />
+                <GoodputTile
+                  label={`TPOT ≤ ${formatSloThreshold(DEFAULT_SLO.tpotMs)}`}
+                  pct={tpot}
+                />
+                <GoodputTile
+                  label={`E2E ≤ ${formatSloThreshold(DEFAULT_SLO.e2eMs)}`}
+                  pct={e2e}
+                />
+              </div>
+            ),
           }
         }}
       />

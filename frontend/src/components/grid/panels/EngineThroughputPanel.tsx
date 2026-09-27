@@ -1,7 +1,7 @@
 import { TimeSeriesChart } from '@/components/charts/TimeSeriesChart'
 import { LiveWithTotal, MetricTile } from '@/components/engines/EnginePanelPrimitives'
 import { computeTrend } from '@/lib/engineStats'
-import { formatCompactTokens, formatTps, fmtVal } from '@/lib/format'
+import { formatTps, fmtVal } from '@/lib/format'
 import type { NumericEngineMetric } from '@/lib/engineMetrics'
 import type { EngineSeriesName } from '@/lib/metricsHistoryStore'
 import { EnginePanelBody } from './EnginePanelBody'
@@ -71,9 +71,10 @@ function ThroughputPanel({ panel, fields }: PanelContentProps & { fields: Throug
         rows={rows.rows}
         pick={(row) => {
           const metric = row.metric
-          // The figures the single view tiles, one per row: live up top, the
-          // average and per-request beside it, the lifetime total kept
-          // visible. The row's chart wears the single view's three lines.
+          // The figures the single view tiles, at full size: live up top with
+          // the lifetime total beside it, the average and per-request under —
+          // the same block the single view renders, over this row's engine.
+          // The row's chart wears the single view's three lines.
           return {
             value: metric ? metric(fields.live) : null,
             displayValue: metric
@@ -81,19 +82,33 @@ function ThroughputPanel({ panel, fields }: PanelContentProps & { fields: Throug
               : undefined,
             unit: 'tok/s',
             data: row.series ? row.series(fields.series.live) : [],
-            stats: metric
-              ? [
-                  { label: 'Avg', value: `${fmtVal(metric(fields.average), formatTps)} tok/s` },
-                  {
-                    label: 'Per-Req Avg',
-                    value: `${fmtVal(metric(fields.perRequest), formatTps)} tok/s`,
-                  },
-                  {
-                    label: fields.totalLabel,
-                    value: `${formatCompactTokens(metric(fields.total))} tok`,
-                  },
-                ]
-              : undefined,
+            tiles: metric ? (
+              <div className="grid grid-cols-1 gap-1.5">
+                <LiveWithTotal
+                  liveValue={fmtVal(metric(fields.live), formatTps)}
+                  liveUnit="tok/s"
+                  trend={computeTrend(row.series ? row.series(fields.series.live) : [])}
+                  totalLabel={fields.totalLabel}
+                  total={metric(fields.total)}
+                />
+                <div className="grid grid-cols-2 gap-x-1.5">
+                  <MetricTile
+                    label="Avg"
+                    value={fmtVal(metric(fields.average), formatTps)}
+                    unit="tok/s"
+                    trend={computeTrend(row.series ? row.series(fields.series.average) : [])}
+                  />
+                  <MetricTile
+                    label="Per-Req Avg"
+                    value={fmtVal(metric(fields.perRequest), formatTps)}
+                    unit="tok/s"
+                    trend={computeTrend(
+                      row.series ? row.series(fields.series.perRequest) : [],
+                    )}
+                  />
+                </div>
+              </div>
+            ) : undefined,
             series: row.series
               ? [
                   { data: row.series(fields.series.average), label: 'Avg', color: '#3b82f6' },

@@ -44,55 +44,77 @@ export function EngineLatencyPanel({ panel }: PanelContentProps) {
           const value = metric
             ? pickLatencyValue(rowMode, metric('ttft_ms'), metric('ttft_percentiles'))
             : null
-          // The tiles the single view shows beside TTFT, kept on the row so a
-          // row reads like a card: E2E, queue time, ITL, TPOT and batch size.
-          const e2eDisplay = formatDurationMs(metric ? metric('e2e_latency_ms') : null)
+          const series = row.series
+          // The tiles the single view renders, at full size, over this row's
+          // engine — E2E, queue time, ITL, TPOT and batch size, on the same
+          // statistic the row's headline uses.
+          const e2e = metric
+            ? pickLatencyValue(rowMode, metric('e2e_latency_ms'), metric('e2e_percentiles'))
+            : null
+          const e2eDisplay = formatDurationMs(e2e)
           const batch = metric ? metric('avg_batch_size') : null
           return {
             value,
             displayValue: metric ? `${fmtVal(value, formatTtft)} ms` : undefined,
             unit: 'ms',
             data: row.series ? row.series(LATENCY_SERIES.ttft[rowMode]) : [],
-            stats: metric
-              ? [
-                  {
-                    label: 'E2E',
-                    value: e2eDisplay.unit
-                      ? `${e2eDisplay.value} ${e2eDisplay.unit}`
-                      : e2eDisplay.value,
-                  },
-                  ...(supportsCapability(row.engine.engine_type, 'queueTime')
-                    ? [
-                        {
-                          label: 'Queue',
-                          value: `${fmtVal(metric('queue_time_ms'), formatTtft)} ms`,
-                        },
-                      ]
-                    : []),
-                  {
-                    label: 'ITL',
-                    value: `${fmtVal(
-                      pickLatencyValue(
-                        rowMode,
-                        metric('inter_token_latency_ms'),
-                        metric('itl_percentiles'),
-                      ),
-                      formatTtft,
-                    )} ms`,
-                  },
-                  {
-                    label: 'TPOT',
-                    value: `${fmtVal(
-                      pickLatencyValue(rowMode, metric('tpot_ms'), metric('tpot_percentiles')),
-                      formatTtft,
-                    )} ms`,
-                  },
-                  {
-                    label: 'Batch',
-                    value: batch !== null ? batch.toFixed(1) : '--',
-                  },
-                ]
-              : undefined,
+            tiles: metric ? (
+              <div className="grid grid-cols-2 gap-1.5">
+                <MetricTile
+                  label="TTFT"
+                  value={fmtVal(value, formatTtft)}
+                  unit="ms"
+                  trend={computeTrend(series ? series(LATENCY_SERIES.ttft[rowMode]) : [])}
+                  invertTrend
+                />
+                <MetricTile
+                  label="E2E"
+                  value={e2eDisplay.value}
+                  unit={e2eDisplay.unit}
+                  trend={computeTrend(series ? series(LATENCY_SERIES.e2e[rowMode]) : [])}
+                  invertTrend
+                />
+                {supportsCapability(row.engine.engine_type, 'queueTime') && (
+                  <MetricTile
+                    label="Queue"
+                    value={fmtVal(metric('queue_time_ms'), formatTtft)}
+                    unit="ms"
+                    trend={computeTrend(series ? series('queueTime') : [])}
+                    invertTrend
+                  />
+                )}
+                <MetricTile
+                  label="ITL"
+                  value={fmtVal(
+                    pickLatencyValue(
+                      rowMode,
+                      metric('inter_token_latency_ms'),
+                      metric('itl_percentiles'),
+                    ),
+                    formatTtft,
+                  )}
+                  unit="ms"
+                  trend={computeTrend(series ? series(LATENCY_SERIES.itl[rowMode]) : [])}
+                  invertTrend
+                />
+                <MetricTile
+                  label="TPOT"
+                  value={fmtVal(
+                    pickLatencyValue(rowMode, metric('tpot_ms'), metric('tpot_percentiles')),
+                    formatTtft,
+                  )}
+                  unit="ms"
+                  trend={computeTrend(series ? series(LATENCY_SERIES.tpot[rowMode]) : [])}
+                  invertTrend
+                />
+                <MetricTile
+                  label="Batch"
+                  value={batch !== null ? batch.toFixed(1) : '--'}
+                  unit="/step"
+                  trend={computeTrend(series ? series('batchSize') : [])}
+                />
+              </div>
+            ) : undefined,
           }
         }}
       />

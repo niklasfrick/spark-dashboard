@@ -896,12 +896,19 @@ describe('engine panels on a page configured for all models', () => {
     // The rows carry the latest snapshot's figures...
     expect(within(panel).getByText('140.0 tok/s')).toBeInTheDocument()
     expect(within(panel).getByText('75.0 tok/s')).toBeInTheDocument()
-    // ...and the figures the single view tiles ride along under each
-    // headline, per engine: average, per-request and the lifetime total.
+    // ...and the single view's tiles ride under each headline, at full size
+    // and per engine: the live figure beside its lifetime total, then the
+    // average and the per-request average. Value and unit wear separate
+    // spans, as the tiles do in the single view.
+    expect(within(panel).getAllByText('Live')).toHaveLength(2)
+    expect(within(panel).getAllByText('Generated')).toHaveLength(2)
     expect(within(panel).getAllByText('Avg')).toHaveLength(2)
-    expect(within(panel).getAllByText('100.0 tok/s')).toHaveLength(2)
-    expect(within(panel).getAllByText('40.0 tok/s')).toHaveLength(2)
-    expect(within(panel).getAllByText('500K tok')).toHaveLength(2)
+    expect(within(panel).getAllByText('Per-Req Avg')).toHaveLength(2)
+    expect(within(panel).getAllByText('140.0')).toHaveLength(1)
+    expect(within(panel).getAllByText('75.0')).toHaveLength(1)
+    expect(within(panel).getAllByText('100.0')).toHaveLength(2)
+    expect(within(panel).getAllByText('40.0')).toHaveLength(2)
+    expect(within(panel).getAllByText('500K')).toHaveLength(2)
     // Each row trends its own engine's live line, not the other engine's.
     const values = within(panel)
       .getAllByTestId('chart-series-Decode throughput')
@@ -910,6 +917,41 @@ describe('engine panels on a page configured for all models', () => {
     // and the row's chart wears the single view's three lines.
     expect(within(panel).getAllByTestId('chart-series-Avg')).toHaveLength(2)
     expect(within(panel).getAllByTestId('chart-series-Per-req')).toHaveLength(2)
+  })
+
+  it('shows every throughput row the tiles the single view renders', async () => {
+    const fetchMock = serveConfiguration({
+      document: storedDocument(
+        [
+          { id: 'decode', type: 'engine-decode-throughput', geometry: { x: 0, y: 0, w: 6, h: 4 } },
+          { id: 'prefill', type: 'engine-prefill-throughput', geometry: { x: 6, y: 0, w: 6, h: 4 } },
+        ],
+        { kind: 'all' },
+      ),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, [makeEngine(ALPHA), llama()]))
+
+    // Both engines' rows in each panel wear the tiles the single view
+    // renders — the live figure beside the lifetime total, then the average
+    // and the per-request average: Generated on the decode row, Processed on
+    // the prefill row, each panel's own figures.
+    const decode = region('Decode Throughput')
+    expect(within(decode).getAllByText('Live')).toHaveLength(2)
+    expect(within(decode).getAllByText('Generated')).toHaveLength(2)
+    expect(within(decode).getAllByText('Avg')).toHaveLength(2)
+    expect(within(decode).getAllByText('Per-Req Avg')).toHaveLength(2)
+    expect(within(decode).getAllByText('500K')).toHaveLength(2)
+
+    const prefill = region('Prefill Throughput')
+    expect(within(prefill).getAllByText('Live')).toHaveLength(2)
+    expect(within(prefill).getAllByText('Processed')).toHaveLength(2)
+    expect(within(prefill).getAllByText('Avg')).toHaveLength(2)
+    expect(within(prefill).getAllByText('Per-Req Avg')).toHaveLength(2)
+    expect(within(prefill).getAllByText('1M')).toHaveLength(2)
+    expect(within(prefill).getAllByText('3000.0')).toHaveLength(2)
   })
 
   it('says why a row has no numbers instead of charting nothing', async () => {
@@ -963,12 +1005,14 @@ describe('engine panels on a page configured for all models', () => {
     // the row is the panel's home view on this host.
     expect(within(panel).getByText('1,500,000 tok')).toBeInTheDocument()
     expect(within(panel).getByText('3,000,000 tok')).toBeInTheDocument()
-    expect(within(panel).getAllByText('In')).toHaveLength(2)
-    expect(within(panel).getAllByText('2,000,000 tok')).toHaveLength(1)
-    expect(within(panel).getAllByText('Out')).toHaveLength(2)
-    // 1,000,000 tok appears twice — the vLLM row's input and the llama.cpp row's output.
-    expect(within(panel).getAllByText('1,000,000 tok')).toHaveLength(2)
-    expect(within(panel).getAllByText('500,000 tok')).toHaveLength(1)
+    // Each row tiles its two counters under the aggregate the way the single
+    // view does, so a row reads like a mini card rather than a bare number.
+    expect(within(panel).getAllByText('Input')).toHaveLength(2)
+    expect(within(panel).getAllByText('2,000,000')).toHaveLength(1)
+    expect(within(panel).getAllByText('Output')).toHaveLength(2)
+    // 1,000,000 appears twice — the vLLM row's input and the llama.cpp row's output.
+    expect(within(panel).getAllByText('1,000,000')).toHaveLength(2)
+    expect(within(panel).getAllByText('500,000')).toHaveLength(1)
     // Each row labels its aggregate the way the single view does, and a row
     // with nothing to chart wears no empty chart box under its figures.
     expect(within(panel).getAllByText('Total Tokens')).toHaveLength(2)

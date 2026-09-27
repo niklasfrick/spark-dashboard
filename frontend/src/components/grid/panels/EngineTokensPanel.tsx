@@ -27,8 +27,7 @@ export function EngineTokensPanel({ panel }: PanelContentProps) {
       <MultiEnginePanelBody
         seriesLabel="Total tokens"
         rows={rows.rows}
-        valueClass="text-xl xl:text-2xl 2xl:text-3xl min-[1920px]:text-4xl min-[2560px]:text-5xl"
-        statsClass="text-xs 2xl:text-sm min-[1920px]:text-base min-[2560px]:text-lg"
+        valueClass="text-4xl xl:text-5xl 2xl:text-6xl min-[1920px]:text-7xl min-[2560px]:text-8xl"
         pick={(row) => {
           const metric = row.metric
           if (!metric) return { value: null, unit: ' tok', data: [] }
@@ -43,13 +42,16 @@ export function EngineTokensPanel({ panel }: PanelContentProps) {
             // form hides the per-second motion the operator is watching for.
             displayValue: total === null ? undefined : `${formatExactTokens(total)} tok`,
             // The row's figure is the aggregate, named the way the single
-            // view labels it.
+            // view labels it, and it wears the single view's headline size —
+            // the In/Out tiles under it stay one step smaller, as there.
             valueLabel: 'Total Tokens',
             unit: ' tok',
-            stats: [
-              { label: 'In', value: `${formatExactTokens(input)} tok` },
-              { label: 'Out', value: `${formatExactTokens(output)} tok` },
-            ],
+            tiles: (
+              <div className="grid grid-cols-2 gap-1.5">
+                <TokenCounter label="Input" value={input} />
+                <TokenCounter label="Output" value={output} />
+              </div>
+            ),
             data: [],
           }
         }}
@@ -85,8 +87,9 @@ export function EngineTokensPanel({ panel }: PanelContentProps) {
 
 /** One cumulative token counter: its label, the exact figure and its unit.
  *  Exact rather than abbreviated — at 100M+ tokens the compact form hides
- *  the per-second motion, while the full figure ticks visibly. */
-function TokenCounter({ label, value, headline }: { label: string; value: number | null; headline?: boolean }) {
+ *  the per-second motion, while the full figure ticks visibly. Shared with
+ *  the row view, which wears the non-headline size for its In/Out figures. */
+export function TokenCounter({ label, value, headline }: { label: string; value: number | null; headline?: boolean }) {
   return (
     <div className="flex flex-col gap-0.5 min-w-0">
       <span className="text-xs 2xl:text-sm min-[1920px]:text-base font-medium uppercase tracking-wider truncate text-zinc-400">

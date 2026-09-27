@@ -33,20 +33,22 @@ export function EngineRequestsPanel({ panel }: PanelContentProps) {
             displayValue: metric ? fmtInt(metric('active_requests')) : undefined,
             unit: '',
             data: row.series ? row.series('activeRequests') : [],
-            // The counts the single view tiles beside Active; swapped and
-            // preempted appear only once they have happened, as there.
-            stats: metric
-              ? [
-                  { label: 'Queued', value: fmtInt(metric('queued_requests')) },
-                  { label: 'Total', value: fmtInt(metric('total_requests')) },
-                  ...(swapped !== null && swapped > 0
-                    ? [{ label: 'Swapped', value: fmtInt(swapped) }]
-                    : []),
-                  ...(preemptions !== null && preemptions > 0
-                    ? [{ label: 'Preempt', value: fmtInt(preemptions) }]
-                    : []),
-                ]
-              : undefined,
+            // The counts the single view tiles beside Active, at full size;
+            // swapped and preempted appear only once they have happened, as
+            // there.
+            tiles: metric ? (
+              <div className="grid grid-cols-2 gap-1.5">
+                <MetricTile label="Active" value={fmtInt(metric('active_requests'))} />
+                <MetricTile label="Queued" value={fmtInt(metric('queued_requests'))} />
+                <MetricTile label="Total" value={fmtInt(metric('total_requests'))} />
+                {swapped !== null && swapped > 0 && (
+                  <MetricTile label="Swapped" value={fmtInt(swapped)} warn />
+                )}
+                {preemptions !== null && preemptions > 0 && (
+                  <MetricTile label="Preempt" value={fmtInt(preemptions)} warn />
+                )}
+              </div>
+            ) : undefined,
           }
         }}
       />
