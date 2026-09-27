@@ -27,8 +27,6 @@ export function EngineTokensPanel({ panel }: PanelContentProps) {
       <MultiEnginePanelBody
         seriesLabel="Total tokens"
         rows={rows.rows}
-        valueClass="text-4xl xl:text-5xl 2xl:text-6xl min-[1920px]:text-7xl min-[2560px]:text-8xl"
-        valueColorClass="text-[#76B900]"
         pick={(row) => {
           const metric = row.metric
           if (!metric) return { value: null, unit: ' tok', data: [] }
@@ -39,18 +37,31 @@ export function EngineTokensPanel({ panel }: PanelContentProps) {
           const total = input !== null && output !== null ? input + output : null
           return {
             value: total,
-            // Exact figures, not compact: at 100M+ tokens the abbreviated
-            // form hides the per-second motion the operator is watching for.
-            displayValue: total === null ? undefined : `${formatExactTokens(total)} tok`,
-            // The row's figure is the aggregate, named the way the single
-            // view labels it, and it wears the single view's headline size —
-            // the In/Out tiles under it stay one step smaller, as there.
-            valueLabel: 'Total Tokens',
+            // The total wears a row of its own beside Input and Output — the
+            // shape the single view stacks it into — at half the single view's
+            // size, and it is no longer the row's headline figure.
+            hideValue: true,
             unit: ' tok',
             tiles: (
               <div className="flex flex-col gap-1.5">
-                <TokenCounter label="Input" value={input} valueColor="text-[#3b82f6]" />
-                <TokenCounter label="Output" value={output} valueColor="text-[#a855f7]" />
+                <TokenCounter
+                  label="Input"
+                  value={input}
+                  valueColor="text-[#3b82f6]"
+                  valueClass={ROW_TOKEN_SIZE}
+                />
+                <TokenCounter
+                  label="Output"
+                  value={output}
+                  valueColor="text-[#a855f7]"
+                  valueClass={ROW_TOKEN_SIZE}
+                />
+                <TokenCounter
+                  label="Total Tokens"
+                  value={total}
+                  valueColor="text-[#76B900]"
+                  valueClass={ROW_TOKEN_SIZE}
+                />
               </div>
             ),
             data: [],
@@ -91,18 +102,32 @@ export function EngineTokensPanel({ panel }: PanelContentProps) {
  *  for a panel whose content is the figures; the figure itself carries the
  *  counter's colour. Shared with the row view, which wears the non-headline
  *  size for its In/Out figures. */
+
+/** The row view's counter figures at half the single view's tile size —
+ *  30/36/48/60/72px halved, on the nearest Tailwind step (15→16). */
+const ROW_TOKEN_SIZE =
+  'text-base xl:text-lg 2xl:text-2xl min-[1920px]:text-3xl min-[2560px]:text-4xl'
+
 export function TokenCounter({
   label,
   value,
   headline,
   valueColor,
+  valueClass,
 }: {
   label: string
   value: number | null
   headline?: boolean
   /** The figure's colour — each counter is named by its number. */
   valueColor?: string
+  /** Replaces the counter's default size — the row view wears half size. */
+  valueClass?: string
 }) {
+  const sizeClass =
+    valueClass ??
+    (headline
+      ? 'text-4xl xl:text-5xl 2xl:text-6xl min-[1920px]:text-7xl min-[2560px]:text-8xl'
+      : 'text-3xl xl:text-4xl 2xl:text-5xl min-[1920px]:text-6xl min-[2560px]:text-7xl')
   return (
     <div className="flex flex-col gap-0.5 min-w-0">
       <span className="text-xs 2xl:text-sm min-[1920px]:text-base font-medium uppercase tracking-wider truncate text-zinc-400">
@@ -112,11 +137,7 @@ export function TokenCounter({
         <AnimatedCounter
           value={value}
           format={formatExactTokens}
-          className={`${
-            headline
-              ? 'text-4xl xl:text-5xl 2xl:text-6xl min-[1920px]:text-7xl min-[2560px]:text-8xl'
-              : 'text-3xl xl:text-4xl 2xl:text-5xl min-[1920px]:text-6xl min-[2560px]:text-7xl'
-          } font-bold font-mono tabular-nums leading-none truncate ${valueColor ?? 'text-zinc-100'}`}
+          className={`${sizeClass} font-bold font-mono tabular-nums leading-none truncate ${valueColor ?? 'text-zinc-100'}`}
         />
         <span className="text-xs 2xl:text-sm min-[1920px]:text-base ml-1.5 text-zinc-500">tok</span>
       </div>

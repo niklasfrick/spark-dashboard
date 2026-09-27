@@ -1001,20 +1001,22 @@ describe('engine panels on a page configured for all models', () => {
 
     const panel = region('Tokens')
     // The vLLM row sums its own two counters (1M + 500K), never the other
-    // engine's; the llama.cpp row sums to 3M. Exact figures, not compact —
-    // the row is the panel's home view on this host.
-    expect(within(panel).getByText('1,500,000 tok')).toBeInTheDocument()
-    expect(within(panel).getByText('3,000,000 tok')).toBeInTheDocument()
-    // Each row tiles its two counters under the aggregate the way the single
-    // view does, so a row reads like a mini card rather than a bare number.
+    // engine's; the llama.cpp row sums to 3M. Each total appears exactly once,
+    // as a row beside its Input and Output — the headline that used to carry
+    // it is gone from the row's header. Exact figures, not compact — the row
+    // is the panel's home view on this host.
+    expect(within(panel).getByText('1,500,000')).toBeInTheDocument()
+    expect(within(panel).getByText('3,000,000')).toBeInTheDocument()
+    // Each row stacks its three counters the way the single view does, so a
+    // row reads like a mini card rather than a bare number.
     expect(within(panel).getAllByText('Input')).toHaveLength(2)
     expect(within(panel).getAllByText('2,000,000')).toHaveLength(1)
     expect(within(panel).getAllByText('Output')).toHaveLength(2)
     // 1,000,000 appears twice — the vLLM row's input and the llama.cpp row's output.
     expect(within(panel).getAllByText('1,000,000')).toHaveLength(2)
     expect(within(panel).getAllByText('500,000')).toHaveLength(1)
-    // Each row labels its aggregate the way the single view does, and a row
-    // with nothing to chart wears no empty chart box under its figures.
+    // Total Tokens is a counter of its own, labelled like the single view,
+    // and a row with nothing to chart wears no empty chart box under its figures.
     expect(within(panel).getAllByText('Total Tokens')).toHaveLength(2)
     expect(within(panel).queryAllByTestId('chart')).toHaveLength(0)
   })
