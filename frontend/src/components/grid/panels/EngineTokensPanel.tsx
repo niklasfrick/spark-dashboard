@@ -28,7 +28,7 @@ export function EngineTokensPanel({ panel }: PanelContentProps) {
         seriesLabel="Total tokens"
         rows={rows.rows}
         valueClass="text-4xl xl:text-5xl 2xl:text-6xl min-[1920px]:text-7xl min-[2560px]:text-8xl"
-        valueLabelClass="text-[#76B900]"
+        valueColorClass="text-[#76B900]"
         pick={(row) => {
           const metric = row.metric
           if (!metric) return { value: null, unit: ' tok', data: [] }
@@ -49,8 +49,8 @@ export function EngineTokensPanel({ panel }: PanelContentProps) {
             unit: ' tok',
             tiles: (
               <div className="flex flex-col gap-1.5">
-                <TokenCounter label="Input" value={input} labelClass="text-[#3b82f6]" />
-                <TokenCounter label="Output" value={output} labelClass="text-[#a855f7]" />
+                <TokenCounter label="Input" value={input} valueColor="text-[#3b82f6]" />
+                <TokenCounter label="Output" value={output} valueColor="text-[#a855f7]" />
               </div>
             ),
             data: [],
@@ -75,9 +75,9 @@ export function EngineTokensPanel({ panel }: PanelContentProps) {
         // No chart, so the counters own the whole box: one per row, centered
         // in it and set large enough to read across the room.
         <div className="flex h-full min-w-0 flex-col justify-center gap-2 2xl:gap-3">
-          <TokenCounter label="Input" value={input} labelClass="text-[#3b82f6]" />
-          <TokenCounter label="Output" value={output} labelClass="text-[#a855f7]" />
-          <TokenCounter label="Total Tokens" value={total} headline labelClass="text-[#76B900]" />
+          <TokenCounter label="Input" value={input} valueColor="text-[#3b82f6]" />
+          <TokenCounter label="Output" value={output} valueColor="text-[#a855f7]" />
+          <TokenCounter label="Total Tokens" value={total} headline valueColor="text-[#76B900]" />
         </div>
       }
     />
@@ -86,23 +86,26 @@ export function EngineTokensPanel({ panel }: PanelContentProps) {
 
 /** One cumulative token counter: its label, the exact figure and its unit.
  *  Exact rather than abbreviated — at 100M+ tokens the compact form hides
- *  the per-second motion, while the full figure ticks visibly. Shared with
- *  the row view, which wears the non-headline size for its In/Out figures. */
+ *  the per-second motion, while the full figure ticks visibly. The label
+ *  keeps the KPI name's light grey, one step larger than the other panels'
+ *  for a panel whose content is the figures; the figure itself carries the
+ *  counter's colour. Shared with the row view, which wears the non-headline
+ *  size for its In/Out figures. */
 export function TokenCounter({
   label,
   value,
   headline,
-  labelClass,
+  valueColor,
 }: {
   label: string
   value: number | null
   headline?: boolean
-  /** The label's colour — the panel names each counter, the figure stays white. */
-  labelClass?: string
+  /** The figure's colour — each counter is named by its number. */
+  valueColor?: string
 }) {
   return (
     <div className="flex flex-col gap-0.5 min-w-0">
-      <span className={`text-xs 2xl:text-sm min-[1920px]:text-base font-medium uppercase tracking-wider truncate ${labelClass ?? 'text-zinc-400'}`}>
+      <span className="text-xs 2xl:text-sm min-[1920px]:text-base font-medium uppercase tracking-wider truncate text-zinc-400">
         {label}
       </span>
       <div className="flex items-baseline min-w-0">
@@ -113,7 +116,7 @@ export function TokenCounter({
             headline
               ? 'text-4xl xl:text-5xl 2xl:text-6xl min-[1920px]:text-7xl min-[2560px]:text-8xl'
               : 'text-3xl xl:text-4xl 2xl:text-5xl min-[1920px]:text-6xl min-[2560px]:text-7xl'
-          } font-bold font-mono tabular-nums leading-none text-zinc-100 truncate`}
+          } font-bold font-mono tabular-nums leading-none truncate ${valueColor ?? 'text-zinc-100'}`}
         />
         <span className="text-xs 2xl:text-sm min-[1920px]:text-base ml-1.5 text-zinc-500">tok</span>
       </div>

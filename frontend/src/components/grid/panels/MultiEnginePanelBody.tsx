@@ -43,7 +43,7 @@ export interface MultiEngineRowValue {
  * Rows size to their own content — header, tiles, chart — rather than
  * splitting the panel evenly: a tile block no longer divides a fixed row
  * cleanly, and the chart's fixed height is what keeps the rows aligned.
- * `valueClass` and `valueLabelClass` let a figure-only panel (tokens) wear
+ * `valueClass` and `valueColorClass` let a figure-only panel (tokens) wear
  * bigger, named numbers than the row chrome's compact defaults; panels that
  * chart leave them unset and get the sizes every row has always worn.
  */
@@ -52,13 +52,13 @@ export function MultiEnginePanelBody({
   pick,
   seriesLabel,
   valueClass,
-  valueLabelClass,
+  valueColorClass,
 }: {
   rows: EngineRowTarget[]
   pick: (row: EngineRowTarget) => MultiEngineRowValue
   seriesLabel: string
   valueClass?: string
-  valueLabelClass?: string
+  valueColorClass?: string
 }) {
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col gap-1.5 overflow-hidden">
@@ -97,10 +97,10 @@ export function MultiEnginePanelBody({
                 </span>
               </span>
               <span
-                className={`shrink-0 font-semibold tabular-nums text-zinc-100 ${valueClass ?? 'text-sm'}`}
+                className={`shrink-0 font-semibold tabular-nums ${valueColorClass ?? 'text-zinc-100'} ${valueClass ?? 'text-sm'}`}
               >
                 {value.valueLabel && (
-                  <span className={`mr-1 text-[10px] font-normal ${valueLabelClass ?? 'text-zinc-500'}`}>
+                  <span className="mr-1 text-[10px] font-normal text-zinc-500">
                     {value.valueLabel}
                   </span>
                 )}
