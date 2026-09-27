@@ -22,7 +22,7 @@ sudo ~/.cargo/bin/spark-dashboard service install
 systemctl status spark-dashboard
 ```
 
-The dashboard is now served on port 4000 (the default was 3000; override
+The dashboard is now served on port 3000 (override
 with `SPARK_DASHBOARD_PORT` or `--port`). See [Install on your Linux host](#install-on-your-linux-host-1)
 for the full guide, config overrides, and uninstall.
 
@@ -32,7 +32,7 @@ Prefer containers? Run the published multi-arch image (needs the
 [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)):
 
 ```bash
-docker run --rm --gpus all --pid=host -p 4000:4000 \
+docker run --rm --gpus all --pid=host -p 3000:3000 \
   -v /var/run/docker.sock:/var/run/docker.sock:ro \
   -v spark-dashboard-state:/var/lib/spark-dashboard \
   --group-add "$(getent group docker | cut -d: -f3)" \
@@ -178,7 +178,7 @@ cp dev/.env.example .env
 | `DEPLOY_USER`      | SSH user on the remote host (required)                                               |
 | `DEPLOY_HOST`      | Hostname or IP of the remote host (required)                                         |
 | `DEPLOY_DIR`       | Project path on the remote host, relative to remote home (default `spark-dashboard`) |
-| `VITE_BACKEND_URL` | Where Vite proxies `/ws` and `/api` (default `http://localhost:4000`)                |
+| `VITE_BACKEND_URL` | Where Vite proxies `/ws` and `/api` (default `http://localhost:3000`)                |
 
 Legacy `SPARK_USER` / `SPARK_HOST` / `SPARK_DIR` are still accepted as a
 fallback when `DEPLOY_*` are unset — `dev.sh` prints a one-line deprecation
@@ -245,7 +245,7 @@ Optional overrides live in `/etc/spark-dashboard/config.env` — set
 `SPARK_DASHBOARD_PROVIDER_API_KEY`, or `RUST_LOG`, then
 `sudo systemctl restart spark-dashboard`.
 
-To change the port default itself (currently `4000`), edit `default_value_t`
+To change the port default itself (currently `3000`), edit `default_value_t`
 in `src/main.rs` — the `run` and `healthcheck` subcommands each carry one —
 or keep the default and override per deployment via `SPARK_DASHBOARD_PORT`
 (host: `/etc/spark-dashboard/config.env`, Docker: the compose `.env`).
@@ -281,7 +281,7 @@ spark-dashboard service install [--prefix /usr/local]
 spark-dashboard service uninstall [--purge]
 spark-dashboard service status
 
-  -p, --port <PORT>           Listen port [default: 4000] [env: SPARK_DASHBOARD_PORT]
+  -p, --port <PORT>           Listen port [default: 3000] [env: SPARK_DASHBOARD_PORT]
   -b, --bind <BIND>           Bind address [default: 0.0.0.0] [env: SPARK_DASHBOARD_BIND]
       --poll-interval <MS>    Polling interval ms [default: 1000] [env: SPARK_DASHBOARD_POLL_INTERVAL]
       --state-dir <DIR>       Directory for saved state [default: /var/lib/spark-dashboard] [env: SPARK_DASHBOARD_STATE_DIR]
@@ -373,9 +373,9 @@ instead of pretending a save succeeded. A write that fails for some other
 reason — a full disk, say — returns `500` and leaves the header `false`.
 
 ```bash
-curl -i localhost:4000/api/dashboard                       # read
-curl -X PUT localhost:4000/api/dashboard -d '{"pages":[]}' # save
-curl -X DELETE localhost:4000/api/dashboard                # reset
+curl -i localhost:3000/api/dashboard                       # read
+curl -X PUT localhost:3000/api/dashboard -d '{"pages":[]}' # save
+curl -X DELETE localhost:3000/api/dashboard                # reset
 ```
 
 Unmatched paths under `/api` return `404` rather than the app shell.
@@ -517,8 +517,8 @@ the host, in `.env`, or on the CLI.
   the server keeps the stored token instead.
 
 ```
-curl -s localhost:4000/api/export-status              # exporter state
-curl -s -X POST localhost:4000/api/export/test \
+curl -s localhost:3000/api/export-status              # exporter state
+curl -s -X POST localhost:3000/api/export/test \
   -H 'Content-Type: application/json' -d '{}'         # one-off connectivity event
 ```
 
@@ -545,7 +545,7 @@ The script handles everything:
 
 1. **Syncs** the full project to the remote host via rsync
 2. **Builds** the Rust backend on the remote host (`cargo build --release`)
-3. **Starts** the backend on the remote host (port 4000)
+3. **Starts** the backend on the remote host (port 3000)
 4. **Starts** the Vite dev server locally (port 5173)
 5. **Watches** `src/` and `Cargo.toml` for Rust changes — auto-syncs and rebuilds on the remote host
 
@@ -565,19 +565,19 @@ ssh "${DEPLOY_USER}@${DEPLOY_HOST}" tail -f /tmp/spark-dashboard.log
 
 ### How the proxy works
 
-By default, Vite proxies `/ws` and `/api` to `localhost:4000` — this works out
-of the box with any SSH tunnel that maps the remote host's port 4000 to your
+By default, Vite proxies `/ws` and `/api` to `localhost:3000` — this works out
+of the box with any SSH tunnel that maps the remote host's port 3000 to your
 local machine.
 
 ```
-Browser → localhost:5173/ws  → Vite proxy → localhost:4000/ws (forwarded to remote)
-Browser → localhost:5173/api → Vite proxy → localhost:4000/api (forwarded to remote)
+Browser → localhost:5173/ws  → Vite proxy → localhost:3000/ws (forwarded to remote)
+Browser → localhost:5173/api → Vite proxy → localhost:3000/api (forwarded to remote)
 ```
 
 To connect directly over the network instead, set in `.env`:
 
 ```bash
-VITE_BACKEND_URL=http://${DEPLOY_HOST}:4000
+VITE_BACKEND_URL=http://${DEPLOY_HOST}:3000
 ```
 
 The frontend connects to the WebSocket using `window.location.host`, so the

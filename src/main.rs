@@ -69,7 +69,7 @@ struct HealthcheckArgs {
         short = 'p',
         long,
         env = "SPARK_DASHBOARD_PORT",
-        default_value_t = 4000
+        default_value_t = 3000
     )]
     port: u16,
 }
@@ -81,7 +81,7 @@ struct RunArgs {
         short = 'p',
         long,
         env = "SPARK_DASHBOARD_PORT",
-        default_value_t = 4000
+        default_value_t = 3000
     )]
     port: u16,
 
