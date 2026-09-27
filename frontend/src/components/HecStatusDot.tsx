@@ -8,10 +8,9 @@ const LIGHT_CLASS = {
 } as const
 
 /**
- * The Splunk export status indicator in the app header, next to the vLLM
- * connection badge. Polls at 10 s for as long as the app is open (ADR 0001):
- * green reachable, red down, gray not configured. Styled to match
- * `ConnectionBadge` so the two header indicators read as a pair.
+ * The Splunk export status indicator in the app header, beside the engine
+ * status strip. Polls at 10 s for as long as the app is open (ADR 0001):
+ * green reachable, red down, gray not configured.
  */
 export function HecStatusDot() {
   const status = useExportStatus(10_000, true)

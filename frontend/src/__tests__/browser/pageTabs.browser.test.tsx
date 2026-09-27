@@ -124,7 +124,7 @@ describe('the page tabs in a real layout engine', () => {
   })
 
   it('names the page on the menu button when the header fits no tab at all', async () => {
-    // A phone: the masthead and the connection badge leave the strip almost
+    // A phone: the masthead and the header indicators leave the strip almost
     // nothing. A tab sliced by the clip edge would claim to say where the
     // operator is and fail, so the button says it instead.
     render(<Harness width={90} list={pages(4)} activePageId="page-2" />)

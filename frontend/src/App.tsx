@@ -27,7 +27,7 @@ import type { DashboardDocument, DashboardPage, DashboardPanel } from './lib/das
  * however many panels the page holds.
  */
 function DashboardPageView({ pageId }: { pageId: string | null }) {
-  const { metrics, connectionStatus, isStale } = useMetrics()
+  const { metrics } = useMetrics()
   useMetricsIngest(metrics)
   const { document, notices: configurationNotices, readOnly, save, reset } =
     useDashboardConfiguration()
@@ -70,8 +70,6 @@ function DashboardPageView({ pageId }: { pageId: string | null }) {
   return (
     <div className="h-dvh flex flex-col bg-[#08080a] overflow-hidden">
       <AppHeader
-        status={connectionStatus}
-        isStale={isStale}
         pages={
           document && (
             <PageBar
