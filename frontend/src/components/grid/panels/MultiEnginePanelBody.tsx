@@ -1,0 +1,143 @@
+import type { ReactNode } from 'react'
+import { TimeSeriesChart } from '@/components/charts/TimeSeriesChart'
+import { engineDisplayName, engineIconSrc, formatEndpoint, shortModelName } from '@/lib/format'
+import { readEngineLabel } from '@/lib/engineLabelStore'
+import { getProviderLogo } from '@/lib/providerLogo'
+import { engineKey } from '@/lib/identity'
+import type { DataPoint } from '@/lib/metricsHistoryStore'
+import { EngineChip, ProviderMark } from './engineIdentity'
+import type { EngineRowTarget } from './useEnginePanel'
+
+/** What one row's pick supplies: the row's headline figure and its line. */
+export interface MultiEngineRowValue {
+  value: number | null
+  /** The big number to show (defaults to `value` + `unit`). */
+  displayValue?: string
+  unit: string
+  /** Drops the row's headline figure — the panel's figure-only view wears
+   *  its numbers as rows in `tiles` instead, so the header is identity.
+   *  The tokens panel, where the total rides beside its Input/Output rows. */
+  hideValue?: boolean
+  /** Names the metric beside the value, for a row that may show one of
+   *  several (cache: KV versus prefix hit). */
+  valueLabel?: string
+  /** Replaces the row's `note` — e.g. a serving engine this panel has no
+   *  number for. */
+  note?: string
+  /** Extra lines the row's chart wears beside the primary one, the way the
+   *  single view wears avg and per-request beside live. */
+  series?: { data: DataPoint[]; label: string; color: string }[]
+  /** The figures the single view tiles beside the headline, at full tile size
+   *  — the same block the panel's single view renders, parameterised on the
+   *  row's metric and series, so a row reads like a mini version of the
+   *  single-engine card. */
+  tiles?: ReactNode
+  yDomain?: [number, number]
+  data: DataPoint[]
+}
+
+/**
+ * The all-models body a panel renders for a page configured for every engine:
+ * one labelled row per engine, each with its value and its own trend — the
+ * engine counterpart of `MultiGpuPanelBody`. Rows (not columns) so a wide
+ * panel gives every engine a full-width chart instead of N cramped
+ * side-by-side ones. A row whose engine cannot serve numbers shows its reason
+ * instead of a chart, so a starting engine reads as starting.
+ *
+ * Rows size to their own content — header, tiles, chart — rather than
+ * splitting the panel evenly: a tile block no longer divides a fixed row
+ * cleanly, and the chart's fixed height is what keeps the rows aligned.
+ */
+export function MultiEnginePanelBody({
+  rows,
+  pick,
+  seriesLabel,
+}: {
+  rows: EngineRowTarget[]
+  pick: (row: EngineRowTarget) => MultiEngineRowValue
+  seriesLabel: string
+}) {
+  return (
+    <div className="flex h-full min-h-0 min-w-0 flex-col gap-1.5 overflow-hidden">
+      {rows.map((row) => {
+        const value = pick(row)
+        const display = value.displayValue ?? (value.value === null ? '—' : `${value.value}${value.unit}`)
+        const note = value.note ?? row.note
+        const { engine } = row
+        const key = engineKey(engine)
+        const label =
+          readEngineLabel(key) ??
+          (engine.model?.name ? shortModelName(engine.model.name) : null) ??
+          engineDisplayName(engine.engine_type)
+        const logo = getProviderLogo(engine.model?.name)
+
+        return (
+          <div key={key} className="flex min-h-0 min-w-0 flex-col gap-0.5">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="flex min-w-0 items-center gap-1.5">
+                {logo && <ProviderMark logo={logo} />}
+                <EngineChip
+                  label={engineDisplayName(engine.engine_type)}
+                  iconSrc={engineIconSrc(engine.engine_type)}
+                />
+                <span
+                  className="truncate text-[11px] font-medium text-zinc-400"
+                  title={engine.model?.name ?? engine.endpoint}
+                >
+                  {label}
+                </span>
+                <span
+                  className="truncate text-[10px] text-zinc-600"
+                  title={engine.endpoint}
+                >
+                  {formatEndpoint(engine.endpoint)}
+                </span>
+              </span>
+              {!value.hideValue && (
+                <span className="shrink-0 text-sm font-semibold tabular-nums text-zinc-100">
+                  {value.valueLabel && (
+                    <span className="mr-1 text-[10px] font-normal text-zinc-500">
+                      {value.valueLabel}
+                    </span>
+                  )}
+                  {display}
+                </span>
+              )}
+            </div>
+            {value.tiles}
+            {note ? (
+              <p className="px-1 text-[11px] leading-snug text-zinc-500">{note}</p>
+            ) : (
+              // A row with no note, no line and no points has nothing a chart
+              // box could show — the empty box would be dead space under the
+              // figures (the token rows, the spec-decoding rows).
+              (((value.series?.length ?? 0) > 0 || value.data.length > 0) && (
+                <div className="h-20 min-w-0">
+                  {value.series && value.series.length > 0 ? (
+                    <TimeSeriesChart
+                      series={[
+                        { data: value.data, label: seriesLabel, color: '#76B900' },
+                        ...value.series,
+                      ]}
+                      unit={value.unit}
+                      yDomain={value.yDomain}
+                      hideTooltipLabel
+                    />
+                  ) : (
+                    <TimeSeriesChart
+                      data={value.data}
+                      unit={value.unit}
+                      yDomain={value.yDomain}
+                      seriesLabel={seriesLabel}
+                      hideTooltipLabel
+                    />
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}

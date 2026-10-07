@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react'
+import { Settings } from 'lucide-react'
 import { useDashboardConfiguration } from './hooks/useDashboardConfiguration'
 import { useMetrics } from './hooks/useMetrics'
 import { useMetricsIngest } from './hooks/useMetricsIngest'
@@ -7,6 +8,9 @@ import { LogStreamProvider } from './hooks/LogStreamProvider'
 import { MetricsStoreProvider } from './hooks/MetricsStoreProvider'
 import { AppHeader } from './components/AppHeader'
 import { ConfigurationNotices } from './components/ConfigurationNotices'
+import { ExportSettingsDialog } from './components/ExportSettingsDialog'
+import { EngineStatusStrip } from './components/EngineStatusStrip'
+import { HecStatusDot } from './components/HecStatusDot'
 import { GridPageEditor } from './components/grid/GridPageEditor'
 import { PageBar } from './components/pages/PageBar'
 import { withPagePanels } from './lib/dashboard/editing'
@@ -23,7 +27,7 @@ import type { DashboardDocument, DashboardPage, DashboardPanel } from './lib/das
  * however many panels the page holds.
  */
 function DashboardPageView({ pageId }: { pageId: string | null }) {
-  const { metrics, connectionStatus, isStale } = useMetrics()
+  const { metrics } = useMetrics()
   useMetricsIngest(metrics)
   const { document, notices: configurationNotices, readOnly, save, reset } =
     useDashboardConfiguration()
@@ -31,6 +35,7 @@ function DashboardPageView({ pageId }: { pageId: string | null }) {
   // it: switching pages unmounts the session, so the page list holds still for
   // as long as there is unsaved work in it.
   const [editing, setEditing] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   // Null document means the load has not resolved; rendering nothing beats
   // flashing the preset past an operator whose real page is milliseconds away.
@@ -65,8 +70,6 @@ function DashboardPageView({ pageId }: { pageId: string | null }) {
   return (
     <div className="h-dvh flex flex-col bg-[#08080a] overflow-hidden">
       <AppHeader
-        status={connectionStatus}
-        isStale={isStale}
         pages={
           document && (
             <PageBar
@@ -82,6 +85,29 @@ function DashboardPageView({ pageId }: { pageId: string | null }) {
             />
           )
         }
+        trailing={
+          <>
+            <EngineStatusStrip />
+            <HecStatusDot />
+            <button
+              type="button"
+              aria-label="Settings"
+              title="Settings"
+              onClick={() => setSettingsOpen(true)}
+              className="rounded-md p-1.5 text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-200"
+            >
+              <Settings size={16} />
+            </button>
+          </>
+        }
+      />
+
+      <ExportSettingsDialog
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        document={document}
+        readOnly={readOnly}
+        save={save}
       />
 
       <ConfigurationNotices notices={configurationNotices} />

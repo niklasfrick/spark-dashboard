@@ -7,7 +7,8 @@ import type { EngineSeriesName } from '@/lib/metricsHistoryStore'
 import { EnginePanelBody } from './EnginePanelBody'
 import { engineIdentity } from './engineLabel'
 import { EnginePanelNotice } from './PanelNotice'
-import { useEnginePanel } from './useEnginePanel'
+import { MultiEnginePanelBody } from './MultiEnginePanelBody'
+import { useEnginePanel, useEngineRows } from './useEnginePanel'
 import type { PanelContentProps } from '../panelRegistry'
 
 /**
@@ -23,6 +24,8 @@ interface ThroughputFields {
   total: NumericEngineMetric
   /** What the cumulative total counts, as the tile labels it. */
   totalLabel: string
+  /** The panel's row-view caption, one per engine on an all-models page. */
+  rowLabel: string
   series: { live: EngineSeriesName; average: EngineSeriesName; perRequest: EngineSeriesName }
 }
 
@@ -32,6 +35,7 @@ const PREFILL: ThroughputFields = {
   perRequest: 'per_request_prompt_tps',
   total: 'total_prompt_tokens',
   totalLabel: 'Processed',
+  rowLabel: 'Prompt throughput',
   series: { live: 'promptTps', average: 'avgPromptTps', perRequest: 'perReqPromptTps' },
 }
 
@@ -41,6 +45,7 @@ const DECODE: ThroughputFields = {
   perRequest: 'per_request_tps',
   total: 'total_generation_tokens',
   totalLabel: 'Generated',
+  rowLabel: 'Decode throughput',
   series: { live: 'tps', average: 'avgTps', perRequest: 'perReqTps' },
 }
 
@@ -55,7 +60,66 @@ export function EngineDecodeThroughputPanel({ panel }: PanelContentProps) {
 }
 
 function ThroughputPanel({ panel, fields }: PanelContentProps & { fields: ThroughputFields }) {
+  const rows = useEngineRows(panel)
   const resolution = useEnginePanel(panel)
+  if (rows.status === 'rows') {
+    // One row per engine, each on its own live figure and trend line — the
+    // combined figure the panel wore on an all-models page is gone.
+    return (
+      <MultiEnginePanelBody
+        seriesLabel={fields.rowLabel}
+        rows={rows.rows}
+        pick={(row) => {
+          const metric = row.metric
+          // The figures the single view tiles, at full size: live up top with
+          // the lifetime total beside it, the average and per-request under —
+          // the same block the single view renders, over this row's engine.
+          // The row's chart wears the single view's three lines.
+          return {
+            value: metric ? metric(fields.live) : null,
+            displayValue: metric
+              ? `${fmtVal(metric(fields.live), formatTps)} tok/s`
+              : undefined,
+            unit: 'tok/s',
+            data: row.series ? row.series(fields.series.live) : [],
+            tiles: metric ? (
+              <div className="grid grid-cols-1 gap-1.5">
+                <LiveWithTotal
+                  liveValue={fmtVal(metric(fields.live), formatTps)}
+                  liveUnit="tok/s"
+                  trend={computeTrend(row.series ? row.series(fields.series.live) : [])}
+                  totalLabel={fields.totalLabel}
+                  total={metric(fields.total)}
+                />
+                <div className="grid grid-cols-2 gap-x-1.5">
+                  <MetricTile
+                    label="Avg"
+                    value={fmtVal(metric(fields.average), formatTps)}
+                    unit="tok/s"
+                    trend={computeTrend(row.series ? row.series(fields.series.average) : [])}
+                  />
+                  <MetricTile
+                    label="Per-Req Avg"
+                    value={fmtVal(metric(fields.perRequest), formatTps)}
+                    unit="tok/s"
+                    trend={computeTrend(
+                      row.series ? row.series(fields.series.perRequest) : [],
+                    )}
+                  />
+                </div>
+              </div>
+            ) : undefined,
+            series: row.series
+              ? [
+                  { data: row.series(fields.series.average), label: 'Avg', color: '#3b82f6' },
+                  { data: row.series(fields.series.perRequest), label: 'Per-req', color: '#a855f7' },
+                ]
+              : undefined,
+          }
+        }}
+      />
+    )
+  }
   if (resolution.status !== 'resolved' && resolution.status !== 'aggregate') {
     return <EnginePanelNotice resolution={resolution} />
   }

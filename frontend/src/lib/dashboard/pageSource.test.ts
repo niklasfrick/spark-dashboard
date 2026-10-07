@@ -59,8 +59,8 @@ describe('pageSourceChoices', () => {
 
     expect(value).toBe('auto')
     expect(choices.map((choice) => choice.label)).toEqual([
-      'Automatic — first serving model',
-      'All models — combined',
+      'Automatic — host default',
+      'All models — one row each',
       'Qwen3-8B — vLLM localhost:8000',
       'No model loaded — vLLM localhost:8001',
     ])

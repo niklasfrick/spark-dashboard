@@ -1,6 +1,6 @@
 import { Settings2, X } from 'lucide-react'
 import { useState } from 'react'
-import { isKnownPanelType } from '@/lib/dashboard/panels'
+import { isKnownPanelType, panelSpec } from '@/lib/dashboard/panels'
 import { panelTitle, type DashboardPanel } from '@/lib/dashboard/schema'
 import { PanelDeviceContext } from './panelDevice'
 import { renderPanelContent } from './panelRegistry'
@@ -34,6 +34,9 @@ export function GridPanel({
   onRemove?: () => void
 }) {
   const title = panelTitle(panel)
+  // Declared by the panel type, not the document: a document can rename a
+  // panel but not change what kind of thing it is.
+  const bigTitle = isKnownPanelType(panel.type) && panelSpec(panel.type).bigTitle === true
   // Reported up by the content, which is the only thing that knows what its
   // binding resolved to — see `panelDevice`.
   const [device, setDevice] = useState<string | null>(null)
@@ -46,7 +49,11 @@ export function GridPanel({
       } ${editing ? (configuring ? 'border-[#76B900]' : 'border-[#76B900]/40') : 'border-white/[0.04]'}`}
     >
       <div className="shrink-0 flex items-center gap-1">
-        <h3 className="shrink-0 text-[11px] font-semibold text-zinc-200 truncate">{title}</h3>
+        <h3
+          className={`shrink-0 font-semibold text-zinc-200 truncate ${bigTitle ? 'text-base 2xl:text-lg' : 'text-[11px]'}`}
+        >
+          {title}
+        </h3>
         {/* The hardware, beside the name of the metric — the title never gives
             up room for it, and it truncates away to nothing on a panel too
             narrow to hold both. The separator sits inside the span so the two

@@ -65,18 +65,23 @@ export function defaultDashboardDocument(): DashboardDocument {
           // Decode throughput is the number an operator quotes for an
           // inference host, so it leads the page at double width; latency and
           // the request queue are what explain it when it drops.
-          panel('decode', 'engine-decode-throughput', { x: 0, y: 0, w: 6, h: 3 }),
-          panel('latency', 'engine-latency', { x: 6, y: 0, w: 3, h: 3 }),
-          panel('requests', 'engine-requests', { x: 9, y: 0, w: 3, h: 3 }),
+          //
+          // Four rows, not three: on a multi-engine host a panel wears one row
+          // per engine, and a row is header + full-size tiles + its chart —
+          // two of those do not fit a three-row band on a 1080p-height page.
+          panel('decode', 'engine-decode-throughput', { x: 0, y: 0, w: 6, h: 4 }),
+          panel('latency', 'engine-latency', { x: 6, y: 0, w: 3, h: 4 }),
+          panel('requests', 'engine-requests', { x: 9, y: 0, w: 3, h: 4 }),
 
           // ── What the GPU is doing ───────────────────────────────────────
           // Utilization leads its band at double width — it is the panel that
           // resolves on every host the dashboard runs on. Power and
           // temperature flank it: the two numbers that say whether the GPU can
-          // keep doing it.
-          panel('gpu-util', 'gpu-utilization', { x: 0, y: 3, w: 6, h: 3 }),
-          panel('gpu-power', 'gpu-power', { x: 6, y: 3, w: 3, h: 3 }),
-          panel('gpu-temp', 'gpu-temperature', { x: 9, y: 3, w: 3, h: 3 }),
+          // keep doing it. Two rows: a chart reads fine at the host band's
+          // height, which is what the band gives up for the engine rows above.
+          panel('gpu-util', 'gpu-utilization', { x: 0, y: 4, w: 6, h: 2 }),
+          panel('gpu-power', 'gpu-power', { x: 6, y: 4, w: 3, h: 2 }),
+          panel('gpu-temp', 'gpu-temperature', { x: 9, y: 4, w: 3, h: 2 }),
 
           // ── What else the host is up to ─────────────────────────────────
           // Equal and short: these are glanced at to rule something out, not

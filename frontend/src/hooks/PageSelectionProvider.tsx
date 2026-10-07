@@ -29,7 +29,7 @@ export function PageSelectionProvider({
     (): PageSelectionValue => ({
       chosen,
       ...(source === undefined ? {} : { source }),
-      selectGpu: (index) => setChosen((current) => withSelectedGpu(current, index)),
+      selectGpu: (target) => setChosen((current) => withSelectedGpu(current, target)),
       selectEngine: (endpoint) => setChosen((current) => withSelectedEngine(current, endpoint)),
     }),
     [chosen, source],

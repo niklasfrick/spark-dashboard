@@ -84,11 +84,14 @@ describe('resolveGpuBinding', () => {
   const gpus = [gpu(0), gpu(1)]
 
   it('follows the page selection', () => {
-    expect(resolveGpuBinding(FOLLOW, gpus, 1)).toEqual({ status: 'resolved', target: gpus[1] })
+    expect(resolveGpuBinding(FOLLOW, gpus, { kind: 'gpu', index: 1 })).toEqual({
+      status: 'resolved',
+      target: gpus[1],
+    })
   })
 
   it('resolves a pinned GPU that is present', () => {
-    expect(resolveGpuBinding({ kind: 'gpu', index: 0 }, gpus, 1)).toEqual({
+    expect(resolveGpuBinding({ kind: 'gpu', index: 0 }, gpus, { kind: 'gpu', index: 1 })).toEqual({
       status: 'resolved',
       target: gpus[0],
     })
@@ -96,7 +99,9 @@ describe('resolveGpuBinding', () => {
 
   it('resolves a pin against the normalized index of a legacy GPU', () => {
     const legacy = [gpu(null)]
-    expect(resolveGpuBinding({ kind: 'gpu', index: 0 }, legacy, 0)).toEqual({
+    expect(
+      resolveGpuBinding({ kind: 'gpu', index: 0 }, legacy, { kind: 'gpu', index: 0 }),
+    ).toEqual({
       status: 'resolved',
       target: legacy[0],
     })
@@ -105,18 +110,24 @@ describe('resolveGpuBinding', () => {
   it('reports a pinned GPU that is not on the host as missing', () => {
     // Restricting the dashboard to one GPU has to make the panels pinned to the
     // others fail visibly, not quietly show GPU 0's numbers.
-    expect(resolveGpuBinding({ kind: 'gpu', index: 3 }, gpus, 0)).toEqual({
+    expect(
+      resolveGpuBinding({ kind: 'gpu', index: 3 }, gpus, { kind: 'gpu', index: 0 }),
+    ).toEqual({
       status: 'missing',
       requested: 'GPU 3',
     })
   })
 
   it('reports a followed selection that is not on the host as missing', () => {
-    expect(resolveGpuBinding(FOLLOW, gpus, 3)).toEqual({ status: 'missing', requested: 'GPU 3' })
+    expect(
+      resolveGpuBinding(FOLLOW, gpus, { kind: 'gpu', index: 3 }),
+    ).toEqual({ status: 'missing', requested: 'GPU 3' })
   })
 
   it('reports an empty host as having nothing selected', () => {
-    expect(resolveGpuBinding(FOLLOW, [], 0)).toEqual({ status: 'unselected' })
+    expect(resolveGpuBinding(FOLLOW, [], { kind: 'gpu', index: 0 })).toEqual({
+      status: 'unselected',
+    })
   })
 
   it('reports a page with no GPU selected as having nothing selected', () => {
@@ -135,22 +146,43 @@ describe('resolveGpuBinding', () => {
   it('still reports a pin against an empty host as missing', () => {
     // A pin named something specific, so it is missing rather than unselected —
     // "nothing to follow" is only a state a following panel can be in.
-    expect(resolveGpuBinding({ kind: 'gpu', index: 3 }, [], 0)).toEqual({
+    expect(resolveGpuBinding({ kind: 'gpu', index: 3 }, [], { kind: 'gpu', index: 0 })).toEqual({
       status: 'missing',
       requested: 'GPU 3',
     })
   })
 
   it('shows no GPU at all for a binding it could not read', () => {
-    expect(resolveGpuBinding(UNREADABLE, gpus, 0)).toEqual({ status: 'unreadable' })
+    expect(
+      resolveGpuBinding(UNREADABLE, gpus, { kind: 'gpu', index: 0 }),
+    ).toEqual({ status: 'unreadable' })
   })
 
   it('never substitutes a GPU for a binding that names an engine', () => {
     // On a GPU panel that is a corrupt document, and picking a GPU to show
     // anyway is the worst way to report it.
     expect(
-      resolveGpuBinding({ kind: 'engine', endpoint: 'http://localhost:8000' }, gpus, 0),
+      resolveGpuBinding({ kind: 'engine', endpoint: 'http://localhost:8000' }, gpus, {
+        kind: 'gpu',
+        index: 0,
+      }),
     ).toEqual({ status: 'unreadable' })
+  })
+
+  it('resolves a following "all GPUs" target to the aggregate', () => {
+    expect(resolveGpuBinding(FOLLOW, gpus, { kind: 'all' })).toEqual({ status: 'aggregate' })
+  })
+
+  it('never aggregates a pinned panel', () => {
+    // A pin names one GPU; the page's "all" target does not reach it.
+    expect(resolveGpuBinding({ kind: 'gpu', index: 0 }, gpus, { kind: 'all' })).toEqual({
+      status: 'resolved',
+      target: gpus[0],
+    })
+  })
+
+  it('does not aggregate an empty host', () => {
+    expect(resolveGpuBinding(FOLLOW, [], { kind: 'all' })).toEqual({ status: 'unselected' })
   })
 })
 

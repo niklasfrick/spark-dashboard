@@ -21,7 +21,7 @@
  */
 
 import { gpuIndexOf, snapshotGpus } from '@/lib/identity'
-import type { EngineSnapshot, MetricsSnapshot } from '@/types/metrics'
+import type { MetricsSnapshot } from '@/types/metrics'
 import type { PageSource } from './pageSource'
 
 /**
@@ -30,13 +30,22 @@ import type { PageSource } from './pageSource'
  */
 export type PageEngineTarget =
   | { kind: 'engine'; endpoint: string }
-  /** Every engine at once — the combined figures, not any one engine's. */
+  /** Every engine at once — one row each, not any one engine's. */
+  | { kind: 'all' }
+
+/**
+ * What a page's following GPU panels resolve to: one GPU by index, or the
+ * aggregate over every GPU on the host (the divided, one-column-each view).
+ */
+export type PageGpuTarget =
+  | { kind: 'gpu'; index: number }
+  /** Every GPU at once — the divided view, not any one GPU. */
   | { kind: 'all' }
 
 /** What a page's `follow` panels resolve against. */
 export interface PageSelection {
-  /** The GPU index following panels show. Null when the host reports no GPU. */
-  gpuIndex: number | null
+  /** The GPU target following panels show. Null when the host reports no GPU. */
+  gpuTarget: PageGpuTarget | null
   /** The engine target following panels show. Null when no engine is running. */
   engineTarget: PageEngineTarget | null
 }
@@ -47,12 +56,12 @@ export interface PageSelection {
  * then the host", which is where every page starts.
  */
 export interface SelectedTargets {
-  readonly gpuIndex?: number
+  readonly gpuTarget?: PageGpuTarget
   readonly engineEndpoint?: string
 }
 
 /** Nothing to point at: no snapshot, or a host with neither GPU nor engine. */
-export const NO_SELECTION: PageSelection = { gpuIndex: null, engineTarget: null }
+export const NO_SELECTION: PageSelection = { gpuTarget: null, engineTarget: null }
 
 /**
  * The selection a page resolves to on this host.
@@ -69,14 +78,17 @@ export function pageSelection(
   source?: PageSource,
 ): PageSelection {
   return {
-    gpuIndex: chosen.gpuIndex ?? (snapshot ? defaultGpuIndex(snapshot) : null),
+    gpuTarget: chosen.gpuTarget ?? (snapshot ? defaultGpuTarget(snapshot) : null),
     engineTarget: engineTarget(snapshot, chosen, source),
   }
 }
 
-/** Point the page at one GPU, or back at the host's default with null. */
-export function withSelectedGpu(chosen: SelectedTargets, index: number | null): SelectedTargets {
-  return index === null ? without(chosen, 'gpuIndex') : { ...chosen, gpuIndex: index }
+/** Point the page at one GPU, "all" GPUs, or back at the host's default with null. */
+export function withSelectedGpu(
+  chosen: SelectedTargets,
+  target: PageGpuTarget | null,
+): SelectedTargets {
+  return target === null ? without(chosen, 'gpuTarget') : { ...chosen, gpuTarget: target }
 }
 
 /** Point the page at one engine, or back at the host's default with null. */
@@ -101,8 +113,13 @@ function engineTarget(
   if (source !== undefined) {
     return source.kind === 'all' ? { kind: 'all' } : { kind: 'engine', endpoint: source.endpoint }
   }
-  const endpoint = snapshot ? defaultEngineEndpoint(snapshot.engines) : null
-  return endpoint === null ? null : { kind: 'engine', endpoint }
+  const engines = snapshot?.engines ?? []
+  // The host's default for a multi-engine host is every engine — one row
+  // each, the engine counterpart of the multi-GPU default — since naming one
+  // would hide the rest. A one-engine host follows its engine; a host with
+  // nothing detected has nothing to follow.
+  if (engines.length > 1) return { kind: 'all' }
+  return engines[0] ? { kind: 'engine', endpoint: engines[0].endpoint } : null
 }
 
 /**
@@ -111,22 +128,17 @@ function engineTarget(
  * on a host whose GPUs or engines change under it.
  */
 function without(chosen: SelectedTargets, key: keyof SelectedTargets): SelectedTargets {
-  const next: { gpuIndex?: number; engineEndpoint?: string } = { ...chosen }
+  const next: { gpuTarget?: PageGpuTarget; engineEndpoint?: string } = { ...chosen }
   delete next[key]
   return next
 }
 
-/** The primary GPU: `snapshotGpus` always yields at least one. */
-function defaultGpuIndex(snapshot: Pick<MetricsSnapshot, 'gpu' | 'gpus'>): number {
-  return gpuIndexOf(snapshotGpus(snapshot)[0])
-}
-
 /**
- * The engine an unconfigured page follows: the first one actually running, and
- * only otherwise the first one detected. A host whose first-listed engine is
- * stopped still has something worth watching on the others.
+ * The host's default GPU target: every GPU on a multi-GPU host — the divided,
+ * one-column-per-GPU view, which is what an operator wants rather than one
+ * device standing in for the rest — or the single GPU on a one-GPU host.
  */
-function defaultEngineEndpoint(engines: readonly EngineSnapshot[]): string | null {
-  const running = engines.find((engine) => engine.status.type === 'Running')
-  return (running ?? engines[0])?.endpoint ?? null
+function defaultGpuTarget(snapshot: Pick<MetricsSnapshot, 'gpu' | 'gpus'>): PageGpuTarget {
+  const gpus = snapshotGpus(snapshot)
+  return gpus.length > 1 ? { kind: 'all' } : { kind: 'gpu', index: gpuIndexOf(gpus[0]) }
 }

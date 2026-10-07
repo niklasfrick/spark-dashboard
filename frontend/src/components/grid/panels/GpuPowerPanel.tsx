@@ -6,7 +6,8 @@ import { THRESHOLDS } from '@/lib/theme'
 import { gpuLabel } from './gpuLabel'
 import { GpuPanelNotice } from './PanelNotice'
 import { HardwarePanelBody } from './HardwarePanelBody'
-import { useGpuPanelSeries } from './useGpuPanel'
+import { MultiGpuPanelBody } from './MultiGpuPanelBody'
+import { useGpuPanelSeries, useGpuColumns } from './useGpuPanel'
 import type { PanelContentProps } from '../panelRegistry'
 
 /**
@@ -16,6 +17,22 @@ import type { PanelContentProps } from '../panelRegistry'
  */
 export function GpuPowerPanel({ panel }: PanelContentProps) {
   const { resolution, data } = useGpuPanelSeries(panel, 'gpuPower')
+  const columns = useGpuColumns(panel, 'gpuPower')
+  if (resolution.status === 'aggregate') {
+    return (
+      <MultiGpuPanelBody
+        seriesLabel="Power"
+        columns={(columns ?? []).map((c) => ({
+          index: c.index,
+          name: c.name,
+          engines: c.engines,
+          value: c.gpu.power_watts === null ? null : Math.round(c.gpu.power_watts),
+          unit: 'W',
+          data: c.data,
+        }))}
+      />
+    )
+  }
   if (resolution.status !== 'resolved') return <GpuPanelNotice resolution={resolution} />
 
   const { gpu } = resolution

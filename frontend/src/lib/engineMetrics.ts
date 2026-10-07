@@ -10,7 +10,10 @@
 import type { EngineMetrics, EngineSnapshot } from '@/types/metrics'
 
 /** The parts of an engine snapshot that decide what its metrics mean. */
-export type EngineReadable = Pick<EngineSnapshot, 'status' | 'model' | 'metrics'>
+export type EngineReadable = Pick<
+  EngineSnapshot,
+  'status' | 'model' | 'metrics' | 'metrics_disabled'
+>
 
 /**
  * The metric fields that carry a plain number — everything a tile can render
@@ -44,6 +47,9 @@ export type EngineAvailability =
   | { kind: 'ready' }
   /** Up, but no metrics have arrived yet — starting, or loading a model. */
   | { kind: 'starting' }
+  /** Up and serving, but the `/metrics` endpoint is off (e.g. llama.cpp started
+   *  without `--metrics`). The operator can act on it. */
+  | { kind: 'metrics-disabled' }
   /** Nothing to show, for a reason the operator can act on. `detail` completes
    *  the sentence "<engine> …". */
   | { kind: 'offline'; detail: string }
@@ -64,5 +70,10 @@ export function engineAvailability(engine: EngineReadable): EngineAvailability {
   }
 
   if (engine.model === null) return { kind: 'offline', detail: 'has no model loaded.' }
-  return engine.metrics === null ? { kind: 'starting' } : { kind: 'ready' }
+  if (engine.metrics === null) {
+    // Same "no metrics" reading, but the cause is different and actionable: the
+    // server is up and serving, it simply has no metrics endpoint enabled.
+    return engine.metrics_disabled ? { kind: 'metrics-disabled' } : { kind: 'starting' }
+  }
+  return { kind: 'ready' }
 }

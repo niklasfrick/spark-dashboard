@@ -646,6 +646,14 @@ impl EngineAdapter for VllmAdapter {
             .get("vllm_time_to_first_token_seconds_count")
             .map(|&c| c as u64);
 
+        // Cumulative token totals are pass-through display fields too: read
+        // the absolute values from `raw` (engine lifetime), not the
+        // baseline-subtracted `parsed`, so a dashboard attach does not reset
+        // what the engine has already processed. Same pattern as
+        // `total_requests`.
+        let lifetime_prompt_tokens = raw.counters.get("vllm_prompt_tokens_total");
+        let lifetime_generation_tokens = raw.counters.get("vllm_generation_tokens_total");
+
         // Per-request avg TPS from time_per_output_token histogram: 1 / avg_TPOT
         // v1: vllm_request_time_per_output_token_seconds, v0.6: vllm_time_per_output_token_seconds
         let per_request_tps = {
@@ -1030,8 +1038,8 @@ impl EngineAdapter for VllmAdapter {
             queue_time_ms: if blank { None } else { queue_time_ms },
             inter_token_latency_ms: if blank { None } else { inter_token_latency_ms },
             preemptions_total,
-            total_prompt_tokens: current_prompt.map(|v| v as u64),
-            total_generation_tokens: current_gen.map(|v| v as u64),
+            total_prompt_tokens: lifetime_prompt_tokens.map(|&v| v as u64),
+            total_generation_tokens: lifetime_generation_tokens.map(|&v| v as u64),
             prefix_cache_queries_total,
             avg_batch_size: if blank { None } else { avg_batch_size },
             ttft_percentiles: if blank { None } else { ttft_percentiles },
@@ -1718,5 +1726,63 @@ vllm:generation_tokens_total 42.0
         assert!(!parsed
             .counters
             .contains_key("vllm_spec_decode_num_draft_tokens"));
+    }
+
+    /// `total_prompt_tokens` / `total_generation_tokens` must report the
+    /// engine's LIFETIME counters, not attach-relative values: once the
+    /// warmup tracker baselines, every adjusted counter becomes a delta, but
+    /// the totals keep the engine's absolute counts so a dashboard attach
+    /// does not reset the engine's token history.
+    #[tokio::test]
+    async fn total_token_counters_are_engine_lifetime_not_attach_relative() {
+        use axum::extract::State;
+        use axum::routing::get;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        /// Poll 1: an already-busy engine (attach mid-life). Poll 2: one more
+        /// request completed — the warmup tracker baselines here, turning
+        /// every adjusted counter into a delta (100 prompt / 50 generation
+        /// since the baseline).
+        async fn mock_metrics(State(polls): State<Arc<AtomicUsize>>) -> String {
+            const WARMUP: &str = "\
+vllm:time_to_first_token_seconds_count 0.0
+vllm:prompt_tokens_total 100.0
+vllm:generation_tokens_total 50.0
+";
+            const STEADY: &str = "\
+vllm:time_to_first_token_seconds_count 1.0
+vllm:prompt_tokens_total 200.0
+vllm:generation_tokens_total 150.0
+";
+            if polls.fetch_add(1, Ordering::SeqCst) == 0 {
+                WARMUP.to_string()
+            } else {
+                STEADY.to_string()
+            }
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = axum::Router::new()
+            .route("/metrics", get(mock_metrics))
+            .with_state(Arc::new(AtomicUsize::new(0)));
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let adapter =
+            VllmAdapter::new(reqwest::Client::new(), format!("http://{addr}"), None, None);
+
+        let first = adapter.get_metrics().await.expect("first poll");
+        assert!(first.warming_up);
+        assert_eq!(first.total_generation_tokens, Some(50));
+
+        let second = adapter.get_metrics().await.expect("second poll");
+        assert!(!second.warming_up);
+        // Lifetime values (200/150), not the since-baseline deltas (100/50)
+        // the warmup-adjusted counters would yield.
+        assert_eq!(second.total_prompt_tokens, Some(200));
+        assert_eq!(second.total_generation_tokens, Some(150));
     }
 }

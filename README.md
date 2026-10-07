@@ -22,7 +22,8 @@ sudo ~/.cargo/bin/spark-dashboard service install
 systemctl status spark-dashboard
 ```
 
-The dashboard is now served on port 3000. See [Install on your Linux host](#install-on-your-linux-host-1)
+The dashboard is now served on port 3000 (override
+with `SPARK_DASHBOARD_PORT` or `--port`). See [Install on your Linux host](#install-on-your-linux-host-1)
 for the full guide, config overrides, and uninstall.
 
 ### Run with Docker
@@ -79,13 +80,15 @@ for details on what each script does.
   (e.g. DGX Spark GB10, GH200)
 - Disk and network I/O throughput
 
-**LLM Engine Monitoring** (vLLM via Prometheus metrics)
-- Tokens per second (generation + prompt)
-- Time to first token, inter-token latency, end-to-end latency, queue time
-- Active/queued requests, batch size
-- KV cache utilization, prefix cache hit rate
+**LLM Engine Monitoring** (vLLM and llama.cpp)
+- vLLM (Prometheus): tokens per second (generation + prompt), time to first
+  token, inter-token and end-to-end latency, queue time, active/queued
+  requests, batch size, KV cache and prefix-cache utilization, SLO goodput
+- llama.cpp (server `/metrics` + `/slots`): token totals and throughput, mean
+  TTFT / TPOT / end-to-end latency, prefix cache, speculative decoding,
+  request count, live generation rate
+- Fields an engine does not expose are hidden, not shown as a confident zero
 - Automatic engine discovery via process scan and Docker API
-- SLO Goodput
 
 **Multi-Engine Support**
 - Run and monitor any number of inference engines side by side — each
@@ -97,6 +100,12 @@ for details on what each script does.
   silently showing a different one
 - With several engines on a host, each panel names the one it is showing and
   marks the provider of the model it is serving
+
+**Splunk HEC Export** (opt-in)
+- Pushes each active snapshot to a HEC endpoint in the multiple-measurement
+  metrics format; GPU events are buffered and flushed on recovery
+- Header status indicator with honest failure reasons, plus a test-connection
+  probe against the in-progress (unsaved) edit
 
 **Dashboard** (arranged by you, stored on the server)
 
@@ -237,6 +246,11 @@ Optional overrides live in `/etc/spark-dashboard/config.env` — set
 `SPARK_DASHBOARD_GPU_INDEX`, `SPARK_DASHBOARD_STATE_DIR`,
 `SPARK_DASHBOARD_PROVIDER_API_KEY`, or `RUST_LOG`, then
 `sudo systemctl restart spark-dashboard`.
+
+To change the port default itself (currently `3000`), edit `default_value_t`
+in `src/main.rs` — the `run` and `healthcheck` subcommands each carry one —
+or keep the default and override per deployment via `SPARK_DASHBOARD_PORT`
+(host: `/etc/spark-dashboard/config.env`, Docker: the compose `.env`).
 
 ### Upgrade
 
@@ -460,6 +474,83 @@ dashboard knows as engines can be streamed. Per container, one background Docker
 log stream fans out to every panel watching it (same pattern as metrics) and
 stops when the last viewer disconnects. stdout and stderr are line-buffered so
 split frames don't produce partial lines.
+
+When [Splunk HEC export](#splunk-hec-export-opt-in) is configured, the same
+container logs are also forwarded to the `export.hec` target's
+`events_index` as JSON events (sourcetype `spark_dashboard_engine_log` with a
+`container` field) — never to the metrics index. Unlike the viewer, the
+forwarding keeps running with no viewers connected, so the index stays
+continuous; lines are batched once per second into a bounded buffer (oldest
+dropped).
+
+### Splunk HEC export (opt-in)
+
+The dashboard can push its metrics into a Splunk HTTP Event Collector. The
+target — HEC URL, token, metrics index, event index — lives in the shared
+dashboard document (the **Export settings** dialog), so there is nothing on
+the host, in `.env`, or on the CLI.
+
+- **Off by default.** The exporter only runs when the document carries a
+  usable `export.hec` target; a fresh or empty document exports nothing.
+- **Metrics-type index required.** Each snapshot is one JSON event in
+  Splunk's multiple-measurement format — `event: "metric"` with the
+  `metric_name:*` fields under `fields` — so point it at an index with
+  `datatype = metric`. A standard index accepts the events and indexes
+  nothing.
+- **Drop while down.** Once the endpoint is unreachable, new snapshots are
+  dropped immediately — no unbounded memory growth during an outage, and the
+  gap in the index is the outage. GPU events are the exception: they are the
+  page-worthy data, buffered (cap 1000, oldest dropped) and flushed on
+  recovery.
+- **Idle hosts export nothing.** The silent gap is the record of idleness;
+  GPU events are never idle-gated.
+- **Engine container logs** (when the log viewer is enabled) are also
+  forwarded to the events index as JSON events — see
+  [Log viewer](#log-viewer--enable-log-viewer-linux-only-opt-in).
+- **The status indicator reports the truth.** The header's "HEC Connection"
+  badge is green while reachable and ingesting, red when the endpoint is down
+  *or* rejecting data (the tooltip carries the reason — bad token, an index
+  the token cannot write, rate limit), and gray when not configured. A
+  rejected probe is not a success: it does not clear the last error or stamp
+  a last-ok time.
+- **Test without saving.** "Test connection" fires a one-off test event at
+  the dialog's current URL/token/index. A field left blank falls back to the
+  stored value, and the masked token placeholder never leaves the browser —
+  the server keeps the stored token instead.
+
+```
+curl -s localhost:3000/api/export-status              # exporter state
+curl -s -X POST localhost:3000/api/export/test \
+  -H 'Content-Type: application/json' -d '{}'         # one-off connectivity event
+```
+
+The Splunk side — minting a HEC token, the metrics index, and the
+reverse-proxy topology for reaching HEC from outside the LAN — is covered in
+[docs/splunk-hec-setup.md](docs/splunk-hec-setup.md).
+
+### llama.cpp engine
+
+llama.cpp servers are discovered the same way as vLLM — process scan plus the
+Docker API — so there is nothing to configure: start `llama-server` against a
+model and it appears in the engine list. The model name comes from the launch
+arguments (`-m` / `-hf`), falling back to `/v1/models`, and is shown as the
+model's basename.
+
+The panels show what the llama.cpp server API actually provides — token
+totals and throughput, mean time-to-first-token / inter-token / end-to-end
+latency, prefix-cache hits, speculative-decoding statistics, the in-flight
+request count, and a live generation rate — and hide the rest (KV usage,
+batch size, latency histograms) rather than drawing a confident zero.
+
+**Why llama.cpp's numbers step while vLLM's tick.** llama.cpp publishes its
+token statistics as counters that advance while the engine is generating, and
+exposes no in-flight gauges. The dashboard therefore reads the live rate from
+the per-token progress on `/slots` — which updates as each token lands — and
+derives the request count from `/slots` state changes at the 1-second poll.
+With both engines running side by side, vLLM's Prometheus gauges keep its
+counters smooth per second, while llama.cpp's figures step in bursts during
+generation and hold flat between requests: a property of the server API's
+granularity, not a polling or detection defect.
 
 ## Development
 

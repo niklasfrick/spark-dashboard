@@ -147,6 +147,17 @@ export function formatCompactTokens(n: number | null): string {
   return `${text}${unit.suffix}`
 }
 
+const exactTokensFormatter = new Intl.NumberFormat('en-US')
+
+/** Exact token count with thousands separators. Null -> '--'.
+ *  For cumulative counters where the compact K/M abbreviation hides the
+ *  per-second motion — at 156M tokens a "+238" tick is invisible inside
+ *  "156.0M" but plain to see in "156,042,324". */
+export function formatExactTokens(n: number | null): string {
+  if (n === null || !Number.isFinite(n) || n < 0) return '--'
+  return exactTokensFormatter.format(Math.round(n))
+}
+
 /** Format mean acceptance length (accepted tokens per draft attempt): two
  *  decimals, e.g. "3.42". Null/non-finite/negative -> '--'. */
 export function formatAcceptanceLength(n: number | null): string {
@@ -166,8 +177,26 @@ export function formatGpuIndexes(indexes: number[]): string {
 export function engineDisplayName(engineType: EngineType): string {
   const names: Record<EngineType, string> = {
     Vllm: 'vLLM',
+    LlamaCpp: 'llama.cpp',
   }
   return names[engineType]
+}
+
+/** The icon path for an engine type, shown beside its name chip. */
+export function engineIconSrc(engineType: EngineType): string {
+  const icons: Record<EngineType, string> = {
+    Vllm: '/icons/vllm.svg',
+    LlamaCpp: '/icons/llama-cpp.svg',
+  }
+  return icons[engineType]
+}
+
+/** A GPU's name without the vendor prefix, for compact per-GPU column labels:
+ *  "NVIDIA GeForce RTX 3090" → "RTX 3090", "NVIDIA RTX PRO 6000 …" →
+ *  "RTX PRO 6000 …". Callers still truncate the rest. */
+export function shortGpuName(name: string): string {
+  const trimmed = name.replace(/^NVIDIA\s+/i, '').replace(/^GeForce\s+/i, '').trim()
+  return trimmed || name
 }
 
 /**

@@ -4,12 +4,29 @@ import { formatMhz } from '@/lib/format'
 import { gpuLabel } from './gpuLabel'
 import { GpuPanelNotice } from './PanelNotice'
 import { HardwarePanelBody } from './HardwarePanelBody'
-import { useGpuPanelSeries } from './useGpuPanel'
+import { MultiGpuPanelBody } from './MultiGpuPanelBody'
+import { useGpuPanelSeries, useGpuColumns } from './useGpuPanel'
 import type { PanelContentProps } from '../panelRegistry'
 
 /** One GPU's graphics clock: the current speed as a headline, plus its trend. */
 export function GpuClockPanel({ panel }: PanelContentProps) {
   const { resolution, data } = useGpuPanelSeries(panel, 'gpuClockGraphics')
+  const columns = useGpuColumns(panel, 'gpuClockGraphics')
+  if (resolution.status === 'aggregate') {
+    return (
+      <MultiGpuPanelBody
+        seriesLabel="Clock"
+        columns={(columns ?? []).map((c) => ({
+          index: c.index,
+          name: c.name,
+          engines: c.engines,
+          value: c.gpu.clock_graphics_mhz === null ? null : Math.round(c.gpu.clock_graphics_mhz),
+          unit: 'MHz',
+          data: c.data,
+        }))}
+      />
+    )
+  }
   if (resolution.status !== 'resolved') return <GpuPanelNotice resolution={resolution} />
 
   const mhz = resolution.gpu.clock_graphics_mhz

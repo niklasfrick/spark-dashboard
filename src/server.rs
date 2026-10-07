@@ -1,13 +1,16 @@
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, FromRef, State};
 use axum::response::IntoResponse;
-use axum::{routing::get, Router};
+use axum::routing::{get, post};
+use axum::Router;
 use rust_embed::Embed;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tower_http::cors::CorsLayer;
 
 use crate::config_store::{ConfigStore, MAX_DOCUMENT_BYTES};
+use crate::hec::{self, SharedExportStatus, SharedHecConfig};
 
 #[derive(Embed)]
 #[folder = "frontend/dist"]
@@ -26,6 +29,22 @@ const READ_ONLY_HEADER: &str = "x-spark-dashboard-read-only";
 pub struct AppState {
     pub metrics_tx: broadcast::Sender<String>,
     pub config: Arc<ConfigStore>,
+    /// Live `export.hec` section of the stored document, kept warm so the
+    /// exporter and the status endpoint do not re-read the file per tick.
+    /// Updated by the dashboard write paths, which are the only writers.
+    pub hec_config: SharedHecConfig,
+    /// Path to the shared HEC configuration file. Every instance on the host
+    /// reads and writes this same file, so the HEC target is configured once,
+    /// independent of each instance's per-instance dashboard document.
+    pub hec_path: PathBuf,
+    /// Accept a self-signed / invalid TLS cert for the HEC endpoint (opt-in,
+    /// `curl -k` behaviour); the default verifies the cert.
+    pub hec_insecure: bool,
+    /// What the exporter is doing right now, published by the exporter task.
+    pub export_status: SharedExportStatus,
+    /// Hostname stamped into HEC events, so `_host` identifies this machine
+    /// rather than the receiving Splunk host.
+    pub hostname: String,
 }
 
 impl FromRef<AppState> for broadcast::Sender<String> {
@@ -42,6 +61,12 @@ pub fn create_router(state: AppState) -> Router {
                 .put(put_dashboard)
                 .delete(delete_dashboard),
         )
+        // Export status: polled by the settings dialog (5 s while open) and
+        // the header status dot (10 s). A dedicated route on purpose — the
+        // WebSocket channel is the metrics firehose and is not overloaded
+        // with control-plane messages (ADR 0001).
+        .route("/export-status", get(get_export_status))
+        .route("/export/test", post(test_export))
         // One cap, enforced twice at the same threshold: the layer stops the
         // server buffering anything larger, and the handler rejects a body that
         // is exactly one byte over so the limit is ours rather than a tower
@@ -80,29 +105,50 @@ async fn healthz() -> &'static str {
     "ok"
 }
 
-/// Returns the stored document verbatim, or `204 No Content` when nothing has
-/// been stored. Absence is not an error — it is what a fresh install and a reset
+/// Returns the stored document, or `204 No Content` when nothing has been
+/// stored. Absence is not an error — it is what a fresh install and a reset
 /// both look like, and the client renders the default preset for it.
+///
+/// One deliberate exception to "stored verbatim": the `export.hec` section is
+/// projected from the shared HEC file (token masked, `…abcd`), not from the
+/// stored bytes. The token is write-only through the API — the client cannot
+/// read it back, and a save that sends an empty token keeps the stored one
+/// (see [`put_dashboard`]).
 async fn get_dashboard(State(state): State<AppState>) -> impl IntoResponse {
     match state.config.load().await {
-        Ok(Some(document)) => (
-            axum::http::StatusCode::OK,
-            [
-                (
-                    axum::http::header::CONTENT_TYPE,
-                    // The server does not parse the document; this describes the
-                    // media type the resource is defined to carry, not a claim
-                    // that these particular bytes were validated.
-                    "application/json".to_string(),
-                ),
-                (
-                    axum::http::HeaderName::from_static(READ_ONLY_HEADER),
-                    state.config.is_read_only().to_string(),
-                ),
-            ],
-            document,
-        )
-            .into_response(),
+        Ok(Some(document)) => {
+            // The HEC section is served from the shared file, not the stored
+            // bytes: project the warm shared target (token masked) into the
+            // document so the settings dialog — which reads `export.hec` out
+            // of the served document — keeps working unchanged. With no shared
+            // target, strip any stale `export.hec` so the dialog reports the
+            // disabled state.
+            let shared = state.hec_config.read().await.clone();
+            let body = match shared {
+                Some(target) => {
+                    hec::project_hec_into_document(&document, &target).unwrap_or(document)
+                }
+                None => hec::strip_hec_from_document(&document).unwrap_or(document),
+            };
+            (
+                axum::http::StatusCode::OK,
+                [
+                    (
+                        axum::http::header::CONTENT_TYPE,
+                        // The server does not parse the document; this describes the
+                        // media type the resource is defined to carry, not a claim
+                        // that these particular bytes were validated.
+                        "application/json".to_string(),
+                    ),
+                    (
+                        axum::http::HeaderName::from_static(READ_ONLY_HEADER),
+                        state.config.is_read_only().to_string(),
+                    ),
+                ],
+                body,
+            )
+                .into_response()
+        }
         Ok(None) => no_content(&state),
         Err(err) => {
             tracing::error!("reading the dashboard configuration failed: {err}");
@@ -116,8 +162,11 @@ async fn get_dashboard(State(state): State<AppState>) -> impl IntoResponse {
     }
 }
 
-/// Replaces the document wholesale. The body is stored exactly as received —
-/// no parsing, no validation, no schema knowledge on this side of the wire.
+/// Replaces the document wholesale. The `export.hec` section is routed to the
+/// shared HEC file (not stored with the document): the dialog's token is filled
+/// from the shared file when re-sent empty, the resulting target is written to
+/// the shared file, and the stored document keeps layout only. A save that drops
+/// the section clears the shared credential. Everything else stays opaque bytes.
 async fn put_dashboard(State(state): State<AppState>, body: Bytes) -> impl IntoResponse {
     if body.len() > MAX_DOCUMENT_BYTES {
         return (
@@ -132,7 +181,42 @@ async fn put_dashboard(State(state): State<AppState>, body: Bytes) -> impl IntoR
         return read_only_response(&state);
     }
 
-    match state.config.store(&body).await {
+    // The HEC target is shared, not per-instance: fill the document's
+    // `export.hec` token from the shared file when the dialog re-sends it
+    // empty (its "keep the stored token" encoding), extract the resulting
+    // target, and persist it to the shared file. The stored document keeps
+    // layout only — `export.hec` is stripped so the shared file is the single
+    // source of truth for the credential.
+    let stored = state.hec_config.read().await.clone();
+    let filled = match &stored {
+        Some(stored_target) => hec::retain_token_in_document(&body, &stored_target.token)
+            .unwrap_or_else(|| body.to_vec()),
+        None => body.to_vec(),
+    };
+    match hec::hec_target_from_document(&filled) {
+        Some(target) if !target.token.is_empty() => {
+            if let Err(err) = hec::save_shared_hec(&state.hec_path, &target).await {
+                tracing::warn!(
+                    "writing the shared HEC file {} failed: {err}",
+                    state.hec_path.display()
+                );
+            }
+            // Keep the warm view in sync — the exporter and the test route
+            // read this, not the file.
+            *state.hec_config.write().await = Some(target);
+        }
+        _ => {
+            // No section, or a section without a usable token: the HEC is
+            // disabled. A token-less target cannot authenticate, so it is
+            // treated as off rather than stored.
+            let _ = hec::clear_shared_hec(&state.hec_path).await;
+            *state.hec_config.write().await = None;
+        }
+    }
+
+    let bytes = hec::strip_hec_from_document(&filled).unwrap_or_else(|| filled.to_vec());
+
+    match state.config.store(&bytes).await {
         Ok(()) => no_content(&state),
         Err(err) => {
             tracing::error!("writing the dashboard configuration failed: {err}");
@@ -149,12 +233,56 @@ async fn delete_dashboard(State(state): State<AppState>) -> impl IntoResponse {
     }
 
     match state.config.delete().await {
-        Ok(()) => no_content(&state),
+        Ok(()) => {
+            // Resetting the layout does not clear the shared HEC target — it is
+            // a host-wide setting, not part of this instance's document. Re-read
+            // the shared file so the warm view stays accurate.
+            *state.hec_config.write().await = hec::load_shared_hec(&state.hec_path).await;
+            no_content(&state)
+        }
         Err(err) => {
             tracing::error!("deleting the dashboard configuration failed: {err}");
             write_failed_response(&state)
         }
     }
+}
+
+/// What the exporter is doing right now: `state`, reachability, last success,
+/// last error (a short machine-readable code — the UI owns the operator
+/// copy) and the dropped-snapshot counter.
+async fn get_export_status(State(state): State<AppState>) -> impl IntoResponse {
+    let status = state.export_status.lock().await.clone();
+    axum::Json(status).into_response()
+}
+
+/// Posts the connectivity test event (`metric_name:spark_dashboard.connectivity.test`)
+/// and reports a fine-grained outcome the settings dialog maps to its
+/// dedicated copy. A misconfigured or absent section is a normal answer, not
+/// an HTTP error — the dialog needs a distinct line for it.
+///
+/// The body carries an optional override (`{url, token, index}`) so the
+/// dialog can test an edit before saving it — an empty body (or one that
+/// fails to parse) tests the stored target unchanged, which is also what a
+/// pre-fix client still sends.
+async fn test_export(State(state): State<AppState>, body: Bytes) -> impl IntoResponse {
+    let override_ = serde_json::from_slice(&body).unwrap_or_default();
+    let stored = state.hec_config.read().await.clone();
+    let target = hec::resolve_test_target(override_, stored.as_ref()).filter(|t| t.usable());
+    let Some(target) = target else {
+        return axum::Json(serde_json::json!({
+            "outcome": "misconfigured",
+            "index": null,
+        }))
+        .into_response();
+    };
+
+    let client = hec::hec_client(state.hec_insecure);
+    let outcome = hec::run_test(&client, &target, &state.hostname).await;
+    axum::Json(serde_json::json!({
+        "outcome": serde_json::to_value(outcome).expect("outcome serializes"),
+        "index": target.index,
+    }))
+    .into_response()
 }
 
 async fn api_not_found() -> impl IntoResponse {
@@ -240,6 +368,8 @@ async fn static_handler(uri: axum::http::Uri) -> impl IntoResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hec::ExportStatus;
+    use tokio::sync::{Mutex, RwLock};
 
     /// Spawns the server over a fresh state directory and returns its address
     /// alongside the directory guard, which must stay alive for the test.
@@ -248,6 +378,11 @@ mod tests {
         let state = AppState {
             metrics_tx: tx,
             config: Arc::new(ConfigStore::new(state_dir).await),
+            hec_config: Arc::new(RwLock::new(None)),
+            hec_path: state_dir.join("hec.json"),
+            hec_insecure: false,
+            export_status: Arc::new(Mutex::new(ExportStatus::disabled())),
+            hostname: "test-host".into(),
         };
         let app = create_router(state);
 
@@ -524,6 +659,256 @@ mod tests {
                 "{path} should 404"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn a_legacy_document_without_the_export_section_loads_as_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let state_dir = dir.path().join("state");
+        std::fs::create_dir_all(&state_dir).unwrap();
+        std::fs::write(
+            state_dir.join("dashboards.json"),
+            r#"{"version":1,"pages":[{"id":"p1","name":"Overview","panels":[]}]}"#,
+        )
+        .unwrap();
+
+        let base = spawn(&state_dir).await;
+
+        let read = reqwest::get(format!("{base}/api/dashboard"))
+            .await
+            .expect("read the document");
+        assert_eq!(read.status(), reqwest::StatusCode::OK);
+
+        let status: serde_json::Value = reqwest::get(format!("{base}/api/export-status"))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(status["state"], "disabled");
+        assert_eq!(status["reachable"], false);
+    }
+
+    #[tokio::test]
+    async fn export_status_reports_the_disabled_shape_by_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = spawn(dir.path()).await;
+
+        let status: serde_json::Value = reqwest::get(format!("{base}/api/export-status"))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(
+            status,
+            serde_json::json!({
+                "state": "disabled",
+                "reachable": false,
+                "last_ok_ms": null,
+                "last_error": null,
+                "dropped_count": 0,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn the_stored_hec_token_is_masked_on_read_and_kept_on_empty_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = spawn(dir.path()).await;
+        let client = reqwest::Client::new();
+
+        let with_token = r#"{"version":1,"pages":[],"export":{"hec":{"url":"https://splunk.example:8088/services/collector","token":"super-secret-token-abc","index":"metrics","events_index":"main"}}}"#;
+        let put = client
+            .put(format!("{base}/api/dashboard"))
+            .body(with_token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(put.status(), reqwest::StatusCode::NO_CONTENT);
+
+        // Read: the token comes back masked, nothing else changes.
+        let read = reqwest::get(format!("{base}/api/dashboard")).await.unwrap();
+        let value: serde_json::Value = read.json().await.unwrap();
+        assert_eq!(value["export"]["hec"]["token"], "…-abc");
+        assert_eq!(
+            value["export"]["hec"]["url"],
+            "https://splunk.example:8088/services/collector"
+        );
+
+        // Save with the empty token keeps the stored one — the client never
+        // re-sends what it cannot see.
+        let empty_token = r#"{"version":1,"pages":[],"export":{"hec":{"url":"https://splunk.example:8088/services/collector","token":"","index":"metrics","events_index":"main"}}}"#;
+        let put = client
+            .put(format!("{base}/api/dashboard"))
+            .body(empty_token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(put.status(), reqwest::StatusCode::NO_CONTENT);
+        let value: serde_json::Value = reqwest::get(format!("{base}/api/dashboard"))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(
+            value["export"]["hec"]["token"], "…-abc",
+            "empty save must keep the stored token"
+        );
+
+        // A fresh token replaces it.
+        let fresh_token = r#"{"version":1,"pages":[],"export":{"hec":{"url":"https://splunk.example:8088/services/collector","token":"brand-new-token-xyz","index":"metrics","events_index":"main"}}}"#;
+        client
+            .put(format!("{base}/api/dashboard"))
+            .body(fresh_token)
+            .send()
+            .await
+            .unwrap();
+        let value: serde_json::Value = reqwest::get(format!("{base}/api/dashboard"))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(value["export"]["hec"]["token"], "…-xyz");
+
+        // Dropping the section disables the export and forgets the token: a
+        // later save with an empty token must not resurrect it.
+        client
+            .put(format!("{base}/api/dashboard"))
+            .body(r#"{"version":1,"pages":[]}"#)
+            .send()
+            .await
+            .unwrap();
+        client
+            .put(format!("{base}/api/dashboard"))
+            .body(empty_token)
+            .send()
+            .await
+            .unwrap();
+        let value: serde_json::Value = reqwest::get(format!("{base}/api/dashboard"))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(
+            value["export"].get("hec").is_none(),
+            "the HEC section is gone for good (a token-less target is disabled, not saved)"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_connectivity_test_reports_misconfigured_without_a_section() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = spawn(dir.path()).await;
+
+        let body: serde_json::Value = reqwest::Client::new()
+            .post(format!("{base}/api/export/test"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(body["outcome"], "misconfigured");
+    }
+
+    #[tokio::test]
+    async fn the_connectivity_test_reports_unreachable_for_a_refused_endpoint() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = spawn(dir.path()).await;
+        let client = reqwest::Client::new();
+
+        // Port 1 on loopback is refused by any sensible machine.
+        let doc = r#"{"version":1,"pages":[],"export":{"hec":{"url":"http://127.0.0.1:1/collector","token":"t","index":"metrics","events_index":"main"}}}"#;
+        client
+            .put(format!("{base}/api/dashboard"))
+            .body(doc)
+            .send()
+            .await
+            .unwrap();
+
+        let body: serde_json::Value = client
+            .post(format!("{base}/api/export/test"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(body["outcome"], "unreachable");
+        assert_eq!(body["index"], "metrics");
+    }
+
+    #[tokio::test]
+    async fn the_connectivity_test_uses_an_unsaved_override_instead_of_the_stored_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = spawn(dir.path()).await;
+        let client = reqwest::Client::new();
+
+        // Stored target points at a refused port; the dialog is mid-edit with
+        // a *different* (also refused, but distinguishably so) URL that was
+        // never saved.
+        let doc = r#"{"version":1,"pages":[],"export":{"hec":{"url":"http://127.0.0.1:1/collector","token":"stored-token","index":"metrics","events_index":"main"}}}"#;
+        client
+            .put(format!("{base}/api/dashboard"))
+            .body(doc)
+            .send()
+            .await
+            .unwrap();
+
+        let override_body =
+            r#"{"url":"http://127.0.0.1:2/collector","token":"typed-token","index":"typed-index"}"#;
+        let body: serde_json::Value = client
+            .post(format!("{base}/api/export/test"))
+            .body(override_body)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        // Both ports are refused, so the outcome is the same either way — the
+        // index in the response is what actually proves the override (not the
+        // stored config) was tested.
+        assert_eq!(body["outcome"], "unreachable");
+        assert_eq!(body["index"], "typed-index");
+    }
+
+    #[tokio::test]
+    async fn the_connectivity_test_falls_back_to_the_stored_token_for_a_masked_override() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = spawn(dir.path()).await;
+        let client = reqwest::Client::new();
+
+        let doc = r#"{"version":1,"pages":[],"export":{"hec":{"url":"http://127.0.0.1:1/collector","token":"stored-token","index":"metrics","events_index":"main"}}}"#;
+        client
+            .put(format!("{base}/api/dashboard"))
+            .body(doc)
+            .send()
+            .await
+            .unwrap();
+
+        // The dialog reseeds its token field with the masked value on open;
+        // testing without touching it must not send that placeholder as a
+        // literal token.
+        let override_body = r#"{"url":"http://127.0.0.1:1/collector","token":"…oken"}"#;
+        let body: serde_json::Value = client
+            .post(format!("{base}/api/export/test"))
+            .body(override_body)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(body["outcome"], "unreachable");
+        assert_eq!(
+            body["index"], "metrics",
+            "falls back to the stored index too"
+        );
     }
 
     #[tokio::test]

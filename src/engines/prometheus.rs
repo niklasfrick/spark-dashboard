@@ -18,12 +18,14 @@ pub struct ParsedMetrics {
 /// samples are stored in counters for average computation (e.g. avg TTFT =
 /// sum / count). Untyped samples are treated as gauges.
 pub fn parse_prometheus_text(body: &str) -> Option<ParsedMetrics> {
-    // Normalize colons in metric name prefixes to underscores. vLLM uses colons
-    // (e.g. "vllm:kv_cache_usage_perc") which are reserved for Prometheus recording
-    // rules and get silently dropped by prometheus-parse. Replace in both metric
-    // lines and # TYPE/# HELP lines so the parser can match samples to their type
-    // declarations.
-    let normalized = body.replace("vllm:", "vllm_");
+    // Normalize colons in metric name prefixes to underscores. vLLM and
+    // llama.cpp use colons ("vllm:kv_cache_usage_perc", "llamacpp:requests_processing")
+    // which are reserved for Prometheus recording rules and get silently dropped
+    // by prometheus-parse. Replace in both metric lines and # TYPE/# HELP lines
+    // so the parser can match samples to their type declarations.
+    let normalized = body
+        .replace("vllm:", "vllm_")
+        .replace("llamacpp:", "llamacpp_");
 
     let reader = std::io::BufReader::new(normalized.as_bytes());
     let scrape = prometheus_parse::Scrape::parse(reader.lines()).ok()?;

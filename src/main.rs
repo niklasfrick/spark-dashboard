@@ -4,6 +4,7 @@ mod config_store;
 #[cfg(test)]
 mod deploy_files;
 mod engines;
+mod hec;
 mod metrics;
 mod server;
 mod ws;
@@ -16,7 +17,7 @@ use cli::service::ServiceCommand;
 use engines::{ApiKeyResolver, EngineOverride, EngineType};
 use std::process::ExitCode;
 use std::sync::Arc;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, Mutex, RwLock};
 
 /// Default directory for mutable state.
 ///
@@ -27,6 +28,16 @@ use tokio::sync::{broadcast, RwLock};
 /// `src/deploy_files.rs` holds the tests that keep those files and this constant
 /// in agreement.
 const DEFAULT_STATE_DIR: &str = "/var/lib/spark-dashboard";
+
+/// Default shared HEC configuration file.
+///
+/// Unlike [`DEFAULT_STATE_DIR`], this is a fixed host-wide path, not a
+/// per-instance one: every dashboard on the host reads and writes the same
+/// file, so the Splunk HEC target is configured once and shared by all
+/// instances regardless of their state directory. Override with
+/// `SPARK_DASHBOARD_HEC` / `--hec-config` (e.g. a throwaway test instance in
+/// /tmp).
+const DEFAULT_HEC_CONFIG: &str = "/var/lib/spark-dashboard/hec.json";
 
 /// Spark Dashboard — Real-time hardware and LLM monitoring for Linux hosts with NVIDIA GPUs.
 #[derive(Parser, Debug)]
@@ -99,6 +110,35 @@ struct RunArgs {
         default_value = DEFAULT_STATE_DIR
     )]
     state_dir: String,
+
+    /// Shared Splunk HEC configuration file. All dashboard instances on the
+    /// host read and write this same file, so the HEC target is configured
+    /// once and shared regardless of each instance's `--state-dir`. The
+    /// default is a fixed host-wide path; override it (e.g. a throwaway test
+    /// instance) with `SPARK_DASHBOARD_HEC` or `--hec-config`.
+    #[arg(
+        long,
+        value_name = "FILE",
+        env = "SPARK_DASHBOARD_HEC",
+        default_value = DEFAULT_HEC_CONFIG
+    )]
+    hec_config: String,
+
+    /// Accept a self-signed or otherwise invalid TLS certificate from the HEC
+    /// endpoint (the `curl -k` behaviour) for local Splunk deployments that
+    /// present one. Off by default — the HEC certificate is verified against
+    /// the system trust store.
+    #[arg(
+        long,
+        env = "SPARK_DASHBOARD_HEC_INSECURE",
+        // BoolishValueParser accepts 1/0, yes/no, on/off besides true/false,
+        // matching the =1 convention of the other SPARK_DASHBOARD_* env vars.
+        value_parser = clap::builder::BoolishValueParser::new(),
+        num_args = 0..=1,
+        default_value_t = false,
+        default_missing_value = "true"
+    )]
+    hec_insecure: bool,
 
     /// Optional NVML GPU index to monitor. By default, all available NVIDIA GPUs
     /// are monitored; set this to keep the dashboard focused on one device.
@@ -273,9 +313,75 @@ async fn run_server_inner(args: RunArgs) -> Result<(), Box<dyn std::error::Error
         args.state_dir
     );
 
+    // Splunk HEC export: the exporter subscribes to the metrics broadcast as a
+    // second consumer and sends to the target in the shared HEC file. All
+    // instances on the host share that file, so the HEC target is configured
+    // once, independent of each instance's dashboard document. Absent file =
+    // disabled; nothing is sent, nothing is polled. The UI broadcast keeps
+    // running at full rate regardless (ADR 0001).
+    //
+    // One-time migration: a document that still carries `export.hec` (from
+    // before the HEC moved to the shared file) seeds the shared file, then
+    // loses its own copy so the shared file is the single source of truth.
+    let hec_path = std::path::PathBuf::from(&args.hec_config);
+    tracing::info!("Shared HEC configuration file: {}", hec_path.display());
+    let mut hec_target = hec::load_shared_hec(&hec_path).await;
+    if hec_target.is_none() {
+        if let Some(document) = config.load().await.ok().flatten() {
+            if let Some(target) = hec::hec_target_from_document(&document) {
+                if hec::save_shared_hec(&hec_path, &target).await.is_ok() {
+                    // Drop the document's now-redundant copy so the shared
+                    // file is the single source of truth for the credential.
+                    if let Some(stripped) = hec::strip_hec_from_document(&document) {
+                        let _ = config.store(&stripped).await;
+                    }
+                    tracing::info!(
+                        "Migrated the dashboard document's HEC target to the shared file {}",
+                        hec_path.display()
+                    );
+                    hec_target = Some(target);
+                }
+            }
+        }
+    }
+    let hec_config: hec::SharedHecConfig = Arc::new(RwLock::new(hec_target));
+    if hec_config.read().await.is_some() {
+        tracing::info!("Splunk HEC export enabled from the shared HEC configuration");
+    }
+    let export_status: hec::SharedExportStatus =
+        Arc::new(Mutex::new(hec::ExportStatus::disabled()));
+    let hec_rx = tx.subscribe();
+    let hostname = sysinfo::System::host_name().unwrap_or_else(|| "unknown".to_string());
+    tokio::spawn(hec::run_exporter(
+        hec_rx,
+        hec_config.clone(),
+        hec_path.clone(),
+        args.hec_insecure,
+        export_status.clone(),
+        hostname.clone(),
+        hec::PROBE_INTERVAL,
+    ));
+
+    // Engine container logs → HEC: only when the log viewer flag is set
+    // (Linux only). The document's `export.hec` target is read live per
+    // tick, so the same enable/disable path as the metrics exporter applies.
+    #[cfg(target_os = "linux")]
+    if args.enable_log_viewer {
+        tokio::spawn(logs::run_log_exporter(
+            hec_config.clone(),
+            hostname.clone(),
+            args.hec_insecure,
+        ));
+    }
+
     let app = server::create_router(server::AppState {
         metrics_tx: tx,
         config,
+        hec_config,
+        hec_path,
+        hec_insecure: args.hec_insecure,
+        export_status,
+        hostname,
     });
 
     let addr = format!("{}:{}", args.bind, args.port);

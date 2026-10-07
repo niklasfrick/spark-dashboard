@@ -4,7 +4,8 @@ import { fmtInt } from '@/lib/format'
 import { EnginePanelBody } from './EnginePanelBody'
 import { engineIdentity } from './engineLabel'
 import { EnginePanelNotice } from './PanelNotice'
-import { useEnginePanel } from './useEnginePanel'
+import { MultiEnginePanelBody } from './MultiEnginePanelBody'
+import { useEnginePanel, useEngineRows } from './useEnginePanel'
 import type { PanelContentProps } from '../panelRegistry'
 
 /**
@@ -15,7 +16,44 @@ import type { PanelContentProps } from '../panelRegistry'
  * healthy engine and the tile appearing at all is the signal.
  */
 export function EngineRequestsPanel({ panel }: PanelContentProps) {
+  const rows = useEngineRows(panel)
   const resolution = useEnginePanel(panel)
+  if (rows.status === 'rows') {
+    // One row per engine, each on its own in-flight count and trend.
+    return (
+      <MultiEnginePanelBody
+        seriesLabel="Active requests"
+        rows={rows.rows}
+        pick={(row) => {
+          const metric = row.metric
+          const swapped = metric ? metric('swapped_requests') : null
+          const preemptions = metric ? metric('preemptions_total') : null
+          return {
+            value: metric ? metric('active_requests') : null,
+            displayValue: metric ? fmtInt(metric('active_requests')) : undefined,
+            unit: '',
+            data: row.series ? row.series('activeRequests') : [],
+            // The counts the single view tiles beside Active, at full size;
+            // swapped and preempted appear only once they have happened, as
+            // there.
+            tiles: metric ? (
+              <div className="grid grid-cols-2 gap-1.5">
+                <MetricTile label="Active" value={fmtInt(metric('active_requests'))} />
+                <MetricTile label="Queued" value={fmtInt(metric('queued_requests'))} />
+                <MetricTile label="Total" value={fmtInt(metric('total_requests'))} />
+                {swapped !== null && swapped > 0 && (
+                  <MetricTile label="Swapped" value={fmtInt(swapped)} warn />
+                )}
+                {preemptions !== null && preemptions > 0 && (
+                  <MetricTile label="Preempt" value={fmtInt(preemptions)} warn />
+                )}
+              </div>
+            ) : undefined,
+          }
+        }}
+      />
+    )
+  }
   if (resolution.status !== 'resolved' && resolution.status !== 'aggregate') {
     return <EnginePanelNotice resolution={resolution} />
   }

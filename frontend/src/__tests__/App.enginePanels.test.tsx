@@ -44,11 +44,12 @@ vi.mock('@/components/charts/TimeSeriesChart', () => ({
 const ALPHA = 'http://localhost:8000'
 const BETA = 'http://localhost:8001'
 
-/** A stored page holding panels; binding omitted means `follow`. */
-function storedDocument(panels: unknown[]): string {
+/** A stored page holding panels; binding omitted means `follow`, and `source`
+ *  omitted means the page follows the host's default engine. */
+function storedDocument(panels: unknown[], source?: { kind: 'all' }): string {
   return JSON.stringify({
     version: DASHBOARD_SCHEMA_VERSION,
-    pages: [{ id: 'engines', name: 'Engines', panels }],
+    pages: [{ id: 'engines', name: 'Engines', panels, ...(source ? { source } : {}) }],
   })
 }
 
@@ -175,7 +176,7 @@ async function configurationSettles(fetchMock: FetchMock) {
 }
 
 /** The metrics socket delivers one snapshot; the first frame flushes at once,
- *  later ones on the 2s coalescing timer the socket hook runs. */
+ *  later ones on the 1s flush timer the socket hook runs. */
 function receive(snapshot: MetricsSnapshot) {
   act(() => {
     MockWebSocket.instances[0].receive(JSON.stringify(snapshot))
@@ -196,9 +197,10 @@ function enginePanels(): unknown[] {
     { id: 'decode', type: 'engine-decode-throughput', geometry: { x: 3, y: 0, w: 3, h: 4 } },
     { id: 'latency', type: 'engine-latency', geometry: { x: 6, y: 0, w: 3, h: 4 } },
     { id: 'requests', type: 'engine-requests', geometry: { x: 9, y: 0, w: 3, h: 4 } },
-    { id: 'goodput', type: 'engine-slo-goodput', geometry: { x: 0, y: 4, w: 4, h: 4 } },
-    { id: 'cache', type: 'engine-cache', geometry: { x: 4, y: 4, w: 4, h: 4 } },
-    { id: 'spec', type: 'engine-spec-decode', geometry: { x: 8, y: 4, w: 4, h: 4 } },
+    { id: 'goodput', type: 'engine-slo-goodput', geometry: { x: 0, y: 4, w: 3, h: 4 } },
+    { id: 'cache', type: 'engine-cache', geometry: { x: 3, y: 4, w: 3, h: 4 } },
+    { id: 'spec', type: 'engine-spec-decode', geometry: { x: 6, y: 4, w: 3, h: 4 } },
+    { id: 'tokens', type: 'engine-tokens', geometry: { x: 9, y: 4, w: 3, h: 4 } },
   ]
 }
 
@@ -274,6 +276,17 @@ describe('the engine panels on a grid page', () => {
         'This engine is not using speculative decoding.',
       ),
     ).toBeInTheDocument()
+
+    // The token panel reads the two lifetime counters and sums them: 1M
+    // prompt + 500K generation, shown exact rather than abbreviated — the
+    // compact form would hide the per-second motion at these magnitudes.
+    const tokens = region('Tokens')
+    expect(within(tokens).getByText('Input')).toBeInTheDocument()
+    expect(within(tokens).getByText('1,000,000')).toBeInTheDocument()
+    expect(within(tokens).getByText('Output')).toBeInTheDocument()
+    expect(within(tokens).getByText('500,000')).toBeInTheDocument()
+    expect(within(tokens).getByText('Total Tokens')).toBeInTheDocument()
+    expect(within(tokens).getByText('1,500,000')).toBeInTheDocument()
 
     // Every panel on the page is implemented — no slot-keeping placeholders.
     expect(screen.queryByText('This panel is not available yet.')).not.toBeInTheDocument()
@@ -674,7 +687,7 @@ describe('the engine panels on a grid page', () => {
 
     // Every panel keeps its slot and says why it is empty; nothing breaks the
     // page, which is what keeps the dashboard useful for hardware alone.
-    expect(screen.getAllByText('No inference engine running.')).toHaveLength(7)
+    expect(screen.getAllByText('No inference engine running.')).toHaveLength(8)
   })
 
   it('tells an engine that is still starting apart from one that is not running', async () => {
@@ -720,7 +733,7 @@ describe('the engine panels on a grid page', () => {
     render(<App />)
     await configurationSettles(fetchMock)
 
-    expect(screen.getAllByText('Waiting for metrics')).toHaveLength(7)
+    expect(screen.getAllByText('Waiting for metrics')).toHaveLength(8)
 
     // The first snapshot must not trip the changed-hook-count trap.
     receive(makeSnapshot(1000, [makeEngine(ALPHA)]))
@@ -774,7 +787,7 @@ describe('the inference-request timeline', () => {
     expect(screen.queryByText('This panel is not available yet.')).not.toBeInTheDocument()
   })
 
-  it('shows a pinned engine only its own requests', async () => {
+  it('interleaves every engine on a following panel, and only the pinned engine on a pinned one', async () => {
     const fetchMock = serveConfiguration({
       document: storedDocument([
         timelinePanel({ id: 'alpha', title: 'Alpha timeline' }),
@@ -801,11 +814,14 @@ describe('the inference-request timeline', () => {
       ]),
     )
 
-    // Never the other engine's requests under this engine's name.
-    expect(within(region('Alpha timeline')).getByText('4')).toBeInTheDocument()
+    // The following panel is the page's view: on a multi-engine host that is
+    // every engine's requests, interleaved on one axis — the identity row
+    // says so.
+    expect(within(region('Alpha timeline')).getByText('5')).toBeInTheDocument()
+    expect(requestRows('Alpha timeline').map((row) => row.textContent)).toContain('7.0')
+    // The pinned panel is still only the engine it names.
     expect(within(region('Beta timeline')).getByText('1')).toBeInTheDocument()
     expect(requestRows('Beta timeline').map((row) => row.textContent)).toEqual(['7.0'])
-    expect(within(region('Alpha timeline')).queryByText('7.0')).not.toBeInTheDocument()
   })
 
   it('says the window was quiet rather than drawing an empty axis', async () => {
@@ -840,5 +856,240 @@ describe('the inference-request timeline', () => {
         'No engine at http://localhost:9999 — repoint this panel.',
       ),
     ).toBeInTheDocument()
+  })
+})
+
+describe('engine panels on a page configured for all models', () => {
+  const LAMM = 'http://localhost:8002'
+  const llama = (metricOverrides: Partial<EngineMetrics> = {}): EngineSnapshot =>
+    makeEngine(
+      LAMM,
+      { engine_type: 'LlamaCpp', model: modelNamed('Meta-Llama/Llama-3-8B') },
+      metricOverrides,
+    )
+
+  it('splits the panel into one row per engine, each with its own figure and trend', async () => {
+    const fetchMock = serveConfiguration({
+      document: storedDocument(
+        [{ id: 'decode', type: 'engine-decode-throughput', geometry: { x: 0, y: 0, w: 6, h: 4 } }],
+        { kind: 'all' },
+      ),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, [makeEngine(ALPHA), llama({ tokens_per_sec: 70 })]))
+    receive(
+      makeSnapshot(2000, [
+        makeEngine(ALPHA, {}, { tokens_per_sec: 140 }),
+        llama({ tokens_per_sec: 75 }),
+      ]),
+    )
+
+    const panel = region('Decode Throughput')
+    // Every engine is a row named by model and engine type — a vLLM and a
+    // llama.cpp sit in the same box, not a combined figure under one name.
+    expect(within(panel).getByText('Qwen3-8B')).toBeInTheDocument()
+    expect(within(panel).getByText('Llama-3-8B')).toBeInTheDocument()
+    expect(within(panel).getByText('vLLM')).toBeInTheDocument()
+    expect(within(panel).getByText('llama.cpp')).toBeInTheDocument()
+    // The rows carry the latest snapshot's figures...
+    expect(within(panel).getByText('140.0 tok/s')).toBeInTheDocument()
+    expect(within(panel).getByText('75.0 tok/s')).toBeInTheDocument()
+    // ...and the single view's tiles ride under each headline, at full size
+    // and per engine: the live figure beside its lifetime total, then the
+    // average and the per-request average. Value and unit wear separate
+    // spans, as the tiles do in the single view.
+    expect(within(panel).getAllByText('Live')).toHaveLength(2)
+    expect(within(panel).getAllByText('Generated')).toHaveLength(2)
+    expect(within(panel).getAllByText('Avg')).toHaveLength(2)
+    expect(within(panel).getAllByText('Per-Req Avg')).toHaveLength(2)
+    expect(within(panel).getAllByText('140.0')).toHaveLength(1)
+    expect(within(panel).getAllByText('75.0')).toHaveLength(1)
+    expect(within(panel).getAllByText('100.0')).toHaveLength(2)
+    expect(within(panel).getAllByText('40.0')).toHaveLength(2)
+    expect(within(panel).getAllByText('500K')).toHaveLength(2)
+    // Each row trends its own engine's live line, not the other engine's.
+    const values = within(panel)
+      .getAllByTestId('chart-series-Decode throughput')
+      .map((chart) => chart.getAttribute('data-values'))
+    expect(values).toEqual(['120,140', '70,75'])
+    // and the row's chart wears the single view's three lines.
+    expect(within(panel).getAllByTestId('chart-series-Avg')).toHaveLength(2)
+    expect(within(panel).getAllByTestId('chart-series-Per-req')).toHaveLength(2)
+  })
+
+  it('shows every throughput row the tiles the single view renders', async () => {
+    const fetchMock = serveConfiguration({
+      document: storedDocument(
+        [
+          { id: 'decode', type: 'engine-decode-throughput', geometry: { x: 0, y: 0, w: 6, h: 4 } },
+          { id: 'prefill', type: 'engine-prefill-throughput', geometry: { x: 6, y: 0, w: 6, h: 4 } },
+        ],
+        { kind: 'all' },
+      ),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, [makeEngine(ALPHA), llama()]))
+
+    // Both engines' rows in each panel wear the tiles the single view
+    // renders — the live figure beside the lifetime total, then the average
+    // and the per-request average: Generated on the decode row, Processed on
+    // the prefill row, each panel's own figures.
+    const decode = region('Decode Throughput')
+    expect(within(decode).getAllByText('Live')).toHaveLength(2)
+    expect(within(decode).getAllByText('Generated')).toHaveLength(2)
+    expect(within(decode).getAllByText('Avg')).toHaveLength(2)
+    expect(within(decode).getAllByText('Per-Req Avg')).toHaveLength(2)
+    expect(within(decode).getAllByText('500K')).toHaveLength(2)
+
+    const prefill = region('Prefill Throughput')
+    expect(within(prefill).getAllByText('Live')).toHaveLength(2)
+    expect(within(prefill).getAllByText('Processed')).toHaveLength(2)
+    expect(within(prefill).getAllByText('Avg')).toHaveLength(2)
+    expect(within(prefill).getAllByText('Per-Req Avg')).toHaveLength(2)
+    expect(within(prefill).getAllByText('1M')).toHaveLength(2)
+    expect(within(prefill).getAllByText('3000.0')).toHaveLength(2)
+  })
+
+  it('says why a row has no numbers instead of charting nothing', async () => {
+    const fetchMock = serveConfiguration({
+      document: storedDocument(
+        [{ id: 'decode', type: 'engine-decode-throughput', geometry: { x: 0, y: 0, w: 6, h: 4 } }],
+        { kind: 'all' },
+      ),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(
+      makeSnapshot(1000, [
+        makeEngine(ALPHA),
+        makeEngine('http://localhost:8002', {
+          engine_type: 'LlamaCpp',
+          status: { type: 'Stopped' },
+          model: modelNamed('Mistral/Mistral-7B'),
+        }),
+      ]),
+    )
+
+    const panel = region('Decode Throughput')
+    expect(within(panel).getByText('Mistral-7B')).toBeInTheDocument()
+    expect(within(panel).getByText('is not running.')).toBeInTheDocument()
+    // The stopped row charts nothing — only the serving engine has a chart.
+    expect(within(panel).getAllByTestId('chart')).toHaveLength(1)
+  })
+
+  it('keeps each engine’s lifetime token counters on its own row', async () => {
+    const fetchMock = serveConfiguration({
+      document: storedDocument(
+        [{ id: 'tokens', type: 'engine-tokens', geometry: { x: 0, y: 0, w: 6, h: 4 } }],
+        { kind: 'all' },
+      ),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(
+      makeSnapshot(1000, [
+        makeEngine(ALPHA),
+        llama({ total_prompt_tokens: 2_000_000, total_generation_tokens: 1_000_000 }),
+      ]),
+    )
+
+    const panel = region('Tokens')
+    // The vLLM row sums its own two counters (1M + 500K), never the other
+    // engine's; the llama.cpp row sums to 3M. Each total appears exactly once,
+    // as a row beside its Input and Output — the headline that used to carry
+    // it is gone from the row's header. Exact figures, not compact — the row
+    // is the panel's home view on this host.
+    expect(within(panel).getByText('1,500,000')).toBeInTheDocument()
+    expect(within(panel).getByText('3,000,000')).toBeInTheDocument()
+    // Each row stacks its three counters the way the single view does, so a
+    // row reads like a mini card rather than a bare number.
+    expect(within(panel).getAllByText('Input')).toHaveLength(2)
+    expect(within(panel).getAllByText('2,000,000')).toHaveLength(1)
+    expect(within(panel).getAllByText('Output')).toHaveLength(2)
+    // 1,000,000 appears twice — the vLLM row's input and the llama.cpp row's output.
+    expect(within(panel).getAllByText('1,000,000')).toHaveLength(2)
+    expect(within(panel).getAllByText('500,000')).toHaveLength(1)
+    // Total Tokens is a counter of its own, labelled like the single view,
+    // and a row with nothing to chart wears no empty chart box under its figures.
+    expect(within(panel).getAllByText('Total Tokens')).toHaveLength(2)
+    expect(within(panel).queryAllByTestId('chart')).toHaveLength(0)
+  })
+
+  it('labels each cache row with the metric that engine can show', async () => {
+    const fetchMock = serveConfiguration({
+      document: storedDocument(
+        [{ id: 'cache', type: 'engine-cache', geometry: { x: 0, y: 0, w: 6, h: 4 } }],
+        { kind: 'all' },
+      ),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(
+      makeSnapshot(1000, [
+        makeEngine(ALPHA),
+        llama({ kv_cache_percent: null, prefix_cache_hit_rate: 55 }),
+      ]),
+    )
+
+    const panel = region('Cache')
+    // The vLLM row is its KV cache; the llama.cpp row, which has no KV gauge,
+    // is its prefix hit rate — each labelled so the rows read honestly.
+    expect(within(panel).getByText('KV')).toBeInTheDocument()
+    expect(within(panel).getByText('42%')).toBeInTheDocument()
+    expect(within(panel).getByText('Prefix')).toBeInTheDocument()
+    expect(within(panel).getByText('55%')).toBeInTheDocument()
+  })
+})
+
+describe('engine panels on an unconfigured page of a multi-engine host', () => {
+  const LAMM = 'http://localhost:8002'
+  const llama = (metricOverrides: Partial<EngineMetrics> = {}): EngineSnapshot =>
+    makeEngine(LAMM, { engine_type: 'LlamaCpp', model: modelNamed('Meta-Llama/Llama-3-8B') }, metricOverrides)
+
+  it('shows one row per engine without any source set', async () => {
+    // No source on the page: the host's default on a multi-engine host is
+    // every engine as its own row — the panel that used to name only the
+    // first running engine now shows the whole host.
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        { id: 'decode', type: 'engine-decode-throughput', geometry: { x: 0, y: 0, w: 6, h: 4 } },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, [makeEngine(ALPHA), llama({ tokens_per_sec: 70 })]))
+
+    const panel = region('Decode Throughput')
+    expect(within(panel).getByText('Qwen3-8B')).toBeInTheDocument()
+    expect(within(panel).getByText('Llama-3-8B')).toBeInTheDocument()
+    expect(within(panel).getByText('120.0 tok/s')).toBeInTheDocument()
+    expect(within(panel).getByText('70.0 tok/s')).toBeInTheDocument()
+    expect(within(panel).getAllByTestId('chart')).toHaveLength(2)
+  })
+
+  it('keeps the single-engine view on a one-engine host', async () => {
+    // One engine detected: the panel renders the engine's figures the way it
+    // always has — no row chrome for an engine standing alone.
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        { id: 'decode', type: 'engine-decode-throughput', geometry: { x: 0, y: 0, w: 6, h: 4 } },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, [makeEngine(ALPHA)]))
+
+    const panel = region('Decode Throughput')
+    expect(within(panel).getByText('120.0')).toBeInTheDocument()
+    expect(within(panel).getAllByTestId('chart')).toHaveLength(1)
   })
 })

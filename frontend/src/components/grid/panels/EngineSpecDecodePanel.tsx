@@ -2,7 +2,8 @@ import { SpecDecodeSection } from '@/components/engines/EnginePanelPrimitives'
 import { EnginePanelBody } from './EnginePanelBody'
 import { engineIdentity, engineLabel } from './engineLabel'
 import { EnginePanelNotice, PanelNotice } from './PanelNotice'
-import { useEnginePanel } from './useEnginePanel'
+import { MultiEnginePanelBody } from './MultiEnginePanelBody'
+import { useEnginePanel, useEngineRows } from './useEnginePanel'
 import type { PanelContentProps } from '../panelRegistry'
 
 /**
@@ -14,7 +15,37 @@ import type { PanelContentProps } from '../panelRegistry'
  * the throughput — and on the engines that do not, it is dead space.
  */
 export function EngineSpecDecodePanel({ panel }: PanelContentProps) {
+  const rows = useEngineRows(panel)
   const resolution = useEnginePanel(panel)
+  if (rows.status === 'rows') {
+    // One row per engine, each on its own token acceptance rate. An engine
+    // that is not speculating says so on its row, rather than wearing a dash
+    // that reads as a fault — the same words the single view wears.
+    return (
+      <MultiEnginePanelBody
+        seriesLabel="Token acceptance"
+        rows={rows.rows}
+        pick={(row) => {
+          const metric = row.metric
+          if (!metric) return { value: null, unit: '%', data: [] }
+          const draft = metric('spec_decode_draft_tokens_total')
+          const rate = metric('spec_decode_acceptance_rate')
+          return {
+            value: rate,
+            displayValue: rate !== null ? `${Math.round(rate)}` : undefined,
+            unit: '%',
+            note:
+              draft === null
+                ? 'Not using speculative decoding.'
+                : draft === 0
+                  ? 'No drafted tokens yet.'
+                  : undefined,
+            data: [],
+          }
+        }}
+      />
+    )
+  }
   if (resolution.status !== 'resolved' && resolution.status !== 'aggregate') {
     return <EnginePanelNotice resolution={resolution} />
   }

@@ -7,6 +7,7 @@ import {
   defaultPanelTitle,
   isKnownPanelType,
   panelBindingKind,
+  panelSpec,
   panelUsesWindow,
 } from './panels'
 
@@ -32,6 +33,7 @@ describe('the panel type vocabulary', () => {
       'engine-status',
       'engine-prefill-throughput',
       'engine-decode-throughput',
+      'engine-tokens',
       'engine-latency',
       'engine-slo-goodput',
       'engine-requests',
@@ -46,6 +48,15 @@ describe('the panel type vocabulary', () => {
     for (const id of PANEL_TYPE_IDS) {
       expect(PANEL_TYPES[id].title, id).toBeTruthy()
     }
+  })
+
+  it('marks the figure-only panel for the frame’s larger title', () => {
+    // The tokens panel charts nothing — its numbers fill the panel, so the
+    // frame's standard-size title would read as an afterthought beside them.
+    // Read through `panelSpec`: the literal type of the other entries does
+    // not carry the optional flag, which only the interface type does.
+    expect(panelSpec('engine-tokens').bigTitle).toBe(true)
+    expect(panelSpec('engine-cache').bigTitle).toBeUndefined()
   })
 })
 

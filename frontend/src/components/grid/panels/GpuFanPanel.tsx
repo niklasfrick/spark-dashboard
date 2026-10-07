@@ -4,7 +4,8 @@ import { TimeSeriesChart } from '@/components/charts/TimeSeriesChart'
 import { gpuLabel } from './gpuLabel'
 import { GpuPanelNotice, PanelNotice } from './PanelNotice'
 import { HardwarePanelBody } from './HardwarePanelBody'
-import { useGpuPanelSeries } from './useGpuPanel'
+import { MultiGpuPanelBody } from './MultiGpuPanelBody'
+import { useGpuPanelSeries, useGpuColumns } from './useGpuPanel'
 import type { PanelContentProps } from '../panelRegistry'
 
 /**
@@ -21,6 +22,23 @@ import type { PanelContentProps } from '../panelRegistry'
  */
 export function GpuFanPanel({ panel }: PanelContentProps) {
   const { resolution, data } = useGpuPanelSeries(panel, 'gpuFan')
+  const columns = useGpuColumns(panel, 'gpuFan')
+  if (resolution.status === 'aggregate') {
+    return (
+      <MultiGpuPanelBody
+        seriesLabel="Fan"
+        columns={(columns ?? []).map((c) => ({
+          index: c.index,
+          name: c.name,
+          engines: c.engines,
+          value: c.gpu.fan_speed_percent,
+          unit: '%',
+          yDomain: [0, 100] as [number, number],
+          data: c.data,
+        }))}
+      />
+    )
+  }
   if (resolution.status !== 'resolved') return <GpuPanelNotice resolution={resolution} />
 
   const { gpu } = resolution

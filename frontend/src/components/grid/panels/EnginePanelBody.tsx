@@ -77,8 +77,16 @@ export function EnginePanelBody({ identity, actions, tiles, chart }: EnginePanel
           {actions}
         </div>
       )}
-      <div className="shrink-0 min-w-0">{tiles}</div>
-      {mode === 'full' && chart && <div className="flex-1 min-h-0 min-w-0">{chart}</div>}
+      {chart ? (
+        <>
+          <div className="shrink-0 min-w-0">{tiles}</div>
+          {mode === 'full' && <div className="flex-1 min-h-0 min-w-0">{chart}</div>}
+        </>
+      ) : (
+        // A chart-less panel's tiles own the whole box — the height a chart
+        // would have worn is the room a figure-only panel's numbers use.
+        <div className="flex-1 min-h-0 min-w-0">{tiles}</div>
+      )}
     </div>
   )
 }

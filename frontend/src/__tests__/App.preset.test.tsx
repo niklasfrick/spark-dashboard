@@ -198,10 +198,11 @@ describe('the default preset on the hosts it ships to', () => {
     }
 
     const utilization = screen.getByRole('region', { name: 'GPU Utilization' })
-    expect(within(utilization).getByText('70')).toBeInTheDocument()
-    // With several GPUs the panel says which one it is showing, so no panel is
-    // read as the whole host.
+    // On a multi-GPU host the default is every GPU, divided — four columns, one
+    // per GPU, so no panel is read as the whole host.
+    expect(within(utilization).getAllByTestId('chart')).toHaveLength(4)
     expect(within(utilization).getByText(/GPU 0/)).toBeInTheDocument()
+    expect(within(utilization).getByText(/GPU 3/)).toBeInTheDocument()
     expect(screen.queryByText('is not on this host.')).not.toBeInTheDocument()
   })
 

@@ -452,8 +452,9 @@ describe('a panel’s own time window', () => {
 
   it('gives two panels on one page charts of different spans', async () => {
     // Ten minutes of history: the five-minute panel has dropped the first
-    // reading, the fifteen-minute panel still has it. Same series, same page,
-    // different windows.
+    // reading, the fifteen-minute panel still has it. Same page, two panels,
+    // different windows — and each panel is now divided by GPU, so the window is
+    // honoured on every per-GPU series.
     vi.useFakeTimers({ shouldAdvanceTime: true })
     const fetchMock = serveConfiguration({ document: storedDocument(gpuPanels()) })
     await openPage(fetchMock)
@@ -468,7 +469,9 @@ describe('a panel’s own time window', () => {
       .getAllByTestId('chart')
       .map((chart) => chart.getAttribute('data-values'))
 
-    expect(spans).toEqual(['22', '11,22'])
+    // Panel 1 (5m) dropped the first reading; panel 2 (15m) kept it — for both
+    // GPUs, in order GPU 0 then GPU 1.
+    expect(spans).toEqual(['22', '90', '11,22', '90,90'])
   })
 
   it('is not offered on a panel whose rendering has no window to cover', async () => {

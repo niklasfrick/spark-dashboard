@@ -81,7 +81,7 @@ export interface NetworkMetrics {
 
 // --- LLM Engine Types (Phase 2) ---
 
-export type EngineType = 'Vllm'
+export type EngineType = 'Vllm' | 'LlamaCpp'
 
 export type DeploymentMode = 'Docker' | 'Native'
 
@@ -206,6 +206,11 @@ export interface EngineSnapshot {
    *  metadata resolved normally — optional so snapshots from older backends
    *  still parse. */
   model_metadata_error?: ModelMetadataError | null
+  /** True when the engine is serving but its `/metrics` endpoint is disabled
+   *  (llama.cpp started without `--metrics`, HTTP 501). Lets the UI explain why
+   *  there are no metrics instead of a generic "waiting". Optional so snapshots
+   *  from older backends still parse. */
+  metrics_disabled?: boolean
   metrics: EngineMetrics | null
   recent_requests: InferenceRequestData[]
   deployment_mode: DeploymentMode

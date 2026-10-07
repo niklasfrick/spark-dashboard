@@ -113,4 +113,14 @@ describe('engineAvailability', () => {
       detail: 'has no model loaded.',
     })
   })
+
+  it('distinguishes a disabled metrics endpoint from a not-yet-ready engine', () => {
+    // Same "no metrics" reading, different cause: the server is up and serving,
+    // its /metrics endpoint is just off (llama.cpp started without --metrics).
+    expect(engineAvailability(engine({ metrics: null, metrics_disabled: true }))).toEqual({
+      kind: 'metrics-disabled',
+    })
+    // Without the flag the identical snapshot still reads as starting.
+    expect(engineAvailability(engine({ metrics: null }))).toEqual({ kind: 'starting' })
+  })
 })

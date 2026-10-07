@@ -3,9 +3,13 @@ import {
   formatAge,
   formatBytes,
   formatCompactTokens,
+  formatExactTokens,
   formatAcceptanceLength,
   formatEndpoint,
   engineDescription,
+  engineDisplayName,
+  engineIconSrc,
+  shortGpuName,
   modelMetadataWarning,
 } from '../lib/format'
 
@@ -45,6 +49,22 @@ describe('formatCompactTokens', () => {
     expect(formatCompactTokens(1_000_000)).toBe('1M')
     expect(formatCompactTokens(1_250_000_000)).toBe('1.3B')
     expect(formatCompactTokens(3.4e12)).toBe('3.4T')
+  })
+})
+
+describe('formatExactTokens', () => {
+  it('renders -- for null, negative, or non-finite', () => {
+    expect(formatExactTokens(null)).toBe('--')
+    expect(formatExactTokens(-5)).toBe('--')
+    expect(formatExactTokens(Number.NaN)).toBe('--')
+  })
+
+  it('shows the full figure with thousands separators', () => {
+    expect(formatExactTokens(0)).toBe('0')
+    expect(formatExactTokens(999)).toBe('999')
+    expect(formatExactTokens(1_000_000)).toBe('1,000,000')
+    expect(formatExactTokens(156_042_324)).toBe('156,042,324')
+    expect(formatExactTokens(1_234_567.8)).toBe('1,234,568')
   })
 })
 
@@ -127,5 +147,32 @@ describe('modelMetadataWarning', () => {
     expect(modelMetadataWarning('Unavailable')).toBeNull()
     expect(modelMetadataWarning(null)).toBeNull()
     expect(modelMetadataWarning(undefined)).toBeNull()
+  })
+})
+
+describe('engineDisplayName', () => {
+  it('names every engine type the wire can carry', () => {
+    expect(engineDisplayName('Vllm')).toBe('vLLM')
+    expect(engineDisplayName('LlamaCpp')).toBe('llama.cpp')
+  })
+})
+
+describe('engineIconSrc', () => {
+  it('maps every engine type to a shipped icon', () => {
+    expect(engineIconSrc('Vllm')).toBe('/icons/vllm.svg')
+    expect(engineIconSrc('LlamaCpp')).toBe('/icons/llama-cpp.svg')
+  })
+})
+
+describe('shortGpuName', () => {
+  it('strips the vendor prefix for compact column labels', () => {
+    expect(shortGpuName('NVIDIA GeForce RTX 3090')).toBe('RTX 3090')
+    expect(shortGpuName('NVIDIA RTX PRO 6000 Blackwell Workstation Edition')).toBe(
+      'RTX PRO 6000 Blackwell Workstation Edition',
+    )
+  })
+
+  it('leaves an already-short name untouched', () => {
+    expect(shortGpuName('RTX 3090')).toBe('RTX 3090')
   })
 })
