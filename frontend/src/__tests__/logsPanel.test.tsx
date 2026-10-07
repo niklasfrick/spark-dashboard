@@ -60,6 +60,8 @@ function snapshot(engines: EngineSnapshot[]): MetricsSnapshot {
       clock_sm_mhz: null,
       clock_memory_mhz: null,
       fan_speed_percent: null,
+      pcie_rx_bytes_per_sec: null,
+      pcie_tx_bytes_per_sec: null,
     },
     cpu: { name: 'CPU', aggregate_percent: 25, per_core: [] },
     memory: {

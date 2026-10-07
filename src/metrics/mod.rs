@@ -272,6 +272,12 @@ pub struct GpuMetrics {
     pub clock_sm_mhz: Option<u32>,
     pub clock_memory_mhz: Option<u32>,
     pub fan_speed_percent: Option<u32>,
+    /// PCIe receive/transmit throughput in bytes per second — the same unit as
+    /// the disk and network rates, so one formatter serves all of them.
+    /// `None` on devices with no PCIe link to report (unified-memory SoCs such
+    /// as the DGX Spark GB10), and always `None` for both if either is.
+    pub pcie_rx_bytes_per_sec: Option<u64>,
+    pub pcie_tx_bytes_per_sec: Option<u64>,
 }
 
 /// CPU metrics with aggregate and per-core breakdown.

@@ -62,6 +62,9 @@ export const PANEL_TYPES = {
   'gpu-clock': { binds: 'gpu', title: 'GPU Clock' },
   'gpu-memory': { binds: 'gpu', title: 'GPU Memory' },
   'gpu-fan': { binds: 'gpu', title: 'GPU Fan' },
+  // Bus traffic per card: the disk/network I/O shape, bound to a GPU. Absent
+  // on the unified-memory SoCs, where there is no link to report.
+  'gpu-pcie': { binds: 'gpu', title: 'GPU PCIe' },
   // A discrete list rather than a series — but still windowed, unlike `logs`
   // below: the history store keeps a bounded ring of events and filters it by
   // the window, so choosing 15m over 5m genuinely shows the operator more.

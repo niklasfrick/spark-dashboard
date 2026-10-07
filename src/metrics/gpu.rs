@@ -45,6 +45,31 @@ fn resolve_power_limit_mw(device: &nvml_wrapper::Device) -> Option<u32> {
         .filter(|&mw| mw > 0)
 }
 
+/// NVML's PCIe throughput counters, from KB/s to bytes per second.
+///
+/// The two directions are one reading: if either is unsupported the pair is
+/// absent, so the panel says the link is not there rather than charting one
+/// live line beside a silent zero. Zero is a genuine reading (an idle link) and
+/// is kept.
+///
+/// NVML does not say whether its "KB" is 1000 or 1024 bytes; 1024 is used
+/// because the frontend's rate formatter is 1024-based, so a link NVML calls
+/// 1 KB/s displays as 1.0 KB/s. If NVML means decimal kilobytes the reading is
+/// 2.4% low, well inside what a 20 ms sample of a bursty bus resolves anyway.
+///
+/// Platform-neutral so the unit conversion is tested everywhere, though only
+/// the Linux collector calls it.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn pcie_bytes_per_sec(
+    rx_kb_per_sec: Option<u32>,
+    tx_kb_per_sec: Option<u32>,
+) -> (Option<u64>, Option<u64>) {
+    match (rx_kb_per_sec, tx_kb_per_sec) {
+        (Some(rx), Some(tx)) => (Some(u64::from(rx) * 1024), Some(u64::from(tx) * 1024)),
+        _ => (None, None),
+    }
+}
+
 /// Empty GPU metric used when NVML or a selected GPU is unavailable.
 #[cfg(target_os = "linux")]
 pub fn empty_gpu_metrics() -> GpuMetrics {
@@ -61,6 +86,8 @@ pub fn empty_gpu_metrics() -> GpuMetrics {
         clock_sm_mhz: None,
         clock_memory_mhz: None,
         fan_speed_percent: None,
+        pcie_rx_bytes_per_sec: None,
+        pcie_tx_bytes_per_sec: None,
     }
 }
 
@@ -136,6 +163,17 @@ fn collect_gpu_metrics_for_device(index: u32, device: &nvml_wrapper::Device) -> 
     // Fan speed may be N/A on some GPUs (e.g. chassis-managed fans)
     let fan_speed_percent = nvml_optional(device.fan_speed(0));
 
+    // Each PCIe query samples a byte counter over 20 ms, so the pair costs
+    // ~40 ms per device per poll. Read once, back to back, so both directions
+    // describe the same moment.
+    let (pcie_rx_bytes_per_sec, pcie_tx_bytes_per_sec) = {
+        use nvml_wrapper::enum_wrappers::device::PcieUtilCounter;
+        pcie_bytes_per_sec(
+            nvml_optional(device.pcie_throughput(PcieUtilCounter::Receive)),
+            nvml_optional(device.pcie_throughput(PcieUtilCounter::Send)),
+        )
+    };
+
     GpuMetrics {
         index: Some(index),
         name,
@@ -149,6 +187,8 @@ fn collect_gpu_metrics_for_device(index: u32, device: &nvml_wrapper::Device) -> 
         clock_sm_mhz,
         clock_memory_mhz,
         fan_speed_percent,
+        pcie_rx_bytes_per_sec,
+        pcie_tx_bytes_per_sec,
     }
 }
 
@@ -228,6 +268,8 @@ pub fn collect_gpu_metrics() -> GpuMetrics {
         clock_sm_mhz: None,
         clock_memory_mhz: None,
         fan_speed_percent: None,
+        pcie_rx_bytes_per_sec: None,
+        pcie_tx_bytes_per_sec: None,
     }
 }
 
@@ -268,6 +310,45 @@ mod tests {
             assert!(metrics.clock_sm_mhz.is_none());
             assert!(metrics.clock_memory_mhz.is_none());
             assert!(metrics.fan_speed_percent.is_none());
+            assert!(metrics.pcie_rx_bytes_per_sec.is_none());
+            assert!(metrics.pcie_tx_bytes_per_sec.is_none());
+        }
+    }
+
+    mod pcie_throughput_tests {
+        use super::*;
+
+        #[test]
+        fn converts_nvml_kilobytes_per_sec_to_bytes_per_sec() {
+            assert_eq!(
+                pcie_bytes_per_sec(Some(1), Some(2_048)),
+                (Some(1_024), Some(2_097_152))
+            );
+        }
+
+        #[test]
+        fn zero_counters_are_a_real_reading_not_absence() {
+            // An idle link reads 0 KB/s in both directions; that is data.
+            assert_eq!(pcie_bytes_per_sec(Some(0), Some(0)), (Some(0), Some(0)));
+        }
+
+        #[test]
+        fn unsupported_pair_is_absent() {
+            assert_eq!(pcie_bytes_per_sec(None, None), (None, None));
+        }
+
+        #[test]
+        fn a_half_supported_pair_is_absent_as_a_whole() {
+            // One direction alone would draw a panel whose other line is a
+            // silent zero; the pair is only meaningful together.
+            assert_eq!(pcie_bytes_per_sec(Some(5), None), (None, None));
+            assert_eq!(pcie_bytes_per_sec(None, Some(5)), (None, None));
+        }
+
+        #[test]
+        fn the_largest_counter_does_not_overflow() {
+            let (rx, _) = pcie_bytes_per_sec(Some(u32::MAX), Some(0));
+            assert_eq!(rx, Some(u64::from(u32::MAX) * 1024));
         }
     }
 

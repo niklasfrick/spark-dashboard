@@ -71,7 +71,7 @@ for details on what each script does.
 ## Features
 
 **Hardware Monitoring** (1s polling via NVML, sysinfo, procfs)
-- GPU utilization, temperature, power draw, clock frequencies, fan speed
+- GPU utilization, temperature, power draw, clock frequencies, fan speed, PCIe throughput
 - GPU event detection — thermal throttling, hardware slowdown, power brake
 - CPU aggregate and per-core utilization with heatmap
 - Memory breakdown — CPU RAM and GPU VRAM separately on discrete-GPU hosts,
@@ -128,7 +128,7 @@ Every panel the palette offers:
 
 | Group | Binds to | Panels |
 | --- | --- | --- |
-| Per-GPU hardware | One GPU, by NVML index | GPU Utilization, GPU Temp, GPU Power, GPU Clock, GPU Memory, GPU Fan, GPU Events |
+| Per-GPU hardware | One GPU, by NVML index | GPU Utilization, GPU Temp, GPU Power, GPU Clock, GPU Memory, GPU Fan, GPU PCIe, GPU Events |
 | Host-wide hardware | Nothing | CPU, CPU Cores, Memory, Disk I/O, Network |
 | Engines | One engine, by endpoint | Engine, Prefill Throughput, Decode Throughput, Latency, SLO Goodput, Requests, Cache, Speculative Decoding, Inference Requests, Logs |
 | Engines | Nothing — every engine at once | All Engines |

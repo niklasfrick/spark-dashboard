@@ -63,6 +63,8 @@ function gpu(index: number, utilization: number): GpuMetrics {
     clock_sm_mhz: 1900,
     clock_memory_mhz: 8000,
     fan_speed_percent: 30,
+    pcie_rx_bytes_per_sec: 4_194_304,
+    pcie_tx_bytes_per_sec: 2_097_152,
   }
 }
 

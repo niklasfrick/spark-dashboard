@@ -22,6 +22,8 @@ const GPU: GpuMetrics = {
   clock_sm_mhz: 1800,
   clock_memory_mhz: 9000,
   fan_speed_percent: 30,
+  pcie_rx_bytes_per_sec: 4096,
+  pcie_tx_bytes_per_sec: 2048,
 }
 
 /** A snapshot at `ts` whose per-series values can be nulled out selectively. */
@@ -306,6 +308,29 @@ describe('gpuSeries', () => {
     expect(store.getChartData(gpuSeries('gpuMemory', 0, true)).map((p) => p.value)).toEqual([25])
     expect(store.getChartData('gpuFan').map((p) => p.value)).toEqual([30])
     expect(store.getChartData(gpuSeries('gpuFan', 0, true)).map((p) => p.value)).toEqual([30])
+  })
+
+  it('charts a GPU’s PCIe traffic per direction on both key shapes', () => {
+    // The two series behind the GPU PCIe panel (#98): bytes per second, kept
+    // as the wire value so the I/O panel sums and formats them like network.
+    const store = new MetricsHistoryStore()
+    store.ingest(makeSnapshot(1000))
+
+    expect(store.getChartData('gpuPcieRx').map((p) => p.value)).toEqual([4096])
+    expect(store.getChartData('gpuPcieTx').map((p) => p.value)).toEqual([2048])
+    expect(store.getChartData(gpuSeries('gpuPcieRx', 0, true)).map((p) => p.value)).toEqual([4096])
+    expect(store.getChartData(gpuSeries('gpuPcieTx', 0, true)).map((p) => p.value)).toEqual([2048])
+  })
+
+  it('leaves the PCIe series empty for a GPU with no link to report', () => {
+    const store = new MetricsHistoryStore()
+    store.ingest({
+      ...makeSnapshot(1000),
+      gpu: { ...GPU, pcie_rx_bytes_per_sec: null, pcie_tx_bytes_per_sec: null },
+    })
+
+    expect(store.getChartData('gpuPcieRx')).toEqual([])
+    expect(store.getChartData('gpuPcieTx')).toEqual([])
   })
 })
 

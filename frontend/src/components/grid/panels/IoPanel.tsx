@@ -21,16 +21,21 @@ interface IoDirection {
 }
 
 /**
- * The shape disk and network I/O share: two directional rates as the current
- * value, and a three-line chart (each direction plus their sum) as the trend.
+ * The shape disk, network and GPU PCIe I/O share: two directional rates as the
+ * current value, and a three-line chart (each direction plus their sum) as the
+ * trend.
  */
 export function IoPanel({
   device,
+  label,
   inbound,
   outbound,
 }: {
-  /** The disk or interface these rates were read from. */
+  /** The disk, interface or GPU these rates were read from. */
   device?: string | null
+  /** A heading over the rate pair, where a gauge would carry its label — the
+   *  per-GPU panels use it to say which GPU's link this is. */
+  label?: string
   inbound: IoDirection
   outbound: IoDirection
 }) {
@@ -58,6 +63,7 @@ export function IoPanel({
       device={device}
       compact={
         <div className="flex flex-col gap-0.5 min-w-0">
+          {label && <Label>{label}</Label>}
           <MetricRow label={inbound.tag} value={formatRate(inRate)} />
           <MetricRow label={outbound.tag} value={formatRate(outRate)} />
         </div>
@@ -67,12 +73,22 @@ export function IoPanel({
           className="flex flex-col items-center justify-center gap-0.5 shrink-0"
           style={{ width: sizePx, height: sizePx }}
         >
+          {label && <Label>{label}</Label>}
           <Rate tag={inbound.tag} rate={inRate} />
           <Rate tag={outbound.tag} rate={outRate} />
         </div>
       )}
       chart={chart}
     />
+  )
+}
+
+/** The same small heading the bar and arc gauges put over their value. */
+function Label({ children }: { children: string }) {
+  return (
+    <span className="text-[9px] lg:text-[10px] text-zinc-400 uppercase tracking-wider truncate min-w-0">
+      {children}
+    </span>
   )
 }
 

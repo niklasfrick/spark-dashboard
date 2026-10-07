@@ -22,6 +22,7 @@ describe('the panel type vocabulary', () => {
       'gpu-clock',
       'gpu-memory',
       'gpu-fan',
+      'gpu-pcie',
       'gpu-events',
       'cpu-utilization',
       'cpu-cores',

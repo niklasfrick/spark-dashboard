@@ -77,6 +77,8 @@ function makeGpu(index: number, overrides: Partial<GpuMetrics> = {}): GpuMetrics
     clock_sm_mhz: 2100,
     clock_memory_mhz: 9000,
     fan_speed_percent: 30,
+    pcie_rx_bytes_per_sec: 6 * MIB,
+    pcie_tx_bytes_per_sec: 1.5 * MIB,
     ...overrides,
   }
 }
@@ -483,5 +485,108 @@ describe('the hardware panels the palette offered before anything rendered them'
     expect(
       within(region('CPU Cores')).getByText('This host reports no per-core load.'),
     ).toBeInTheDocument()
+  })
+})
+
+// The GPU PCIe panel (#98): the disk/network I/O shape, bound to one GPU.
+describe('the GPU PCIe panel', () => {
+  function pciePanel(extra: Record<string, unknown> = {}): unknown {
+    return { id: 'pcie', type: 'gpu-pcie', geometry: { x: 0, y: 0, w: 6, h: 4 }, ...extra }
+  }
+
+  it('shows both rates like the network panel and charts RX, TX and their sum', async () => {
+    const fetchMock = serveConfiguration({ document: storedDocument([pciePanel()]) })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000))
+
+    const pcie = region('GPU PCIe')
+    expect(within(pcie).getByText('RX')).toBeInTheDocument()
+    expect(within(pcie).getByText('6.0 MB/s')).toBeInTheDocument()
+    expect(within(pcie).getByText('TX')).toBeInTheDocument()
+    expect(within(pcie).getByText('1.5 MB/s')).toBeInTheDocument()
+    expect(within(pcie).getByText('NVIDIA Alpha 0')).toBeInTheDocument()
+
+    // Three lines: each direction as the wire value, plus their sum.
+    expect(within(pcie).getByTestId('chart-series-RX')).toHaveAttribute('data-values', `${6 * MIB}`)
+    expect(within(pcie).getByTestId('chart-series-TX')).toHaveAttribute(
+      'data-values',
+      `${1.5 * MIB}`,
+    )
+    expect(within(pcie).getByTestId('chart-series-Total')).toHaveAttribute(
+      'data-values',
+      `${7.5 * MIB}`,
+    )
+  })
+
+  it('waits quietly before the first snapshot', async () => {
+    const fetchMock = serveConfiguration({ document: storedDocument([pciePanel()]) })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+
+    expect(screen.getByText('Waiting for metrics')).toBeInTheDocument()
+
+    // The first snapshot must not trip the changed-hook-count trap.
+    receive(makeSnapshot(1000))
+    expect(within(region('GPU PCIe')).getByText('6.0 MB/s')).toBeInTheDocument()
+  })
+
+  it('says so rather than drawing zeros on a GPU with no PCIe link', async () => {
+    // The unified-memory SoCs: the GB10 sits on the die, and NVML answers
+    // NotSupported for its bus counters. A pair of 0 B/s lines would report a
+    // link that is not there.
+    const fetchMock = serveConfiguration({ document: storedDocument([pciePanel()]) })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(
+      makeSnapshot(1000, [makeGpu(0, { pcie_rx_bytes_per_sec: null, pcie_tx_bytes_per_sec: null })]),
+    )
+
+    const pcie = region('GPU PCIe')
+    expect(within(pcie).getByText('This GPU has no PCIe link to report.')).toBeInTheDocument()
+    expect(within(pcie).queryByText('0 B/s')).not.toBeInTheDocument()
+    expect(within(pcie).queryByTestId('chart')).not.toBeInTheDocument()
+  })
+
+  it('charts each GPU’s own traffic when two panels are pinned to different GPUs', async () => {
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        pciePanel(),
+        {
+          id: 'pinned',
+          type: 'gpu-pcie',
+          title: 'Second GPU PCIe',
+          binding: { kind: 'gpu', index: 1 },
+          geometry: { x: 6, y: 0, w: 6, h: 4 },
+        },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(
+      makeSnapshot(1000, [
+        makeGpu(0, { pcie_rx_bytes_per_sec: 1 * MIB, pcie_tx_bytes_per_sec: 2 * MIB }),
+        makeGpu(1, { pcie_rx_bytes_per_sec: 3 * MIB, pcie_tx_bytes_per_sec: 4 * MIB }),
+      ]),
+    )
+
+    // The following panel resolves to the primary GPU, the pinned one to
+    // GPU 1 — value and chart series alike, so the label and data agree.
+    const following = region('GPU PCIe')
+    expect(within(following).getByText('1.0 MB/s')).toBeInTheDocument()
+    expect(within(following).getByText('2.0 MB/s')).toBeInTheDocument()
+    expect(within(following).getByTestId('chart-series-RX')).toHaveAttribute('data-values', `${MIB}`)
+    expect(within(following).getByText('GPU 0')).toBeInTheDocument()
+
+    const pinned = region('Second GPU PCIe')
+    expect(within(pinned).getByText('3.0 MB/s')).toBeInTheDocument()
+    expect(within(pinned).getByText('4.0 MB/s')).toBeInTheDocument()
+    expect(within(pinned).getByTestId('chart-series-RX')).toHaveAttribute('data-values', `${3 * MIB}`)
+    expect(within(pinned).getByTestId('chart-series-TX')).toHaveAttribute('data-values', `${4 * MIB}`)
+    expect(within(pinned).getByText('GPU 1')).toBeInTheDocument()
   })
 })
