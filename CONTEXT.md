@@ -20,10 +20,32 @@ _Avoid_: user, admin, viewer
 
 **Engine**:
 An inference server on the host, detected by process scan or the Docker API and
-polled for Prometheus metrics. Identified to the backend by its **endpoint**;
-identified in the UI by type and endpoint together, since a host can run several
-of the same type.
+polled for metrics over its own API. Identified to the backend by its
+**endpoint**; identified in the UI by **engine type** and endpoint together,
+since a host can run several of the same type. An engine serves one model, or —
+for an engine type that loads on demand — several that come and go; it is one
+engine either way.
 _Avoid_: server, model, backend (the backend is the Rust process)
+
+**Engine type**:
+Which inference server software an engine is (vLLM, SGLang, llama.cpp, Ollama).
+Decides how the engine is detected and which metrics it can report.
+_Avoid_: engine kind, runtime, flavor, provider (a provider publishes models)
+
+**Metric group**:
+A set of engine metrics an engine reports together or not at all — throughput,
+requests, latency means, latency percentiles, queue time, KV cache, prefix
+cache, speculative decoding. An engine **reports** a group or does not, and says
+which on the metrics contract; a panel whose group is not reported says so and
+keeps its grid slot rather than showing a zero. See
+[ADR-0004](./docs/adr/0004-engines-declare-what-they-report.md).
+_Avoid_: capability, feature, supported metric
+
+**Metrics off**:
+A running engine whose engine type can report metrics but whose metrics endpoint
+is disabled by how it was launched. Distinct from a metric group that is not
+reported: the remedy is a launch flag, and the panel names it.
+_Avoid_: metrics disabled, unavailable, unsupported
 
 **Provider**:
 The organization that published a model, taken from its HuggingFace-style org
@@ -100,7 +122,9 @@ _Avoid_: page filter, default engine (it may also be the aggregate), page bindin
 The combined view across every running engine: throughput and counters sum,
 latencies are request-weighted means (`lib/engineAggregate`). A following panel
 rendering it says so — a combined figure wearing no name would read as one
-engine's. Per-engine things (logs, engine identity, a pin) never aggregate.
+engine's. It spans engines, however many models each holds, and combines only
+the engines that report the metric — saying so when that is not all of them.
+Per-engine things (logs, engine identity, a pin) never aggregate.
 _Avoid_: global view, all engines (the panel type "All Engines" is the overview
 panel; the page source is about what following panels render)
 
