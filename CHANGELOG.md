@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.1](https://github.com/niklasfrick/spark-dashboard/compare/spark-dashboard-v0.14.0...spark-dashboard-v0.14.1) (2026-10-07)
+
+
+### Bug Fixes
+
+* **metrics:** read disk I/O rates from /proc/diskstats ([53849d5](https://github.com/niklasfrick/spark-dashboard/commit/53849d55fe968166a44e3bf3c5cc2687e9d371b8)), closes [#118](https://github.com/niklasfrick/spark-dashboard/issues/118)
+
 ## [0.14.0](https://github.com/niklasfrick/spark-dashboard/compare/spark-dashboard-v0.13.0...spark-dashboard-v0.14.0) (2026-09-04)
 
 
