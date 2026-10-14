@@ -76,9 +76,9 @@ grid slot; silent substitution is prohibited.
 _Avoid_: data source, target (a target is what a binding resolves *to*), filter
 
 **Follow**:
-The default binding, and the sentinel every panel in the preset carries. It
-resolves to the **page selection**, which is what makes one static preset correct
-on a one-GPU laptop and on a four-GPU server.
+The default binding, and the sentinel every panel in the preset and in every
+starting layout carries. It resolves to the **page selection**, which is what
+makes one static preset correct on a one-GPU laptop and on a four-GPU server.
 _Avoid_: auto, inherit, default binding
 
 **Page selection**:
@@ -131,6 +131,17 @@ The one-page arrangement rendered when nothing is stored — a static document, 
 one generated from the host it lands on. "Fresh install" and "reset" are the same
 state: the document does not exist.
 _Avoid_: default layout, template, seed, factory settings
+
+**Starting layout**:
+A built-in arrangement a new page can start from, offered by **New page** beside
+an empty page. Its panels are copied into the page when it is made; from then on
+the page is the operator's like any other, and nothing ties it back to the
+layout. **Legacy** — the pre-0.14 fixed dashboard's reading order, every panel
+following — is the only one. It is not the preset: the preset is the one document
+rendered when nothing is stored, while a starting layout renders only when asked
+for, only ever adds a page, and never changes what a fresh install opens on.
+_Avoid_: template, seed, preset (the preset is what renders when nothing is
+stored), default layout
 
 ### What is stored, and where
 

@@ -111,6 +111,9 @@ page is whatever set of panels you choose to put on it.
 - **Named pages, each with its own URL** — a training view and an idle health
   view kept side by side rather than one compromise. Point a wall display at a
   page's URL and it returns to that page after a reboot
+- **The Legacy layout** — start a new page from the pre-0.14 fixed dashboard's
+  arrangement instead of an empty one, then rearrange it like any other page.
+  See [Dashboard pages and kiosk URLs](#dashboard-pages-and-kiosk-urls)
 - **Per-page model selection** — a page can show one engine, every engine
   combined, or whatever the host happens to be serving. See
   [Configuring what a page shows](#configuring-what-a-page-shows)
@@ -376,6 +379,18 @@ created, renamed and deleted from the **Pages** menu in the header, and switched
 between from the tabs beside it; tabs that do not fit the header move into an
 overflow menu rather than pushing it out of shape.
 
+**New page** offers two starting points: an empty page to fill from the palette,
+or the **Legacy layout** — the fixed dashboard from before 0.14, in its reading
+order. The engine's identity runs across the top; under it are prefill and
+decode throughput, latency, SLO goodput, requests, and cache with speculative
+decoding beneath it; then the GPU row (utilization, temperature, power, clock);
+then the host row (CPU, CPU cores, memory, disk I/O, network). Every panel
+follows the page, and there is no log panel — the log viewer is off by default,
+so place one yourself if you turned it on. The page is called *Legacy*
+(*Legacy 2* if that name is taken) and from then on is a page like any other, to
+rearrange, rename or delete. Nothing else changes: existing pages stay as they
+are, and a fresh install still opens on the default preset.
+
 Each page has its own URL, built from a stable id plus a readable slug:
 
 ```
@@ -572,7 +587,7 @@ real NVML/procfs parsing on Linux, with compile-time stubs on other platforms.
 │       │   └── gauges/         ArcGauge, HBar
 │       ├── types/              TypeScript type definitions
 │       └── lib/
-│           ├── dashboard/      Schema, migrations, preset, grid, routes
+│           ├── dashboard/      Schema, migrations, preset, starting layouts, grid, routes
 │           └── …               Circular buffer, formatting, theme
 ├── deploy/                     Deployment & install artifacts, by type
 │   ├── docker/                 Container install
