@@ -8,14 +8,22 @@ import { placePopover } from '@/lib/popoverPlacement'
  * For a popover rendered outside the clipping containers it opens from — a
  * portal — which therefore cannot be laid out relative to its trigger by CSS.
  * The placement is `placePopover`'s; this hook supplies the boxes, and places
- * again whenever they can have moved: a scroll of any ancestor (the stacked
- * grid on a phone scrolls its own container, not the page), a resize of the
- * window, or a change in the popover's own size.
+ * again in every frame in which any of them has moved.
+ *
+ * Every frame, because the trigger can move with no event to say so. The grid
+ * animates its panels to a new row height for 300ms after the window has
+ * finished resizing, and it does the same when a notice above the page takes
+ * some of its height, which fires no event at all. No observer reports an
+ * element's position either; ResizeObserver only sees its size. So the boxes
+ * are read once a frame while the popover is open, which also covers a scroll
+ * of any ancestor (the stacked grid on a phone scrolls its own container, not
+ * the page), a resized window and a popover that changes size. Nothing runs
+ * while it is closed, and a frame in which nothing moved writes nothing.
  *
  * The coordinates are written straight onto the element rather than held in
- * state: they change on every scroll frame, and nothing else in the render
- * depends on them. It runs as a layout effect, so the popover is placed before
- * the frame it first appears in is painted.
+ * state: they change on every frame of a move, and nothing else in the render
+ * depends on them. The first placement runs as a layout effect, so the popover
+ * is placed before the frame it first appears in is painted.
  */
 export function useAnchoredPosition(
   active: boolean,
@@ -27,6 +35,7 @@ export function useAnchoredPosition(
     const popover = popoverRef.current
     if (!active || !anchor || !popover) return
 
+    let placed = ''
     function place() {
       if (!anchor || !popover) return
       const box = popover.getBoundingClientRect()
@@ -38,21 +47,19 @@ export function useAnchoredPosition(
           height: document.documentElement.clientHeight,
         },
       )
+      const at = `${top},${left}`
+      if (at === placed) return
+      placed = at
       popover.style.top = `${top}px`
       popover.style.left = `${left}px`
     }
 
     place()
-    // Capture, because scroll does not bubble: this hears every scroller.
-    window.addEventListener('scroll', place, true)
-    window.addEventListener('resize', place)
-    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(place)
-    observer?.observe(popover)
+    let frame = requestAnimationFrame(function follow() {
+      place()
+      frame = requestAnimationFrame(follow)
+    })
 
-    return () => {
-      window.removeEventListener('scroll', place, true)
-      window.removeEventListener('resize', place)
-      observer?.disconnect()
-    }
+    return () => cancelAnimationFrame(frame)
   }, [active, anchorRef, popoverRef])
 }

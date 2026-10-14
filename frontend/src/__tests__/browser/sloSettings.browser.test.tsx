@@ -1,16 +1,15 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { page as browserPage } from 'vitest/browser'
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within, type RenderResult } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useEffect } from 'react'
 import { GridPage } from '@/components/grid/GridPage'
 import { MetricsStoreProvider } from '@/hooks/MetricsStoreProvider'
 import { useMetricsStore } from '@/hooks/useMetricsStore'
 import { FOLLOW } from '@/lib/dashboard/bindings'
-import type { PanelGeometry } from '@/lib/dashboard/grid'
+import { GRID_MAX_ROWS, type PanelGeometry } from '@/lib/dashboard/grid'
 import type { PanelType } from '@/lib/dashboard/panels'
 import { DEFAULT_TIME_WINDOW, type DashboardPage } from '@/lib/dashboard/schema'
-import { measuredPanel } from '@/test/gridEngine'
 import type { EngineMetrics, EngineSnapshot, MetricsSnapshot } from '@/types/metrics'
 
 // The SLO Goodput panel's threshold settings, opened from the cog in the panel
@@ -169,13 +168,35 @@ function Ingest({ engines }: { engines: EngineSnapshot[] }) {
   return null
 }
 
-/** The app's main area: the whole viewport, less the page's padding. */
-function Harness({ content, engines }: { content: DashboardPage; engines: EngineSnapshot[] }) {
+/** The app's main area: the whole viewport, less the page's padding, and less
+ *  a notice of `notice` px above the page — as the configuration banners take
+ *  their height from it. */
+function Harness({
+  content,
+  engines,
+  notice = 0,
+}: {
+  content: DashboardPage
+  engines: EngineSnapshot[]
+  notice?: number
+}) {
   return (
     <MetricsStoreProvider>
       <Ingest engines={engines} />
-      <div style={{ position: 'fixed', inset: 0, padding: 12, boxSizing: 'border-box' }}>
-        <GridPage page={content} />
+      <div
+        style={{
+          position: 'fixed',
+          inset: 0,
+          padding: 12,
+          display: 'flex',
+          flexDirection: 'column',
+          boxSizing: 'border-box',
+        }}
+      >
+        <div style={{ height: notice, flexShrink: 0 }} />
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <GridPage page={content} />
+        </div>
       </div>
     </MetricsStoreProvider>
   )
@@ -197,13 +218,42 @@ const cog = () => screen.getByRole('button', { name: 'Edit SLO thresholds' })
 const dialog = () => screen.queryByRole('dialog', { name: 'SLO threshold settings' })
 
 /** Renders the page, and waits for the grid to have settled on its row height
- *  and the engine to have resolved — a dialog opened before then is placed
- *  against a panel that is still moving. */
-async function renderSettled(content: DashboardPage, engines: EngineSnapshot[]): Promise<void> {
-  const { container } = render(<Harness content={content} engines={engines} />)
-  await measuredPanel(container, 'slo')
+ *  and the engine to have resolved. */
+async function renderSettled(
+  content: DashboardPage,
+  engines: EngineSnapshot[],
+): Promise<RenderResult> {
+  const rendered = render(<Harness content={content} engines={engines} />)
+  await atRest(rendered.container)
   await waitFor(() => expect(cog()).toBeEnabled())
   clipLikeTheApp(cog())
+  return rendered
+}
+
+/**
+ * Waits for the grid to have the row height its container fits, and for no
+ * panel to be moving to it.
+ *
+ * Both, because the library writes a row height before the container has been
+ * measured — the fallback — and a panel is as tall as its rows at that one too.
+ */
+async function atRest(container: HTMLElement): Promise<void> {
+  await waitFor(() => {
+    const grid = container.querySelector<HTMLElement>('.grid-stack')!
+    const fitted = Math.floor(grid.parentElement!.getBoundingClientRect().height / GRID_MAX_ROWS)
+    expect(grid.style.getPropertyValue('--gs-cell-height')).toBe(`${fitted}px`)
+    for (const item of container.querySelectorAll('.grid-stack-item')) {
+      expect(item.getAnimations()).toEqual([])
+    }
+  })
+}
+
+/** Where the dialog sits relative to the cog: its top below the cog's bottom,
+ *  and its right edge against the cog's. */
+function besideCog(opened: HTMLElement): { below: number; right: number } {
+  const box = opened.getBoundingClientRect()
+  const anchor = cog().getBoundingClientRect()
+  return { below: box.top - anchor.bottom, right: box.right - anchor.right }
 }
 
 /** Opens the settings from the cog, and lets the dialog place itself. */
@@ -349,5 +399,48 @@ describe('the SLO settings dialog in a real layout engine', () => {
     } finally {
       await browserPage.viewport(VIEWPORT.width, VIEWPORT.height)
     }
+  })
+
+  describe('follows the cog when the grid moves it without a scroll', () => {
+    // The grid lays the page out again whenever its container changes height,
+    // and animates the panels there. Nothing scrolls, and a window resize is
+    // over before the panels start moving, so a dialog placed on those events
+    // alone is left where the cog was.
+    const below = page([
+      ['cpu', 'cpu-utilization', { x: 0, y: 0, w: 4, h: 2 }],
+      ['slo', 'engine-slo-goodput', { x: 0, y: 2, w: 4, h: 4 }],
+    ])
+
+    it('as when a notice above the page pushes it down', async () => {
+      const { container, rerender } = await renderSettled(below, ONE_ENGINE)
+      const opened = await openSettings()
+      const before = besideCog(opened)
+
+      rerender(<Harness content={below} engines={ONE_ENGINE} notice={100} />)
+      await atRest(container)
+      await frames()
+
+      expect(besideCog(opened).below).toBeCloseTo(before.below, 0)
+      expect(besideCog(opened).right).toBeCloseTo(before.right, 0)
+      expectUsable(opened)
+    })
+
+    it('as when the window gets shorter', async () => {
+      const { container } = await renderSettled(below, ONE_ENGINE)
+      const opened = await openSettings()
+      const before = besideCog(opened)
+
+      try {
+        await browserPage.viewport(VIEWPORT.width, 600)
+        await atRest(container)
+        await frames()
+
+        expect(besideCog(opened).below).toBeCloseTo(before.below, 0)
+        expect(besideCog(opened).right).toBeCloseTo(before.right, 0)
+        expectUsable(opened)
+      } finally {
+        await browserPage.viewport(VIEWPORT.width, VIEWPORT.height)
+      }
+    })
   })
 })
