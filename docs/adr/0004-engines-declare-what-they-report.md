@@ -47,7 +47,10 @@ does not report the group.
   heading.
 - **All models combines only the engines that report the metric**, and says so
   when that is not all of them. An engine with no request count cannot enter a
-  request-weighted latency mean.
+  request-weighted latency mean, and an engine with metrics off is left out on
+  the same terms. The automatic page selection follows suit: it prefers a
+  running engine that reports metrics, so a page does not open on an engine with
+  nothing to show.
 - **Adding or splitting a metric group is a metrics-contract change**, with the
   usual five places to update.
 
