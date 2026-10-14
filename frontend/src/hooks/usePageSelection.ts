@@ -1,6 +1,6 @@
 import { createContext, useContext } from 'react'
 import type { PageSource } from '@/lib/dashboard/pageSource'
-import type { SelectedTargets } from '@/lib/dashboard/selection'
+import type { PageEngineTarget, SelectedTargets } from '@/lib/dashboard/selection'
 
 /**
  * What one page is pointed at, and how to point it somewhere else.
@@ -18,8 +18,11 @@ export interface PageSelectionValue {
   source?: PageSource
   /** Point every following panel at one GPU; null goes back to the host default. */
   selectGpu: (index: number | null) => void
-  /** Point every following panel at one engine; null goes back to the host default. */
-  selectEngine: (endpoint: string | null) => void
+  /**
+   * Point every following engine panel at one engine or at all models; null
+   * goes back to the page's source, then the host default.
+   */
+  selectEngine: (target: PageEngineTarget | null) => void
 }
 
 /**

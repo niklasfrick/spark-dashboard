@@ -1,6 +1,11 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import type { PageSource } from '@/lib/dashboard/pageSource'
-import { withSelectedEngine, withSelectedGpu, type SelectedTargets } from '@/lib/dashboard/selection'
+import {
+  withSelectedEngine,
+  withSelectedGpu,
+  type PageEngineTarget,
+  type SelectedTargets,
+} from '@/lib/dashboard/selection'
 import { PageSelectionContext, type PageSelectionValue } from './usePageSelection'
 
 /**
@@ -25,14 +30,26 @@ export function PageSelectionProvider({
 }) {
   const [chosen, setChosen] = useState<SelectedTargets>({})
 
+  // Stable for the life of the page, so something that selects on a timer can
+  // depend on them without restarting its clock every time it selects.
+  const selectGpu = useCallback(
+    (index: number | null) => setChosen((current) => withSelectedGpu(current, index)),
+    [],
+  )
+  const selectEngine = useCallback(
+    (target: PageEngineTarget | null) =>
+      setChosen((current) => withSelectedEngine(current, target)),
+    [],
+  )
+
   const value = useMemo(
     (): PageSelectionValue => ({
       chosen,
       ...(source === undefined ? {} : { source }),
-      selectGpu: (index) => setChosen((current) => withSelectedGpu(current, index)),
-      selectEngine: (endpoint) => setChosen((current) => withSelectedEngine(current, endpoint)),
+      selectGpu,
+      selectEngine,
     }),
-    [chosen, source],
+    [chosen, source, selectGpu, selectEngine],
   )
 
   return <PageSelectionContext.Provider value={value}>{children}</PageSelectionContext.Provider>

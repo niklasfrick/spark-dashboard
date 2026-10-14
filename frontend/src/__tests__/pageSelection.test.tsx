@@ -109,8 +109,26 @@ function SelectGpu({ index }: { index: number | null }) {
 function SelectEngine({ endpoint }: { endpoint: string }) {
   const { selectEngine } = usePageSelection()
   return (
-    <button type="button" onClick={() => selectEngine(endpoint)}>
+    <button type="button" onClick={() => selectEngine({ kind: 'engine', endpoint })}>
       Select {endpoint}
+    </button>
+  )
+}
+
+function SelectAllModels() {
+  const { selectEngine } = usePageSelection()
+  return (
+    <button type="button" onClick={() => selectEngine({ kind: 'all' })}>
+      Select all models
+    </button>
+  )
+}
+
+function ClearEngine() {
+  const { selectEngine } = usePageSelection()
+  return (
+    <button type="button" onClick={() => selectEngine(null)}>
+      Clear engine
     </button>
   )
 }
@@ -252,5 +270,47 @@ describe('the page-level engine selection', () => {
     expect(within(region('Requests')).getByText('vLLM localhost:8001')).toBeInTheDocument()
     // …and the pinned one stayed on the engine it names.
     expect(within(region('Pinned to Alpha')).getByText('120.0')).toBeInTheDocument()
+  })
+})
+
+describe('a session choice of all models', () => {
+  // What engine rotation starts every cycle with: the session layer pointing a
+  // page at the combined view, whatever the page's own source says.
+  function OneEnginePage() {
+    return (
+      <MetricsStoreProvider>
+        <Ingest />
+        <PageSelectionProvider source={{ kind: 'engine', endpoint: BETA }}>
+          <SelectAllModels />
+          <ClearEngine />
+          <GridPanel panel={panel('decode', 'engine-decode-throughput')} />
+          <GridPanel
+            panel={{
+              ...panel('pinned-engine', 'engine-decode-throughput'),
+              title: 'Pinned to Alpha',
+              binding: { kind: 'engine', endpoint: ALPHA },
+            }}
+          />
+        </PageSelectionProvider>
+      </MetricsStoreProvider>
+    )
+  }
+
+  it('shows the combined figures over a source naming one engine, and clears back to it', () => {
+    render(<OneEnginePage />)
+
+    // The page's own source: Beta.
+    expect(within(region('Decode Throughput')).getByText('640.0')).toBeInTheDocument()
+
+    click('Select all models')
+
+    const decode = region('Decode Throughput')
+    expect(within(decode).getByText('760.0')).toBeInTheDocument()
+    expect(within(decode).getByText('All models')).toBeInTheDocument()
+    expect(within(region('Pinned to Alpha')).getByText('120.0')).toBeInTheDocument()
+
+    // Clearing the choice hands the page back to its source, not to the host.
+    click('Clear engine')
+    expect(within(region('Decode Throughput')).getByText('640.0')).toBeInTheDocument()
   })
 })

@@ -104,7 +104,7 @@ function Ingest({ engines }: { engines: EngineSnapshot[] }) {
 function SelectEngine({ endpoint }: { endpoint: string }) {
   const { selectEngine } = usePageSelection()
   return (
-    <button type="button" onClick={() => selectEngine(endpoint)}>
+    <button type="button" onClick={() => selectEngine({ kind: 'engine', endpoint })}>
       Select {endpoint}
     </button>
   )
