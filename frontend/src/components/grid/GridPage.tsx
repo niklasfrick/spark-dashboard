@@ -1,9 +1,10 @@
 import 'gridstack/dist/gridstack.css'
-import { useCallback, useMemo, useRef } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   GridStack,
   GridStackItem,
   type GridItemHTMLElement,
+  type GridStackHandle,
   type GridStackNode,
   type GridStackOptions,
 } from 'gridstack/dist/react'
@@ -107,20 +108,43 @@ export function GridPage({
   chrome?: PanelChrome
 }) {
   const [containerRef, { width, height }] = useElementSize<HTMLDivElement>()
+  const measured = height > 0
   const narrow = isNarrow(width)
-  const cellHeight = height > 0 ? Math.floor(height / GRID_MAX_ROWS) : FALLBACK_CELL_HEIGHT
+  const cellHeight = measured ? Math.floor(height / GRID_MAX_ROWS) : FALLBACK_CELL_HEIGHT
   // A session survives the window narrowing, but nothing may be rearranged
   // while it does: the collapsed column is derived from the layout being
   // edited, so a drag there would author cells in a grid one column wide.
   const draggable = Boolean(editing) && !narrow
 
+  // Whether the grid may collapse yet: not until it holds the panels (#139).
+  //
+  // The engine only stacks panels in reading order when its column count
+  // changes — it sorts them by row, then column, and lays them out again from
+  // the top. Handed the breakpoint while it is still empty, a grid that opens
+  // narrow is one column before it has a single panel, and then takes them one
+  // at a time in the order the page stores them, each pushing whatever already
+  // sits on its rows further down. That is every phone, on every load and
+  // every page switch.
+  //
+  // So the panels go in at their desktop cells first, and the collapse that
+  // follows is the same 12 → 1 change a narrowing window makes, which is also
+  // what caches the authored layout for widening to restore. It still lands
+  // before the first paint. The wrapper creates the grid in a layout effect and
+  // re-renders so each panel can add itself to it; the state set here joins
+  // that render, in which the wrapper applies changed options only after its
+  // panels' own effects have run. The grid browser spec checks the first frame.
+  const gridHandle = useRef<GridStackHandle>(null)
+  const [collapsible, setCollapsible] = useState(false)
+  useLayoutEffect(() => {
+    if (gridHandle.current?.getGrid()) setCollapsible(true)
+  }, [])
+
   const options = useMemo(
     (): GridStackOptions => ({
       column: GRID_COLUMNS,
-      columnOpts: {
-        columnMax: GRID_COLUMNS,
-        breakpoints: [{ w: SINGLE_COLUMN_BREAKPOINT, c: 1 }],
-      },
+      columnOpts: collapsible
+        ? { columnMax: GRID_COLUMNS, breakpoints: [{ w: SINGLE_COLUMN_BREAKPOINT, c: 1 }] }
+        : undefined,
       // The cap is the engine's only while an edit session is open, and only on
       // a desktop-width grid. Outside one it must stay off: the engine clamps
       // every node into the cap when it re-adds them during a column change,
@@ -135,8 +159,13 @@ export function GridPage({
       // everything upward on load and quietly rewrites the operator's layout.
       float: true,
       staticGrid: !draggable,
+      // No animation until the container has been measured, which is after the
+      // first paint. Until then the engine is placing panels where the page
+      // starts rather than moving them: animated, every panel would fly in from
+      // the top-left cell, and a page opening narrow would be seen collapsing.
+      animate: measured,
     }),
-    [cellHeight, draggable],
+    [cellHeight, collapsible, draggable, measured],
   )
 
   // The gesture under way: what it is doing, where the panel started, and where
@@ -215,6 +244,7 @@ export function GridPage({
           defaults — again. */}
       <PageSelectionProvider source={page.source}>
         <GridStack
+          ref={gridHandle}
           options={options}
           onChange={draggable ? handleChange : undefined}
           onDragStart={draggable ? beginMove : undefined}
