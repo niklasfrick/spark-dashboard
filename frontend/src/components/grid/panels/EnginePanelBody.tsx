@@ -28,11 +28,12 @@ interface EnginePanelBodyProps {
  * alone does not say whose.
  */
 export function EnginePanelBody({ identity, actions, tiles, chart }: EnginePanelBodyProps) {
-  const { label, model, logo, modelWarning } = identity ?? {
+  const { label, model, logo, modelWarning, coverage } = identity ?? {
     label: null,
     model: null,
     logo: null,
     modelWarning: null,
+    coverage: null,
   }
   const [ref, size] = useElementSize<HTMLDivElement>()
   const mode = enginePanelMode(size)
@@ -55,7 +56,8 @@ export function EnginePanelBody({ identity, actions, tiles, chart }: EnginePanel
             <span
               className="flex items-center gap-1.5 min-w-0"
               title={
-                [model, label, modelWarning].filter(Boolean).join(' — ') || undefined
+                [model, label, coverage, modelWarning].filter(Boolean).join(' — ') ||
+                undefined
               }
             >
               {logo && <ProviderMark logo={logo} />}
@@ -72,6 +74,11 @@ export function EnginePanelBody({ identity, actions, tiles, chart }: EnginePanel
               <span className="text-[10px] font-medium uppercase tracking-wider text-zinc-500 truncate">
                 {label}
               </span>
+              {/* After "2 of 3 serving", so the two counts read together: how
+                  many engines are serving, and how many the figures cover. */}
+              {coverage && (
+                <span className="text-[10px] font-medium text-zinc-500 truncate">{coverage}</span>
+              )}
             </span>
           )}
           {actions}

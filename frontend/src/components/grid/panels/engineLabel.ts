@@ -1,4 +1,10 @@
-import { engineDescription, modelMetadataWarning, shortModelName } from '@/lib/format'
+import type { GroupCoverage } from '@/lib/engineAggregate'
+import {
+  coverageNote,
+  engineDescription,
+  modelMetadataWarning,
+  shortModelName,
+} from '@/lib/format'
 import { getProviderLogo, type ProviderLogo } from '@/lib/providerLogo'
 import type { AggregateEngineTarget, ResolvedEngineTarget } from './useEnginePanel'
 
@@ -37,6 +43,10 @@ export interface EngineIdentity {
    *  the name (if any) is only the launch command line's word for it. Null
    *  when there is nothing to warn about. */
   modelWarning: string | null
+  /** How many engines the combined figures cover — "2 of 3 engines" — when
+   *  that is not every running engine. Null when it is, and for a single
+   *  engine, whose figures are only ever its own. */
+  coverage: string | null
 }
 
 /**
@@ -54,19 +64,22 @@ export interface EngineIdentity {
  * the row is the only place the panel says so.
  */
 export function engineIdentity(
-  resolution: ResolvedEngineTarget | AggregateEngineTarget,
+  resolution: ResolvedEngineTarget | (AggregateEngineTarget & { coverage?: GroupCoverage }),
 ): EngineIdentity {
   if (resolution.status === 'aggregate') {
     return {
+      // Every engine serving, whatever the figures cover: the coverage is its
+      // own part of the row, so neither number has to stand for the other.
       label: `${resolution.running} of ${resolution.total} serving`,
       model: 'All models',
       logo: null,
       modelWarning: null,
+      coverage: resolution.coverage ? coverageNote(resolution.coverage) : null,
     }
   }
 
   if (!resolution.multiEngine) {
-    return { label: null, model: null, logo: null, modelWarning: null }
+    return { label: null, model: null, logo: null, modelWarning: null, coverage: null }
   }
 
   const { model } = resolution.engine
@@ -75,5 +88,6 @@ export function engineIdentity(
     model: model?.name ? shortModelName(model.name) : null,
     logo: getProviderLogo(model?.name),
     modelWarning: modelMetadataWarning(resolution.engine.model_metadata_error),
+    coverage: null,
   }
 }

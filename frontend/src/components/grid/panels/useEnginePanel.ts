@@ -4,7 +4,12 @@ import { usePageSelection } from '@/hooks/usePageSelection'
 import { resolveEngineBinding } from '@/lib/dashboard/bindings'
 import { panelMetricGroups } from '@/lib/dashboard/panels'
 import { pageSelection } from '@/lib/dashboard/selection'
-import { aggregateEngineMetrics } from '@/lib/engineAggregate'
+import {
+  aggregateEngines,
+  asEngineMetrics,
+  panelCoverage,
+  type GroupCoverage,
+} from '@/lib/engineAggregate'
 import {
   engineAvailability,
   engineMetricReader,
@@ -72,14 +77,22 @@ interface EngineReadings {
 export type EnginePanelResolution =
   | (ResolvedEngineTarget & EngineReadings)
   /** The combined figures, read through the same reader and series shape a
-   *  single engine uses — which is what lets one panel render either. */
-  | (AggregateEngineTarget & EngineReadings)
+   *  single engine uses — which is what lets one panel render either. Each
+   *  figure combines only the engines that report its group; `coverage` says
+   *  how many that is, per group the panel shows. */
+  | (AggregateEngineTarget & EngineReadings & { coverage: GroupCoverage })
   /**
    * The engine resolved, and reports none of the metric groups the panel shows
    * — a property of the engine rather than a moment in its life, so the panel
    * says so in place of its data and keeps its slot (ADR-0004).
    */
   | { status: 'not-reported'; engine: EngineSnapshot; groups: readonly MetricGroup[] }
+  /**
+   * The all-models counterpart of `not-reported`: engines are serving, and none
+   * of them reports any of the groups the panel shows — so the combination has
+   * nothing to combine, and the panel says so rather than showing a zero.
+   */
+  | { status: 'not-reported-by-any'; groups: readonly MetricGroup[]; running: number }
   /** The engine resolved, and has no metrics yet — starting, or loading a model. */
   | { status: 'starting'; engine: EngineSnapshot }
   /** The engine resolved and is not serving; `detail` says why. */
@@ -180,17 +193,25 @@ export function useEnginePanel(panel: DashboardPanel): EnginePanelResolution {
       // Recomputed from the snapshot the target was resolved against, so the
       // tiles and the target agree; the series were ingested under the
       // all-engines key by the same aggregation.
-      const metrics = aggregateEngineMetrics(snapshot?.engines ?? [])
+      const aggregate = aggregateEngines(snapshot?.engines ?? [])
+      const metrics = asEngineMetrics(aggregate)
       if (!metrics) return { status: 'unselected' }
+
+      // A group the combination reports is one at least one running engine
+      // enters — by declaration, so a host running only vLLM reports every
+      // group, exactly as the combination always has.
+      const { coverage } = aggregate
+      const reports = (group: MetricGroup) => coverage.included[group] > 0
+      if (groups.length > 0 && !groups.some(reports)) {
+        return { status: 'not-reported-by-any', groups, running: aggregate.running_count }
+      }
 
       return {
         ...target,
         metric: <K extends keyof EngineMetrics>(key: K) => metrics[key],
         series: (name) => store.getChartData(engineSeries(name, ALL_ENGINES_KEY), window),
-        // The combination is unchanged by metric groups for now: it reads as
-        // reporting every group, as it always has. Combining only the engines
-        // that report a metric is its own change (#130).
-        reports: () => true,
+        reports,
+        coverage: panelCoverage(coverage, groups),
       }
     }
     if (target.status !== 'resolved') return target

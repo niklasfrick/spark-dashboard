@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { engineDescription, notReportedMessage } from '@/lib/format'
+import { engineDescription, notReportedByAnyMessage, notReportedMessage } from '@/lib/format'
 import type { EnginePanelNoticeState } from './useEnginePanel'
 import type { GpuPanelResolution } from './useGpuPanel'
 
@@ -33,6 +33,10 @@ export function EnginePanelNotice({ resolution }: { resolution: EnginePanelNotic
       return (
         <PanelNotice>{notReportedMessage(resolution.engine, resolution.groups)}</PanelNotice>
       )
+    // The same, for all models: no running engine reports the panel's groups,
+    // so a combined zero would be a figure nobody measured.
+    case 'not-reported-by-any':
+      return <PanelNotice>{notReportedByAnyMessage(resolution.groups)}</PanelNotice>
     case 'starting':
       return <PanelNotice>{engineDescription(resolution.engine)} has no metrics yet.</PanelNotice>
     case 'offline':

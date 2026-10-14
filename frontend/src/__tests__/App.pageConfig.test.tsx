@@ -174,6 +174,9 @@ describe('the page configuration control', () => {
     expect(within(followPanel()).getByText('760.0')).toBeInTheDocument()
     expect(within(followPanel()).getByText('All models')).toBeInTheDocument()
     expect(within(followPanel()).getByText('2 of 2 serving')).toBeInTheDocument()
+    // Two vLLM engines report every group, so the figures cover both — and the
+    // panel reads exactly as it did before engines declared their groups.
+    expect(within(followPanel()).queryByText(/of \d+ engines/)).not.toBeInTheDocument()
     expect(within(pinnedPanel()).getByText('120.0')).toBeInTheDocument()
   })
 

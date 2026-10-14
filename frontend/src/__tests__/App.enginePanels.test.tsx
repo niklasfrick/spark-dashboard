@@ -20,6 +20,7 @@ import {
   type EngineMetrics,
   type EngineSnapshot,
   type InferenceRequestData,
+  type MetricGroup,
   type MetricsSnapshot,
   type ModelInfo,
 } from '../types/metrics'
@@ -1034,6 +1035,175 @@ describe('an engine that does not report a panel’s metric group', () => {
         'This engine is not using speculative decoding.',
       ),
     ).toBeInTheDocument()
+  })
+})
+
+// A page configured for all models combines each figure from the engines that
+// report its group (#130): one that does not report it, or whose metrics are
+// off, is left out rather than entering as a zero — and the panel says how many
+// engines its figures cover whenever that is not all of them.
+describe('all models on engines that report different groups', () => {
+  /** A stored page of these panels, configured to show all models combined. */
+  function allModelsDocument(panels: unknown[]): string {
+    return JSON.stringify({
+      version: DASHBOARD_SCHEMA_VERSION,
+      pages: [{ id: 'engines', name: 'Engines', source: { kind: 'all' }, panels }],
+    })
+  }
+
+  const decodePanel = {
+    id: 'decode',
+    type: 'engine-decode-throughput',
+    geometry: { x: 0, y: 0, w: 6, h: 4 },
+  }
+
+  /** Every group but the one named — what an engine without it declares. */
+  const allGroupsBut = (group: MetricGroup) => METRIC_GROUPS.filter((g) => g !== group)
+
+  async function showAllModels(panels: unknown[], engines: EngineSnapshot[]) {
+    const fetchMock = serveConfiguration({ document: allModelsDocument(panels) })
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, engines))
+  }
+
+  it('leaves out an engine that does not report throughput, and says how many it covers', async () => {
+    await showAllModels(
+      [decodePanel],
+      [
+        makeEngine(ALPHA),
+        // Its throughput figure would be read as a sample; it is not reported.
+        makeEngine(BETA, { metric_groups: ['Requests'] }, { tokens_per_sec: 640 }),
+      ],
+    )
+
+    const decode = region('Decode Throughput')
+    expect(within(decode).getByText('120.0')).toBeInTheDocument()
+    expect(within(decode).queryByText('760.0')).not.toBeInTheDocument()
+    // Still the aggregate's own name, and still every engine serving…
+    expect(within(decode).getByText('All models')).toBeInTheDocument()
+    expect(within(decode).getByText('2 of 2 serving')).toBeInTheDocument()
+    // …with how many of them the figures actually cover beside it.
+    expect(within(decode).getByText('1 of 2 engines')).toBeInTheDocument()
+    expect(
+      within(decode).getByTitle('All models — 2 of 2 serving — 1 of 2 engines'),
+    ).toBeInTheDocument()
+  })
+
+  it('leaves out an engine whose metrics are off', async () => {
+    await showAllModels(
+      [decodePanel],
+      [makeEngine(ALPHA), makeEngine(BETA, { metrics_off: '--enable-metrics', metrics: null })],
+    )
+
+    const decode = region('Decode Throughput')
+    expect(within(decode).getByText('120.0')).toBeInTheDocument()
+    expect(within(decode).getByText('2 of 2 serving')).toBeInTheDocument()
+    expect(within(decode).getByText('1 of 2 engines')).toBeInTheDocument()
+  })
+
+  it('reads exactly as before when every engine reports every group', async () => {
+    await showAllModels(enginePanels(), [
+      makeEngine(ALPHA, { metric_groups: [...METRIC_GROUPS] }),
+      makeEngine(BETA, { metric_groups: [...METRIC_GROUPS] }, { tokens_per_sec: 640 }),
+    ])
+
+    const decode = region('Decode Throughput')
+    expect(within(decode).getByText('760.0')).toBeInTheDocument()
+    expect(within(decode).getByText('2 of 2 serving')).toBeInTheDocument()
+    expect(within(decode).getByTitle('All models — 2 of 2 serving')).toBeInTheDocument()
+    // No panel on the page counts its engines when it covers all of them.
+    expect(screen.queryByText(/of \d+ engines/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/No running engine reports/)).not.toBeInTheDocument()
+    expect(
+      within(region('Speculative Decoding')).getByText('No model is using speculative decoding.'),
+    ).toBeInTheDocument()
+  })
+
+  it('says a group no running engine reports is not reported, rather than showing a zero', async () => {
+    /** What each engine metric panel says when no running engine reports its groups. */
+    const NOT_REPORTED_BY_ANY: Partial<Record<PanelType, string>> = {
+      'engine-prefill-throughput': 'No running engine reports throughput.',
+      'engine-decode-throughput': 'No running engine reports throughput.',
+      'engine-latency':
+        'No running engine reports latency means, latency percentiles or queue time.',
+      'engine-slo-goodput': 'No running engine reports latency percentiles.',
+      'engine-requests': 'No running engine reports requests.',
+      'engine-cache': 'No running engine reports KV cache or prefix cache.',
+      'engine-spec-decode': 'No running engine reports speculative decoding.',
+    }
+    const panels = enginePanels() as Array<{ type: PanelType }>
+    // Every engine metric panel type, so one added later is held to this too.
+    expect(panels.map((p) => p.type).sort()).toEqual(Object.keys(NOT_REPORTED_BY_ANY).sort())
+
+    await showAllModels(panels, [
+      makeEngine(ALPHA, { metric_groups: [] }),
+      makeEngine(BETA, { metric_groups: [] }),
+    ])
+
+    for (const { type } of panels) {
+      const panel = region(defaultPanelTitle(type))
+      expect(within(panel).getByText(NOT_REPORTED_BY_ANY[type]!), type).toBeInTheDocument()
+      expect(within(panel).queryByText('0'), type).not.toBeInTheDocument()
+      expect(within(panel).queryByText('--'), type).not.toBeInTheDocument()
+      expect(within(panel).queryByTestId('chart'), type).not.toBeInTheDocument()
+    }
+  })
+
+  it('combines each half of the cache panel from the engines that report it', async () => {
+    await showAllModels(
+      [{ id: 'cache', type: 'engine-cache', geometry: { x: 0, y: 0, w: 6, h: 4 } }],
+      [
+        makeEngine(ALPHA, { metric_groups: ['KvCache'] }, { prefix_cache_hit_rate: 15 }),
+        makeEngine(BETA, { metric_groups: ['PrefixCache'] }, { kv_cache_percent: 90 }),
+      ],
+    )
+
+    const cache = region('Cache')
+    // KV from Alpha alone (not the mean with Beta's 90, 66)…
+    expect(within(cache).getByText('42')).toBeInTheDocument()
+    expect(within(cache).queryByText('66')).not.toBeInTheDocument()
+    // …and the prefix cache from Beta alone (not the mean with Alpha's 15, 35,
+    // nor both engines' queries summed, 4M).
+    expect(within(cache).getByText('55')).toBeInTheDocument()
+    expect(within(cache).getByText('2M')).toBeInTheDocument()
+    expect(within(cache).queryByText('35')).not.toBeInTheDocument()
+    expect(within(cache).queryByText('4M')).not.toBeInTheDocument()
+    // Each figure covers one engine of two, so the count is said once.
+    expect(within(cache).getByText('1 of 2 engines')).toBeInTheDocument()
+  })
+
+  it('weights latency only by the engines that report requests', async () => {
+    await showAllModels(
+      [{ id: 'latency', type: 'engine-latency', geometry: { x: 0, y: 0, w: 6, h: 4 } }],
+      [
+        makeEngine(ALPHA),
+        // Means without request counts carry no weight, so they cannot enter.
+        makeEngine(BETA, { metric_groups: ['LatencyMeans'] }, { ttft_ms: 99_999 }),
+      ],
+    )
+
+    const latency = region('Latency')
+    expect(within(latency).getByText('210')).toBeInTheDocument()
+    expect(within(latency).getByText('1 of 2 engines')).toBeInTheDocument()
+  })
+
+  it('says speculative decoding is not reported rather than not in use', async () => {
+    await showAllModels(
+      [{ id: 'spec', type: 'engine-spec-decode', geometry: { x: 0, y: 0, w: 6, h: 4 } }],
+      [
+        makeEngine(ALPHA, { metric_groups: allGroupsBut('SpeculativeDecoding') }),
+        makeEngine(BETA, { metric_groups: allGroupsBut('SpeculativeDecoding') }),
+      ],
+    )
+
+    const spec = region('Speculative Decoding')
+    expect(
+      within(spec).getByText('No running engine reports speculative decoding.'),
+    ).toBeInTheDocument()
+    expect(
+      within(spec).queryByText('No model is using speculative decoding.'),
+    ).not.toBeInTheDocument()
   })
 })
 
