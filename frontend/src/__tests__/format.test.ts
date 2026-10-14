@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  coverageNote,
   formatAge,
   formatBytes,
   formatCompactTokens,
@@ -8,6 +9,7 @@ import {
   engineDescription,
   metricGroupName,
   modelMetadataWarning,
+  notReportedByAnyMessage,
   notReportedMessage,
 } from '../lib/format'
 import { METRIC_GROUPS } from '../types/metrics'
@@ -164,5 +166,79 @@ describe('notReportedMessage', () => {
     expect(notReportedMessage(engine, ['LatencyMeans', 'LatencyPercentiles', 'QueueTime'])).toBe(
       'vLLM localhost:8080 does not report latency means, latency percentiles or queue time.',
     )
+  })
+})
+
+describe('notReportedByAnyMessage', () => {
+  it('says no running engine reports the panel’s groups', () => {
+    expect(notReportedByAnyMessage(['SpeculativeDecoding'])).toBe(
+      'No running engine reports speculative decoding.',
+    )
+    expect(notReportedByAnyMessage(['KvCache', 'PrefixCache'])).toBe(
+      'No running engine reports KV cache or prefix cache.',
+    )
+    expect(notReportedByAnyMessage(['LatencyMeans', 'LatencyPercentiles', 'QueueTime'])).toBe(
+      'No running engine reports latency means, latency percentiles or queue time.',
+    )
+  })
+})
+
+describe('coverageNote', () => {
+  it('says nothing when every figure covers every running engine', () => {
+    expect(
+      coverageNote({
+        running: 3,
+        groups: [
+          { group: 'KvCache', included: 3 },
+          { group: 'PrefixCache', included: 3 },
+        ],
+      }),
+    ).toBeNull()
+  })
+
+  it('says nothing for a panel with no group to cover', () => {
+    expect(coverageNote({ running: 3, groups: [] })).toBeNull()
+  })
+
+  it('counts the engines once when every figure covers the same ones', () => {
+    expect(
+      coverageNote({
+        running: 3,
+        groups: [
+          { group: 'KvCache', included: 2 },
+          { group: 'PrefixCache', included: 2 },
+        ],
+      }),
+    ).toBe('2 of 3 engines')
+  })
+
+  it('counts the engines of a single group', () => {
+    expect(coverageNote({ running: 4, groups: [{ group: 'Throughput', included: 1 }] })).toBe(
+      '1 of 4 engines',
+    )
+  })
+
+  it('counts per group when the figures cover different engines', () => {
+    expect(
+      coverageNote({
+        running: 3,
+        groups: [
+          { group: 'KvCache', included: 2 },
+          { group: 'PrefixCache', included: 1 },
+        ],
+      }),
+    ).toBe('KV cache 2 of 3, prefix cache 1 of 3 engines')
+  })
+
+  it('names every group, the complete ones too, and starts as a sentence', () => {
+    expect(
+      coverageNote({
+        running: 3,
+        groups: [
+          { group: 'Throughput', included: 3 },
+          { group: 'Requests', included: 2 },
+        ],
+      }),
+    ).toBe('Throughput 3 of 3, requests 2 of 3 engines')
   })
 })

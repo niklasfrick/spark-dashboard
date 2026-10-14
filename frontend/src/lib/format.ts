@@ -1,3 +1,4 @@
+import type { GroupCoverage } from '@/lib/engineAggregate'
 import type { EngineIdentity } from '@/lib/identity'
 import type { EngineType, MetricGroup, ModelMetadataError } from '@/types/metrics'
 
@@ -226,6 +227,36 @@ export function notReportedMessage(
   groups: readonly MetricGroup[],
 ): string {
   return `${engineDescription(engine)} does not report ${listOfAlternatives(groups.map(metricGroupName))}.`
+}
+
+/** What an all-models panel says when no running engine reports any of its groups:
+ *  "No running engine reports KV cache or prefix cache." The all-models
+ *  counterpart of `notReportedMessage` — a property of the host's engines, not
+ *  data that has yet to arrive. */
+export function notReportedByAnyMessage(groups: readonly MetricGroup[]): string {
+  return `No running engine reports ${listOfAlternatives(groups.map(metricGroupName))}.`
+}
+
+/** How many engines a panel's combined figures cover, when not all of them:
+ *  null when every group covers every running engine; "2 of 3 engines" when every
+ *  group covers the same subset; otherwise per group —
+ *  "KV cache 2 of 3, prefix cache 1 of 3 engines". The per-group form names
+ *  every group the panel combines, the complete ones too, so no figure's count
+ *  is left to inference. */
+export function coverageNote(coverage: GroupCoverage): string | null {
+  const { running, groups } = coverage
+  if (groups.every(({ included }) => included === running)) return null
+
+  const [first] = groups
+  if (groups.every(({ included }) => included === first.included)) {
+    return `${first.included} of ${running} engines`
+  }
+
+  const perGroup = groups
+    .map(({ group, included }) => `${metricGroupName(group)} ${included} of ${running}`)
+    .join(', ')
+  // A caption stands alone, so it starts as a sentence: "Throughput 3 of 3, …".
+  return `${perGroup.charAt(0).toUpperCase()}${perGroup.slice(1)} engines`
 }
 
 /** "a", "a or b", "a, b or c" — the list a negated verb ranges over. */
