@@ -92,7 +92,7 @@ export type EnginePanelResolution =
    * of them reports any of the groups the panel shows — so the combination has
    * nothing to combine, and the panel says so rather than showing a zero.
    */
-  | { status: 'not-reported-by-any'; groups: readonly MetricGroup[]; running: number }
+  | { status: 'not-reported-by-any'; groups: readonly MetricGroup[] }
   /** The engine resolved, and has no metrics yet — starting, or loading a model. */
   | { status: 'starting'; engine: EngineSnapshot }
   /** The engine resolved and is not serving; `detail` says why. */
@@ -203,7 +203,7 @@ export function useEnginePanel(panel: DashboardPanel): EnginePanelResolution {
       const { coverage } = aggregate
       const reports = (group: MetricGroup) => coverage.included[group] > 0
       if (groups.length > 0 && !groups.some(reports)) {
-        return { status: 'not-reported-by-any', groups, running: aggregate.running_count }
+        return { status: 'not-reported-by-any', groups }
       }
 
       return {
