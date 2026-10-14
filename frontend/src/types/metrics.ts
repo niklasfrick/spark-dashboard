@@ -234,6 +234,10 @@ export interface EngineSnapshot {
    *  backend older than the field, which reported every group — so read it
    *  through `reportedMetricGroups`, which says so, rather than directly. */
   metric_groups?: MetricGroup[]
+  /** Set while a running engine's metrics endpoint is off; carries the launch
+   *  flag that turns it on. Such an engine has `metrics: null`. Written by a
+   *  backend newer than this field (#141) — optional so older snapshots parse. */
+  metrics_off?: string | null
   metrics: EngineMetrics | null
   recent_requests: InferenceRequestData[]
   deployment_mode: DeploymentMode

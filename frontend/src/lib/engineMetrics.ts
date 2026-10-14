@@ -60,6 +60,101 @@ export function reportedMetricGroups(
   return new Set(engine.metric_groups ?? METRIC_GROUPS)
 }
 
+/**
+ * The metric group each engine metric belongs to — the grain at which an engine
+ * reports a field or does not. Exhaustive by type: a field added to
+ * `EngineMetrics` does not compile until it is filed here.
+ *
+ * Batch size is filed under throughput because the latency panel shows its tile
+ * when the engine reports throughput; the percentiles, goodput and histogram
+ * buckets all derive from the same histograms, so they share one group.
+ */
+export const METRIC_FIELD_GROUP = {
+  tokens_per_sec: 'Throughput',
+  avg_tokens_per_sec: 'Throughput',
+  per_request_tps: 'Throughput',
+  prompt_tokens_per_sec: 'Throughput',
+  avg_prompt_tokens_per_sec: 'Throughput',
+  per_request_prompt_tps: 'Throughput',
+  total_prompt_tokens: 'Throughput',
+  total_generation_tokens: 'Throughput',
+  avg_batch_size: 'Throughput',
+
+  active_requests: 'Requests',
+  queued_requests: 'Requests',
+  total_requests: 'Requests',
+  swapped_requests: 'Requests',
+  preemptions_total: 'Requests',
+
+  ttft_ms: 'LatencyMeans',
+  e2e_latency_ms: 'LatencyMeans',
+  inter_token_latency_ms: 'LatencyMeans',
+  tpot_ms: 'LatencyMeans',
+
+  ttft_percentiles: 'LatencyPercentiles',
+  itl_percentiles: 'LatencyPercentiles',
+  e2e_percentiles: 'LatencyPercentiles',
+  tpot_percentiles: 'LatencyPercentiles',
+  ttft_goodput_pct: 'LatencyPercentiles',
+  itl_goodput_pct: 'LatencyPercentiles',
+  e2e_goodput_pct: 'LatencyPercentiles',
+  tpot_goodput_pct: 'LatencyPercentiles',
+  ttft_buckets: 'LatencyPercentiles',
+  itl_buckets: 'LatencyPercentiles',
+  e2e_buckets: 'LatencyPercentiles',
+  tpot_buckets: 'LatencyPercentiles',
+
+  queue_time_ms: 'QueueTime',
+
+  kv_cache_percent: 'KvCache',
+  kv_cache_is_estimated: 'KvCache',
+
+  prefix_cache_hit_rate: 'PrefixCache',
+  prefix_cache_queries_total: 'PrefixCache',
+
+  spec_decode_draft_tokens_total: 'SpeculativeDecoding',
+  spec_decode_accepted_tokens_total: 'SpeculativeDecoding',
+  spec_decode_drafts_total: 'SpeculativeDecoding',
+  spec_decode_acceptance_rate: 'SpeculativeDecoding',
+  spec_decode_acceptance_rate_live: 'SpeculativeDecoding',
+  spec_decode_mean_acceptance_length: 'SpeculativeDecoding',
+} as const satisfies Record<keyof EngineMetrics, MetricGroup>
+
+/** The metric group an engine metric belongs to. */
+export function metricGroupOf(key: keyof EngineMetrics): MetricGroup {
+  return METRIC_FIELD_GROUP[key]
+}
+
+/**
+ * Whether an engine reports any metrics at all: false for one that declares no
+ * group, and for one whose metrics endpoint is off — which says nothing about
+ * what it would declare once turned on. A backend older than the declaration
+ * reported every group, so its engines report metrics.
+ */
+export function reportsMetrics(
+  engine: Pick<EngineSnapshot, 'metric_groups' | 'metrics_off'>,
+): boolean {
+  if (engine.metrics_off) return false
+  return reportedMetricGroups(engine).size > 0
+}
+
+/**
+ * Whether an engine enters a combined all-models figure of `group`: it has to be
+ * running, have its metrics on, and declare the group. Decided by declaration,
+ * never by value — an engine that reports a group but has no sample yet still
+ * counts, as it does in "N of M serving", and adds nothing until one arrives.
+ */
+export function contributesGroup(
+  engine: Pick<EngineSnapshot, 'status' | 'metric_groups' | 'metrics_off'>,
+  group: MetricGroup,
+): boolean {
+  return (
+    engine.status.type === 'Running' &&
+    !engine.metrics_off &&
+    reportedMetricGroups(engine).has(group)
+  )
+}
+
 /** Whether an engine has metrics worth rendering, and why not when it has not. */
 export type EngineAvailability =
   /** Serving, with metrics. */

@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
+  contributesGroup,
   engineAvailability,
   engineMetricReader,
+  METRIC_FIELD_GROUP,
+  metricGroupOf,
   reportedMetricGroups,
+  reportsMetrics,
   type EngineReadable,
 } from './engineMetrics'
 import { METRIC_GROUPS, type EngineMetrics } from '@/types/metrics'
@@ -153,5 +157,85 @@ describe('METRIC_GROUPS', () => {
       'PrefixCache',
       'SpeculativeDecoding',
     ])
+  })
+})
+
+describe('METRIC_FIELD_GROUP', () => {
+  it('places every engine metric in one of the metric groups', () => {
+    const keys = Object.keys(metrics()) as Array<keyof EngineMetrics>
+
+    for (const key of keys) {
+      expect(METRIC_GROUPS, key).toContain(METRIC_FIELD_GROUP[key])
+      expect(metricGroupOf(key)).toBe(METRIC_FIELD_GROUP[key])
+    }
+    // …and names no field the metrics do not carry.
+    expect(Object.keys(METRIC_FIELD_GROUP).sort()).toEqual([...keys].sort())
+  })
+
+  it('files each field with the group a panel keys its tile on', () => {
+    // Batch size is a throughput tile: the latency panel shows it on
+    // reports('Throughput').
+    expect(metricGroupOf('avg_batch_size')).toBe('Throughput')
+    expect(metricGroupOf('total_requests')).toBe('Requests')
+    expect(metricGroupOf('tpot_ms')).toBe('LatencyMeans')
+    expect(metricGroupOf('e2e_goodput_pct')).toBe('LatencyPercentiles')
+    expect(metricGroupOf('itl_buckets')).toBe('LatencyPercentiles')
+    expect(metricGroupOf('queue_time_ms')).toBe('QueueTime')
+    expect(metricGroupOf('kv_cache_is_estimated')).toBe('KvCache')
+    expect(metricGroupOf('prefix_cache_queries_total')).toBe('PrefixCache')
+    expect(metricGroupOf('spec_decode_acceptance_rate_live')).toBe('SpeculativeDecoding')
+  })
+})
+
+describe('contributesGroup', () => {
+  const running = { status: { type: 'Running' } } as const
+
+  it('counts a running engine that declares the group', () => {
+    expect(contributesGroup({ ...running, metric_groups: ['KvCache'] }, 'KvCache')).toBe(true)
+  })
+
+  it('counts a running engine from a backend older than the declaration', () => {
+    expect(contributesGroup(running, 'KvCache')).toBe(true)
+  })
+
+  it('leaves out an engine that is not running', () => {
+    for (const status of [
+      { type: 'Stopped' },
+      { type: 'Loading' },
+      { type: 'Error', message: 'boom' },
+    ] as const) {
+      expect(contributesGroup({ status }, 'Throughput'), status.type).toBe(false)
+    }
+  })
+
+  it('leaves out an engine that does not declare the group', () => {
+    expect(contributesGroup({ ...running, metric_groups: ['Throughput'] }, 'KvCache')).toBe(false)
+  })
+
+  it('leaves out an engine whose metrics are off, whatever it declares', () => {
+    expect(
+      contributesGroup(
+        { ...running, metric_groups: [...METRIC_GROUPS], metrics_off: '--enable-metrics' },
+        'Throughput',
+      ),
+    ).toBe(false)
+  })
+})
+
+describe('reportsMetrics', () => {
+  it('reads an engine that declares nothing as reporting no metrics', () => {
+    expect(reportsMetrics({ metric_groups: [] })).toBe(false)
+  })
+
+  it('reads an engine whose metrics are off as reporting no metrics', () => {
+    expect(reportsMetrics({ metrics_off: '--metrics' })).toBe(false)
+  })
+
+  it('reads a backend older than the declaration as reporting metrics', () => {
+    expect(reportsMetrics({})).toBe(true)
+  })
+
+  it('reads an engine that declares some groups as reporting metrics', () => {
+    expect(reportsMetrics({ metric_groups: ['Throughput'] })).toBe(true)
   })
 })
