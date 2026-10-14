@@ -197,6 +197,48 @@ describe('MetricsHistoryStore all-engines aggregate series', () => {
 
     expect(store.getChartData(engineSeries('tps', ALL_ENGINES_KEY), '15m')).toEqual([])
   })
+
+  it('combines only the engines that report the series’ metric group', () => {
+    // The second engine reports no throughput: its 50 is not part of the sum.
+    const store = new MetricsHistoryStore()
+    store.ingest(
+      makeSnapshot(1_000, {
+        engines: [
+          makeEngine(100),
+          { ...makeEngine(50), endpoint: 'http://localhost:8001', metric_groups: ['Requests'] },
+        ],
+      }),
+    )
+
+    expect(store.getChartData(engineSeries('tps', ALL_ENGINES_KEY), '15m')).toEqual([
+      { timestamp: 1_000, value: 100 },
+    ])
+  })
+
+  it('ingests no sample of a series no running engine reports', () => {
+    const requestsOnly = (endpoint: string): EngineSnapshot => {
+      const engine = makeEngine(100)
+      return {
+        ...engine,
+        endpoint,
+        metric_groups: ['Requests'],
+        metrics: { ...engine.metrics!, active_requests: 2 },
+      }
+    }
+    const store = new MetricsHistoryStore()
+    store.ingest(
+      makeSnapshot(1_000, {
+        engines: [requestsOnly('http://localhost:8000'), requestsOnly('http://localhost:8001')],
+      }),
+    )
+
+    // No gap filled with a zero for throughput nobody reports…
+    expect(store.getChartData(engineSeries('tps', ALL_ENGINES_KEY), '15m')).toEqual([])
+    // …while the requests they do report still chart.
+    expect(store.getChartData(engineSeries('activeRequests', ALL_ENGINES_KEY), '15m')).toEqual([
+      { timestamp: 1_000, value: 4 },
+    ])
+  })
 })
 
 describe('MetricsHistoryStore per-series subscriptions', () => {

@@ -1,5 +1,73 @@
-import type { EngineMetrics, EngineSnapshot, LatencyPercentiles } from '@/types/metrics'
+import {
+  METRIC_GROUPS,
+  type EngineMetrics,
+  type EngineSnapshot,
+  type LatencyPercentiles,
+  type MetricGroup,
+} from '@/types/metrics'
+import { contributesGroup, metricGroupOf, type NumericEngineMetric } from './engineMetrics'
 import { getProviderLogo, type ProviderLogo } from './providerLogo'
+
+/**
+ * The metric groups whose combined figures are request-weighted means. An
+ * engine has to report request counts to carry a weight, so one that reports
+ * such a group without the Requests group cannot enter its mean.
+ */
+export const REQUEST_WEIGHTED_GROUPS: ReadonlySet<MetricGroup> = new Set<MetricGroup>([
+  'LatencyMeans',
+  'LatencyPercentiles',
+  'QueueTime',
+])
+
+/**
+ * Whether an engine enters the combined all-models figures of `group`: it is
+ * running, its metrics are on, it declares the group — and, for a
+ * request-weighted group, it declares the Requests group too. Decided by
+ * declaration, never by value, so a host running only vLLM combines exactly as
+ * it did before engines declared their groups.
+ */
+export function includedIn(engine: EngineSnapshot, group: MetricGroup): boolean {
+  return (
+    contributesGroup(engine, group) &&
+    (!REQUEST_WEIGHTED_GROUPS.has(group) || contributesGroup(engine, 'Requests'))
+  )
+}
+
+/** How many engines the combined figures cover, per metric group. */
+export interface AggregateCoverage {
+  /** Running engines on the host — what "all" means in "2 of 3". */
+  running: number
+  /** Per group, how many of them a figure of that group combines. */
+  included: Readonly<Record<MetricGroup, number>>
+}
+
+/** Per group, how many running engines its combined figures cover. */
+export function aggregateCoverage(engines: readonly EngineSnapshot[]): AggregateCoverage {
+  const running = engines.filter((e) => e.status.type === 'Running')
+  const included = Object.fromEntries(
+    METRIC_GROUPS.map((group) => [group, running.filter((e) => includedIn(e, group)).length]),
+  ) as Record<MetricGroup, number>
+  return { running: running.length, included }
+}
+
+/** The coverage of one panel's groups — what its note on "2 of 3" reads. */
+export interface GroupCoverage {
+  running: number
+  groups: ReadonlyArray<{ group: MetricGroup; included: number }>
+}
+
+/** The coverage of one panel: its groups that at least one engine reports, in the panel's order. */
+export function panelCoverage(
+  coverage: AggregateCoverage,
+  groups: readonly MetricGroup[],
+): GroupCoverage {
+  return {
+    running: coverage.running,
+    groups: groups
+      .filter((group) => coverage.included[group] > 0)
+      .map((group) => ({ group, included: coverage.included[group] })),
+  }
+}
 
 /**
  * Aggregated metrics across multiple engines for the "Global" dashboard tab.
@@ -7,12 +75,19 @@ import { getProviderLogo, type ProviderLogo } from './providerLogo'
  * Semantics are per-field: throughput/counts sum (concurrent workers compose
  * additively), latencies are request-weighted means, and cache percentages
  * are simple means (each engine has its own KV pool, so summing is nonsensical).
+ *
+ * Each figure combines only the engines included in its metric group
+ * (`includedIn`): an engine that does not report a group, or whose metrics are
+ * off, is left out rather than entering as a zero. A figure no running engine
+ * reports is null.
  */
 export interface AggregateSnapshot {
   /** Count of engines whose status is Running. */
   running_count: number
   /** Count of all engines the backend knows about (Running + Loading + Stopped + Error). */
   total_count: number
+  /** How many of the running engines each group's figures combine. */
+  coverage: AggregateCoverage
 
   // SUM across running engines
   tokens_per_sec: number | null
@@ -51,6 +126,9 @@ export interface AggregateSnapshot {
   avg_batch_size: number | null
   kv_cache_percent: number | null
   prefix_cache_hit_rate: number | null
+  /** Whether the KV figure is estimated: true if any pool in its mean is —
+   *  a mean over one estimate is one. */
+  kv_cache_is_estimated: boolean
 
   // Tail-latency percentiles, weighted-mean per quantile.
   // NOTE: Cross-engine percentile averaging is approximate — true tail
@@ -119,6 +197,7 @@ function emptySnapshot(totalCount: number): AggregateSnapshot {
   return {
     running_count: 0,
     total_count: totalCount,
+    coverage: aggregateCoverage([]),
     tokens_per_sec: null,
     avg_tokens_per_sec: null,
     prompt_tokens_per_sec: null,
@@ -147,6 +226,7 @@ function emptySnapshot(totalCount: number): AggregateSnapshot {
     avg_batch_size: null,
     kv_cache_percent: null,
     prefix_cache_hit_rate: null,
+    kv_cache_is_estimated: false,
     ttft_percentiles: null,
     itl_percentiles: null,
     e2e_percentiles: null,
@@ -254,12 +334,17 @@ export function aggregateEngines(engines: readonly EngineSnapshot[]): AggregateS
     return emptySnapshot(engines.length)
   }
 
-  const metrics = running.map((e) => e.metrics)
-  const get = (key: keyof NonNullable<EngineSnapshot['metrics']>) =>
-    metrics.map((m) => (m ? (m[key] as number | null | undefined) : null))
+  // One value per running engine, masked to null for an engine not included in
+  // the field's group — so every combination below skips it exactly as it
+  // skips an engine without a sample, and never reads its value as a zero.
+  const get = <K extends keyof EngineMetrics>(key: K): Array<EngineMetrics[K] | null> =>
+    running.map((e) => (includedIn(e, metricGroupOf(key)) ? (e.metrics?.[key] ?? null) : null))
 
+  // Null for an engine that does not report requests, so it carries no weight;
+  // its latencies are masked above, so the simple-mean fallback below only ever
+  // runs over engines that do report requests.
   const weights = get('total_requests')
-  const weightedBy = (key: keyof NonNullable<EngineSnapshot['metrics']>) =>
+  const weightedBy = (key: NumericEngineMetric) =>
     weightedMeanOrNull(
       get(key).map((value, i) => ({ value, weight: weights[i] })),
     )
@@ -276,6 +361,7 @@ export function aggregateEngines(engines: readonly EngineSnapshot[]): AggregateS
   return {
     running_count: running.length,
     total_count: engines.length,
+    coverage: aggregateCoverage(engines),
 
     // Additive
     tokens_per_sec: sumOrNull(get('tokens_per_sec')),
@@ -324,24 +410,13 @@ export function aggregateEngines(engines: readonly EngineSnapshot[]): AggregateS
     avg_batch_size: meanOrNull(get('avg_batch_size')),
     kv_cache_percent: meanOrNull(get('kv_cache_percent')),
     prefix_cache_hit_rate: meanOrNull(get('prefix_cache_hit_rate')),
+    kv_cache_is_estimated: get('kv_cache_is_estimated').some((estimated) => estimated === true),
 
     // Tail latency — weighted mean per quantile.
-    ttft_percentiles: aggregatePercentiles(
-      metrics.map((m) => m?.ttft_percentiles ?? null),
-      weights,
-    ),
-    itl_percentiles: aggregatePercentiles(
-      metrics.map((m) => m?.itl_percentiles ?? null),
-      weights,
-    ),
-    e2e_percentiles: aggregatePercentiles(
-      metrics.map((m) => m?.e2e_percentiles ?? null),
-      weights,
-    ),
-    tpot_percentiles: aggregatePercentiles(
-      metrics.map((m) => m?.tpot_percentiles ?? null),
-      weights,
-    ),
+    ttft_percentiles: aggregatePercentiles(get('ttft_percentiles'), weights),
+    itl_percentiles: aggregatePercentiles(get('itl_percentiles'), weights),
+    e2e_percentiles: aggregatePercentiles(get('e2e_percentiles'), weights),
+    tpot_percentiles: aggregatePercentiles(get('tpot_percentiles'), weights),
 
     // Goodput — weighted mean by total_requests, same caveat as percentiles.
     ttft_goodput_pct: weightedBy('ttft_goodput_pct'),
@@ -362,11 +437,8 @@ export function aggregateEngines(engines: readonly EngineSnapshot[]): AggregateS
  * distribution nobody measured. The SLO panel already falls back to the
  * backend-computed goodput percentages, which aggregate as weighted means.
  */
-export function aggregateEngineMetrics(engines: readonly EngineSnapshot[]): EngineMetrics | null {
-  const aggregate = aggregateEngines(engines)
+export function asEngineMetrics(aggregate: AggregateSnapshot): EngineMetrics | null {
   if (aggregate.running_count === 0) return null
-
-  const running = engines.filter((e) => e.status.type === 'Running')
 
   return {
     tokens_per_sec: aggregate.tokens_per_sec,
@@ -376,8 +448,7 @@ export function aggregateEngineMetrics(engines: readonly EngineSnapshot[]): Engi
     active_requests: aggregate.active_requests,
     queued_requests: aggregate.queued_requests,
     kv_cache_percent: aggregate.kv_cache_percent,
-    // Estimated if any contributing pool is: a mean over one estimate is one.
-    kv_cache_is_estimated: running.some((e) => e.metrics?.kv_cache_is_estimated === true),
+    kv_cache_is_estimated: aggregate.kv_cache_is_estimated,
     total_requests: aggregate.total_requests,
     e2e_latency_ms: aggregate.e2e_latency_ms,
     prompt_tokens_per_sec: aggregate.prompt_tokens_per_sec,
@@ -412,4 +483,13 @@ export function aggregateEngineMetrics(engines: readonly EngineSnapshot[]): Engi
     spec_decode_acceptance_rate_live: aggregate.spec_decode_acceptance_rate_live,
     spec_decode_mean_acceptance_length: aggregate.spec_decode_mean_acceptance_length,
   }
+}
+
+/**
+ * The all-models figures as one engine's metrics — `asEngineMetrics` over
+ * `aggregateEngines`. The history store ingests this, so the all-models series
+ * follow the same inclusion rule as the tiles.
+ */
+export function aggregateEngineMetrics(engines: readonly EngineSnapshot[]): EngineMetrics | null {
+  return asEngineMetrics(aggregateEngines(engines))
 }
