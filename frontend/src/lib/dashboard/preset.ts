@@ -16,7 +16,10 @@
  * says none of them matters more than the others — which is the flaw this rework
  * exists to fix. It is deliberately not a reproduction of the fixed dashboard it
  * replaced: that layout was eight equal hardware cards under an engine block,
- * and reproducing it would have carried its lack of hierarchy across.
+ * and reproducing it would have carried its lack of hierarchy across. An
+ * operator who wants that arrangement back asks for it — it is the Legacy
+ * starting layout New page offers (`startingLayouts.ts`) — rather than being
+ * handed it on a fresh install.
  *
  * The engine band leads, because what the machine is serving is what an
  * operator opens the dashboard to see; the GPU band under it is the answer to
@@ -27,8 +30,10 @@
  * **One page**, not several. A second preset page could only be another
  * arrangement of the same panels — the pages worth having are the ones an
  * operator builds for their own workload, and a page they did not ask for is a
- * tab they have to delete. The one page tiles the grid exactly, so the desktop
- * layout fills the viewport without scrolling.
+ * tab they have to delete. That is why another arrangement is a starting layout
+ * a new page is made from on request, and never a second page here. The one
+ * page tiles the grid exactly, so the desktop layout fills the viewport without
+ * scrolling.
  *
  * **No log panel**, on any page. The log viewer is off by default in every
  * deployment, so a preset that placed one would open a stock install on a panel

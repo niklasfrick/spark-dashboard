@@ -24,7 +24,8 @@
 
 import { pageSlug } from './routes'
 import type { PageSource } from './pageSource'
-import type { DashboardDocument, DashboardPage } from './schema'
+import type { DashboardDocument, DashboardPage, DashboardPanel } from './schema'
+import type { StartingLayout } from './startingLayouts'
 
 /** A page was made; `pageId` is the one to navigate to. */
 export interface AddPageOutcome {
@@ -35,9 +36,11 @@ export interface AddPageOutcome {
 /**
  * The document with one more page at the end, empty.
  *
- * Empty rather than pre-populated: a new page exists because the preset's
- * arrangement is not the one wanted, so seeding it with the preset's panels
- * would be work to undo. The operator lands on it and adds what they came for.
+ * Empty unless the operator asks otherwise: a new page usually exists because
+ * the preset's arrangement is not the one wanted, so filling it with the
+ * preset's panels would be work to undo. The operator lands on it and adds what
+ * they came for. Starting from a built-in arrangement instead is a choice made
+ * by name, and is `addPageFrom`.
  *
  * `name` is optional because creating a page and naming it are separate moves —
  * the tab appears first, and renaming it is the same action as renaming any
@@ -45,11 +48,32 @@ export interface AddPageOutcome {
  */
 export function addPage(document: DashboardDocument, name?: string): AddPageOutcome {
   const chosen = name?.trim() || unusedPageName(document.pages)
-  const pageId = unusedPageId(document.pages, chosen)
+  return appended(document, chosen, [])
+}
+
+/**
+ * The document with one more page at the end, holding a fresh copy of a
+ * starting layout's panels.
+ *
+ * Named after the layout, so the tab says what the operator asked for — and
+ * numbered when a page already has that name, because two identically named
+ * tabs are indistinguishable. Once made it is a page like any other: nothing
+ * ties it back to the layout, and no other page changes.
+ */
+export function addPageFrom(document: DashboardDocument, layout: StartingLayout): AddPageOutcome {
+  return appended(document, unusedNameFrom(document.pages, layout.name), layout.panels())
+}
+
+function appended(
+  document: DashboardDocument,
+  name: string,
+  panels: DashboardPanel[],
+): AddPageOutcome {
+  const pageId = unusedPageId(document.pages, name)
 
   return {
     pageId,
-    document: { ...document, pages: [...document.pages, { id: pageId, name: chosen, panels: [] }] },
+    document: { ...document, pages: [...document.pages, { id: pageId, name, panels }] },
   }
 }
 
@@ -164,6 +188,20 @@ function unusedPageName(pages: readonly DashboardPage[]): string {
 
   for (let position = pages.length + 1; ; position++) {
     const candidate = `Page ${position}`
+    if (!taken.has(candidate)) return candidate
+  }
+}
+
+/**
+ * `base` when no page is called that, else the first of "base 2", "base 3", …
+ * that is free — the numbering a second copy of anything gets.
+ */
+function unusedNameFrom(pages: readonly DashboardPage[], base: string): string {
+  const taken = new Set(pages.map((page) => page.name))
+  if (!taken.has(base)) return base
+
+  for (let copy = 2; ; copy++) {
+    const candidate = `${base} ${copy}`
     if (!taken.has(candidate)) return candidate
   }
 }

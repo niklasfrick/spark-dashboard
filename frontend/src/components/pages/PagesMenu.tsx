@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useDismissablePopover } from '@/hooks/useDismissablePopover'
 import type { DashboardPage } from '@/lib/dashboard/schema'
+import { STARTING_LAYOUTS, type StartingLayout } from '@/lib/dashboard/startingLayouts'
 
 interface PagesMenuProps {
   /** The page being viewed — the one this menu renames and deletes. */
@@ -13,7 +14,8 @@ interface PagesMenuProps {
   locked: boolean
   /** A page write is in flight; a second one would race it. */
   busy: boolean
-  onCreate: () => void
+  /** Makes a page: empty, or from the starting layout given. */
+  onCreate: (layout?: StartingLayout) => void
   onRename: (name: string) => void
   onDelete: () => void
   onResetEverything: () => void
@@ -38,9 +40,15 @@ interface PagesMenuProps {
  * one they learn to dismiss without reading.
  *
  * Naming a page and renaming one are deliberately the same control. A page is
- * created named after its position and renamed from the field above, which is
- * why creating one leaves this menu open: the next thing an operator does with
- * a new page is call it something.
+ * created named after its position — or after the starting layout it came from
+ * — and renamed from the field above, which is why creating one leaves this
+ * menu open: the next thing an operator does with a new page is call it
+ * something.
+ *
+ * New page is a choice, not a single button: an empty page, or one of the
+ * starting layouts. Both are one click, because neither is the other's
+ * advanced option — an operator building a page for their workload wants the
+ * empty one, and one who wants the old dashboard back wants Legacy.
  */
 export function PagesMenu({
   page,
@@ -98,13 +106,26 @@ export function PagesMenu({
 
           <div className="h-px bg-white/[0.06]" />
 
-          {/* The one action that does *not* close the menu. Creating a page and
+          {/* The actions that do *not* close the menu. Creating a page and
               naming it is one job, and the field that names it is right above:
               the menu re-keys to the page that was just made, so the operator
-              types over “Page 3” instead of hunting for this menu again. */}
-          <MenuButton disabled={disabled} onClick={onCreate}>
-            New page
-          </MenuButton>
+              types over “Page 3” or “Legacy” instead of hunting for this menu
+              again. */}
+          <div role="group" aria-label="New page" className="flex flex-col gap-1">
+            <span aria-hidden className="text-[11px] text-zinc-500">
+              New page
+            </span>
+            <div className="flex gap-1.5">
+              <MenuButton disabled={disabled} onClick={() => onCreate()}>
+                Empty page
+              </MenuButton>
+              {STARTING_LAYOUTS.map((layout) => (
+                <MenuButton key={layout.name} disabled={disabled} onClick={() => onCreate(layout)}>
+                  {layout.name} layout
+                </MenuButton>
+              ))}
+            </div>
+          </div>
 
           <MenuButton
             disabled={disabled || !canDelete}

@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { navigateTo, replacePath } from '@/hooks/useRoute'
 import type { ResetOutcome, SaveOutcome } from '@/lib/dashboard/client'
-import { addPage, canRemovePage, removePage, renamePage } from '@/lib/dashboard/pages'
+import { addPage, addPageFrom, canRemovePage, removePage, renamePage } from '@/lib/dashboard/pages'
 import { defaultDashboardDocument } from '@/lib/dashboard/preset'
 import { pagePath } from '@/lib/dashboard/routes'
 import type { DashboardDocument } from '@/lib/dashboard/schema'
+import type { StartingLayout } from '@/lib/dashboard/startingLayouts'
 import { PagesMenu } from './PagesMenu'
 import { PageTabs } from './PageTabs'
 
@@ -61,9 +62,10 @@ export function PageBar({ document, activePageId, readOnly, editing, save, reset
     ;(replace ? replacePath : navigateTo)(pagePath(target))
   }
 
-  const create = () =>
+  /** An empty page, or — given one — a page from a starting layout. */
+  const create = (layout?: StartingLayout) =>
     run(async () => {
-      const { document: next, pageId } = addPage(document)
+      const { document: next, pageId } = layout ? addPageFrom(document, layout) : addPage(document)
       if ((await save(next)) === 'saved') go(next, pageId)
     })
 

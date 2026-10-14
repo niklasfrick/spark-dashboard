@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { addPage, removePage, renamePage, setPageSource } from './pages'
+import { addPage, addPageFrom, removePage, renamePage, setPageSource } from './pages'
 import { ALL_MODELS } from './pageSource'
 import { DASHBOARD_SCHEMA_VERSION, type DashboardDocument, type DashboardPage } from './schema'
+import { LEGACY_LAYOUT } from './startingLayouts'
 
 function documentOf(...pages: Array<Partial<DashboardPage>>): DashboardDocument {
   return {
@@ -66,6 +67,64 @@ describe('addPage', () => {
 
     expect(outcome.document.pages[0]).toBe(before.pages[0])
     expect(outcome.document.version).toBe(before.version)
+  })
+})
+
+describe('addPageFrom', () => {
+  it('appends a page holding the starting layout’s panels, named after it', () => {
+    const outcome = addPageFrom(documentOf({ id: 'overview', name: 'Overview' }), LEGACY_LAYOUT)
+
+    expect(names(outcome.document)).toEqual(['Overview', 'Legacy'])
+    expect(outcome.pageId).toBe('legacy')
+    expect(outcome.document.pages[1]).toEqual({
+      id: 'legacy',
+      name: 'Legacy',
+      panels: LEGACY_LAYOUT.panels(),
+    })
+  })
+
+  it('numbers the name when a page already has it, rather than making two “Legacy” tabs', () => {
+    const once = addPageFrom(documentOf({ id: 'overview', name: 'Overview' }), LEGACY_LAYOUT)
+    const twice = addPageFrom(once.document, LEGACY_LAYOUT)
+    const thrice = addPageFrom(twice.document, LEGACY_LAYOUT)
+
+    expect(names(thrice.document)).toEqual(['Overview', 'Legacy', 'Legacy 2', 'Legacy 3'])
+    expect(ids(thrice.document)).toEqual(['overview', 'legacy', 'legacy-2', 'legacy-3'])
+    expect(thrice.pageId).toBe('legacy-3')
+  })
+
+  it('never reuses an id, even one a renamed page kept', () => {
+    // The first Legacy page was renamed, so its name is free but its id is not.
+    const outcome = addPageFrom(documentOf({ id: 'legacy', name: 'Wall Display' }), LEGACY_LAYOUT)
+
+    expect(names(outcome.document)).toEqual(['Wall Display', 'Legacy'])
+    expect(outcome.pageId).toBe('legacy-2')
+  })
+
+  it('gives each page its own panels, so editing one leaves the other alone', () => {
+    const once = addPageFrom(documentOf({ id: 'overview' }), LEGACY_LAYOUT)
+    const twice = addPageFrom(once.document, LEGACY_LAYOUT)
+
+    expect(twice.document.pages[2]?.panels).not.toBe(twice.document.pages[1]?.panels)
+    expect(twice.document.pages[2]?.panels[0]).not.toBe(twice.document.pages[1]?.panels[0])
+  })
+
+  it('leaves the other pages untouched, panels and all', () => {
+    const before = documentOf(
+      { id: 'overview', name: 'Overview', source: ALL_MODELS },
+      { id: 'watch', name: 'Watch' },
+    )
+    const outcome = addPageFrom(before, LEGACY_LAYOUT)
+
+    expect(outcome.document.pages[0]).toBe(before.pages[0])
+    expect(outcome.document.pages[1]).toBe(before.pages[1])
+    expect(outcome.document.version).toBe(before.version)
+  })
+
+  it('starts the page automatic, like every new page, rather than pinning a source', () => {
+    const outcome = addPageFrom(documentOf({ id: 'overview' }), LEGACY_LAYOUT)
+
+    expect(outcome.document.pages[1]).not.toHaveProperty('source')
   })
 })
 

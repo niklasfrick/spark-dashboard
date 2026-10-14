@@ -12,6 +12,7 @@ import {
 import { gridSubstitute } from '../test/gridSubstitute'
 import { MockWebSocket, substituteWebSocket } from '../test/websocket'
 import { DASHBOARD_SCHEMA_VERSION, type DashboardPage } from '../lib/dashboard/schema'
+import { LEGACY_LAYOUT } from '../lib/dashboard/startingLayouts'
 
 // Multiple pages through the application seam (#85): real routing and history,
 // real configuration loading, saving and resetting over the fetch stub, and the
@@ -163,7 +164,7 @@ describe('creating a page', () => {
     await openPage(fetchMock)
 
     await openMenu()
-    await userEvent.click(screen.getByRole('button', { name: 'New page' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Empty page' }))
 
     await waitFor(() => expect(window.location.pathname).toBe('/pages/page-3'))
     expect(savedPages(fetchMock).map((page) => page.name)).toEqual([
@@ -181,7 +182,7 @@ describe('creating a page', () => {
     await openPage(fetchMock)
 
     await openMenu()
-    await userEvent.click(screen.getByRole('button', { name: 'New page' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Empty page' }))
     await waitFor(() => expect(window.location.pathname).toBe('/pages/page-3'))
 
     // The menu did not close, and the field now names the page just made.
@@ -202,7 +203,7 @@ describe('creating a page', () => {
     await openPage(fetchMock)
 
     await openMenu()
-    await userEvent.click(screen.getByRole('button', { name: 'New page' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Empty page' }))
     await waitFor(() => expect(window.location.pathname).toBe('/pages/page-3'))
 
     await reload(fetchMock, '/pages/page-3')
@@ -214,12 +215,118 @@ describe('creating a page', () => {
     await openPage(fetchMock)
 
     await openMenu()
-    await userEvent.click(screen.getByRole('button', { name: 'New page' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Empty page' }))
 
     await waitFor(() =>
       expect(screen.getByText('Saving the dashboard configuration failed.')).toBeInTheDocument(),
     )
     // Not on a page the server has never heard of.
+    expect(window.location.pathname).toBe('/pages/watch')
+    expect(tabNames()).toEqual(['Watch', 'Wall Display'])
+  })
+})
+
+describe('starting a page from the Legacy layout', () => {
+  /** Every panel title of the Legacy layout, in its reading order. */
+  const legacyTitles = [
+    'Engine',
+    'Prefill Throughput',
+    'Decode Throughput',
+    'Latency',
+    'SLO Goodput',
+    'Requests',
+    'Cache',
+    'Speculative Decoding',
+    'GPU Utilization',
+    'GPU Temp',
+    'GPU Power',
+    'GPU Clock',
+    'CPU',
+    'CPU Cores',
+    'Memory',
+    'Disk I/O',
+    'Network',
+  ]
+
+  it('stores a page holding the layout, named after it, and lands the operator on it', async () => {
+    const fetchMock = serveConfiguration({ document: twoPages() })
+    await openPage(fetchMock)
+
+    await openMenu()
+    await userEvent.click(within(menu()).getByRole('button', { name: 'Legacy layout' }))
+
+    await waitFor(() => expect(window.location.pathname).toBe('/pages/legacy'))
+    expect(tabNames()).toEqual(['Watch', 'Wall Display', 'Legacy'])
+    expect(savedPages(fetchMock)[2]).toEqual({
+      id: 'legacy',
+      name: 'Legacy',
+      panels: LEGACY_LAYOUT.panels(),
+    })
+    for (const title of legacyTitles) {
+      expect(within(screen.getByRole('main')).getByRole('region', { name: title })).toBeVisible()
+    }
+  })
+
+  it('leaves every page that was already there exactly as it was', async () => {
+    const fetchMock = serveConfiguration({ document: twoPages() })
+    await openPage(fetchMock)
+
+    await openMenu()
+    await userEvent.click(within(menu()).getByRole('button', { name: 'Legacy layout' }))
+    await waitFor(() => expect(window.location.pathname).toBe('/pages/legacy'))
+
+    const [watch, wall] = savedPages(fetchMock)
+    expect(watch).toMatchObject(pageOf('watch', 'Watch', 'cpu-utilization'))
+    expect(wall).toMatchObject(pageOf('wall', 'Wall Display', 'memory'))
+  })
+
+  it('stays open on the new page’s name, so it can be called something else straight away', async () => {
+    const fetchMock = serveConfiguration({ document: twoPages() })
+    await openPage(fetchMock)
+
+    await openMenu()
+    await userEvent.click(within(menu()).getByRole('button', { name: 'Legacy layout' }))
+    await waitFor(() => expect(window.location.pathname).toBe('/pages/legacy'))
+
+    expect(within(menu()).getByLabelText('Page name')).toHaveValue('Legacy')
+  })
+
+  it('numbers a second one, rather than making two “Legacy” tabs', async () => {
+    const fetchMock = serveConfiguration({
+      document: storedDocument(pageOf('legacy', 'Legacy', 'cpu-utilization')),
+    })
+    await openPage(fetchMock, '/pages/legacy')
+
+    await openMenu()
+    await userEvent.click(within(menu()).getByRole('button', { name: 'Legacy layout' }))
+
+    await waitFor(() => expect(window.location.pathname).toBe('/pages/legacy-2'))
+    expect(tabNames()).toEqual(['Legacy', 'Legacy 2'])
+  })
+
+  it('survives a reload as a page like any other', async () => {
+    const fetchMock = serveConfiguration({ document: twoPages() })
+    await openPage(fetchMock)
+
+    await openMenu()
+    await userEvent.click(within(menu()).getByRole('button', { name: 'Legacy layout' }))
+    await waitFor(() => expect(window.location.pathname).toBe('/pages/legacy'))
+
+    await reload(fetchMock, '/pages/legacy')
+    expect(tabNames()).toEqual(['Watch', 'Wall Display', 'Legacy'])
+    expect(screen.getByRole('region', { name: 'CPU Cores' })).toBeInTheDocument()
+  })
+
+  it('stays where it is when the server refuses the write', async () => {
+    const fetchMock = serveConfiguration({ document: twoPages(), putStatus: 500 })
+    await openPage(fetchMock)
+
+    await openMenu()
+    await userEvent.click(within(menu()).getByRole('button', { name: 'Legacy layout' }))
+
+    await waitFor(() =>
+      expect(screen.getByText('Saving the dashboard configuration failed.')).toBeInTheDocument(),
+    )
     expect(window.location.pathname).toBe('/pages/watch')
     expect(tabNames()).toEqual(['Watch', 'Wall Display'])
   })
@@ -371,7 +478,8 @@ describe('a dashboard that cannot be written', () => {
     expect(
       within(menu()).getByText('This dashboard is read-only, so its pages cannot be changed.'),
     ).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'New page' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Empty page' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Legacy layout' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Delete “Watch”' })).toBeDisabled()
     expect(within(menu()).getByRole('button', { name: 'Reset everything' })).toBeDisabled()
   })
@@ -401,7 +509,8 @@ describe('a layout being edited', () => {
         'Save or discard your layout changes to add, rename or delete pages.',
       ),
     ).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'New page' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Empty page' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Legacy layout' })).toBeDisabled()
   })
 
   it('gives the page list back the moment the edit is discarded', async () => {
