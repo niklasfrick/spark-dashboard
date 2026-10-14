@@ -33,11 +33,15 @@ Decides how the engine is detected and which metrics it can report.
 _Avoid_: engine kind, runtime, flavor, provider (a provider publishes models)
 
 **Metric group**:
-A set of engine metrics an engine reports together or not at all — throughput,
-requests, latency means, latency percentiles, queue time, KV cache, prefix
-cache, speculative decoding. An engine **reports** a group or does not, and says
-which on the metrics contract; a panel whose group is not reported says so and
-keeps its grid slot rather than showing a zero. See
+A set of engine metrics an engine reports together or not at all. The groups
+are cut where the panels cut tiles, so that each is all-or-nothing on every
+engine type: throughput, batch size, active requests, request total,
+preemptions, queue time, KV cache, prefix cache, speculative decoding, and each
+latency (TTFT, E2E, ITL, TPOT) as a mean and as percentiles. An engine
+**reports** a group or does not, and says which on the metrics contract. A panel
+none of whose groups is reported says so and keeps its grid slot; a tile whose
+group is not reported keeps its slot too and reads "not reported". Neither shows
+a zero or a dash. See
 [ADR-0004](./docs/adr/0004-engines-declare-what-they-report.md).
 _Avoid_: capability, feature, supported metric
 

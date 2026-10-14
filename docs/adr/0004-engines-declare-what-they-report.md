@@ -1,6 +1,7 @@
 # Engines declare what they report on the metrics contract
 
-**Status:** accepted (2026-10)
+**Status:** accepted (2026-10); amended (2026-10, #142): see [The grain is the
+tile](#amendment-the-grain-is-the-tile-142)
 
 Engine types other than vLLM report different subsets of what the engine panels
 show: SGLang nearly everything, llama.cpp throughput and means but no
@@ -49,3 +50,47 @@ does not report the group.
   request-weighted latency mean.
 - **Adding or splitting a metric group is a metrics-contract change**, with the
   usual five places to update.
+
+## Amendment: the grain is the tile (#142)
+
+The eight groups first declared were too coarse:
+- SGLang reports every latency except time per output token, and has no batch
+  size, preemption or swap counter.
+- llama.cpp reports only the mean inter-token latency, and no request total.
+
+A field of a reported group left `null` reads `--`, which says "not yet"
+again.
+
+**Groups are split until each is all-or-nothing on every engine type, and the
+cuts fall where the panels cut tiles.** There are seventeen:
+- `Throughput`, `BatchSize`, `ActiveRequests`, `RequestTotal`, `Preemptions`,
+  `QueueTime`, `KvCache`, `PrefixCache` and `SpeculativeDecoding`;
+- `TtftMean`, `TtftPercentiles`, `E2eMean`, `E2ePercentiles`, `ItlMean`,
+  `ItlPercentiles`, `TpotMean` and `TpotPercentiles`.
+
+A rate derived from a latency moves with that latency's mean: per-request
+decode throughput with TPOT, and per-request prefill throughput with TTFT. A
+percentiles group carries its histogram buckets and the SLO goodput read off
+them.
+
+**A tile whose group is not reported keeps its slot and says so, muted, instead
+of being left out.** If tiles came and went, a panel's layout would move every
+time engine rotation changed the engine. The panel-level placeholder keeps its
+slot for the same reason.
+
+**All models combines at this grain** (#130): a figure combines only the
+engines that report its group.
+
+### Considered options
+
+- **Per-field exceptions on the coarse groups.** An engine would declare a group
+  and list the fields in it that it does not report. Rejected because it is a
+  second mechanism, and "reports the group, except…" is no longer what a group
+  is.
+- **Latency as dimension groups crossed with statistic groups.** That is TTFT,
+  E2E, ITL and TPOT crossed with means and percentiles: six groups instead of
+  eight. Rejected for two reasons:
+  - Its groups would be factors rather than sets of metrics. A figure would be
+    reported only when two groups both are.
+  - It assumes an engine reports the same statistics for every latency it has,
+    and nothing guarantees that.
