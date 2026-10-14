@@ -275,6 +275,42 @@ describe('the page-level engine selection', () => {
   })
 })
 
+describe('the automatic engine selection', () => {
+  it('opens on the engine reporting metrics, not a running one that reports none, and writes nothing', () => {
+    const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(() =>
+      Promise.resolve(new Response(null, { status: 204 })),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      function Silent() {
+        const store = useMetricsStore()
+        useEffect(() => {
+          const snap = snapshot()
+          snap.engines = [{ ...makeEngine(ALPHA, 120), metric_groups: [] }, makeEngine(BETA, 640)]
+          store.ingest(snap)
+        }, [store])
+        return null
+      }
+      render(
+        <MetricsStoreProvider>
+          <Silent />
+          <PageSelectionProvider>
+            <GridPanel panel={panel('decode', 'engine-decode-throughput')} />
+          </PageSelectionProvider>
+        </MetricsStoreProvider>,
+      )
+
+      expect(within(region('Decode Throughput')).getByText('640.0')).toBeInTheDocument()
+      const writes = fetchMock.mock.calls.filter(
+        ([, init]) => init?.method !== undefined,
+      )
+      expect(writes).toHaveLength(0)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})
+
 describe('a session choice of all models', () => {
   // What engine rotation starts every cycle with: the session layer pointing a
   // page at the combined view, whatever the page's own source says.

@@ -4,8 +4,9 @@
  *
  * This is the page-level half of the binding model in `bindings.ts`, made
  * persistent. A panel bound `follow` defers to the page, and until now the page
- * could only answer with the host's default — the first running engine. The
- * source lets the operator author the answer into the document itself: a
+ * could only answer with the host's default — the first running engine that
+ * reports metrics, otherwise the first running engine, otherwise the first
+ * detected. The source lets the operator author the answer into the document itself: a
  * "Qwen page" that opens on Qwen for every colleague and kiosk, or an overview
  * page whose engine panels show the combined figures across every engine.
  *

@@ -20,6 +20,7 @@
  * quietly showing engine A.
  */
 
+import { reportsMetrics } from '@/lib/engineMetrics'
 import { gpuIndexOf, snapshotGpus } from '@/lib/identity'
 import type { EngineSnapshot, MetricsSnapshot } from '@/types/metrics'
 import type { PageSource } from './pageSource'
@@ -126,11 +127,13 @@ function defaultGpuIndex(snapshot: Pick<MetricsSnapshot, 'gpu' | 'gpus'>): numbe
 }
 
 /**
- * The engine an unconfigured page follows: the first one actually running, and
- * only otherwise the first one detected. A host whose first-listed engine is
- * stopped still has something worth watching on the others.
+ * The engine an unconfigured page follows: the first running engine that
+ * reports metrics, then the first running one, and only otherwise the first
+ * detected. A page that opens on a running engine with nothing to show would
+ * read as a host with nothing to show.
  */
 function defaultEngineEndpoint(engines: readonly EngineSnapshot[]): string | null {
-  const running = engines.find((engine) => engine.status.type === 'Running')
-  return (running ?? engines[0])?.endpoint ?? null
+  const running = engines.filter((engine) => engine.status.type === 'Running')
+  const reporting = running.find(reportsMetrics)
+  return (reporting ?? running[0] ?? engines[0])?.endpoint ?? null
 }

@@ -27,7 +27,11 @@ function gpu(index: number | null): GpuMetrics {
   }
 }
 
-function engine(endpoint: string, status: EngineSnapshot['status'] = { type: 'Running' }): EngineSnapshot {
+function engine(
+  endpoint: string,
+  status: EngineSnapshot['status'] = { type: 'Running' },
+  overrides: Partial<EngineSnapshot> = {},
+): EngineSnapshot {
   return {
     engine_type: 'Vllm',
     endpoint,
@@ -36,6 +40,7 @@ function engine(endpoint: string, status: EngineSnapshot['status'] = { type: 'Ru
     metrics: null,
     recent_requests: [],
     deployment_mode: 'Native',
+    ...overrides,
   }
 }
 
@@ -82,6 +87,96 @@ describe('pageSelection', () => {
       kind: 'engine',
       endpoint: 'http://localhost:8000',
     })
+  })
+
+  it('prefers a running engine that reports metrics over one listed first that reports none', () => {
+    const host = snapshot(
+      [gpu(0)],
+      [
+        engine('http://localhost:8000', { type: 'Running' }, { metric_groups: [] }),
+        engine('http://localhost:8001'),
+      ],
+    )
+
+    expect(pageSelection(host, {}).engineTarget).toEqual({
+      kind: 'engine',
+      endpoint: 'http://localhost:8001',
+    })
+  })
+
+  it('passes over a running engine whose metrics are off', () => {
+    const host = snapshot(
+      [gpu(0)],
+      [
+        engine('http://localhost:8000', { type: 'Running' }, { metrics_off: '--enable-metrics' }),
+        engine('http://localhost:8001'),
+      ],
+    )
+
+    expect(pageSelection(host, {}).engineTarget).toEqual({
+      kind: 'engine',
+      endpoint: 'http://localhost:8001',
+    })
+  })
+
+  it('falls back to the first running engine when none reports metrics', () => {
+    const host = snapshot(
+      [gpu(0)],
+      [
+        engine('http://localhost:8000', { type: 'Stopped' }),
+        engine('http://localhost:8001', { type: 'Running' }, { metric_groups: [] }),
+        engine('http://localhost:8002', { type: 'Running' }, { metrics_off: '--metrics' }),
+      ],
+    )
+
+    expect(pageSelection(host, {}).engineTarget).toEqual({
+      kind: 'engine',
+      endpoint: 'http://localhost:8001',
+    })
+  })
+
+  it('does not prefer a stopped engine for reporting metrics', () => {
+    const host = snapshot(
+      [gpu(0)],
+      [
+        engine('http://localhost:8000', { type: 'Stopped' }),
+        engine('http://localhost:8001', { type: 'Running' }, { metric_groups: [] }),
+      ],
+    )
+
+    expect(pageSelection(host, {}).engineTarget).toEqual({
+      kind: 'engine',
+      endpoint: 'http://localhost:8001',
+    })
+  })
+
+  it('keeps a stored source that names an engine reporting nothing', () => {
+    const host = snapshot(
+      [gpu(0)],
+      [
+        engine('http://localhost:8000', { type: 'Running' }, { metric_groups: [] }),
+        engine('http://localhost:8001'),
+      ],
+    )
+
+    expect(
+      pageSelection(host, {}, { kind: 'engine', endpoint: 'http://localhost:8000' }).engineTarget,
+    ).toEqual({ kind: 'engine', endpoint: 'http://localhost:8000' })
+  })
+
+  it('keeps a session choice of an engine reporting nothing', () => {
+    const host = snapshot(
+      [gpu(0)],
+      [
+        engine('http://localhost:8000', { type: 'Running' }, { metric_groups: [] }),
+        engine('http://localhost:8001'),
+      ],
+    )
+
+    expect(
+      pageSelection(host, { engineTarget: { kind: 'engine', endpoint: 'http://localhost:8000' } })
+        .engineTarget,
+    ).toEqual({ kind: 'engine', endpoint: 'http://localhost:8000' })
   })
 
   it('normalizes the index of a GPU reported without one', () => {
