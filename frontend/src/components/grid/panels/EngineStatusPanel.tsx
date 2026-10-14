@@ -67,8 +67,12 @@ function EngineIdentity({ engine }: { engine: EngineSnapshot }) {
       : 'No model loaded'
 
   return (
-    <div className="h-full min-h-0 flex flex-col gap-2 overflow-y-auto">
-      <div className="shrink-0 flex items-center gap-2 min-w-0">
+    // One wrapping row rather than a column: in a panel as wide as the page
+    // and one row tall — the Legacy layout's header — the chips sit beside the
+    // headline instead of being pushed below the panel's edge, and in a
+    // narrower panel they wrap under it as they always did.
+    <div className="h-full min-h-0 flex flex-wrap items-center content-start gap-x-4 gap-y-2 overflow-y-auto">
+      <div className="max-w-full flex items-center gap-2 min-w-0">
         {logo && <ProviderMark logo={logo} size="lg" />}
         <div className="min-w-0">
           <p
@@ -88,7 +92,7 @@ function EngineIdentity({ engine }: { engine: EngineSnapshot }) {
           guess there is, but an operator has to know it is only a guess —
           and how to make it not one. */}
       {warning && (
-        <p role="alert" className="shrink-0 text-[11px] leading-snug text-amber-200">
+        <p role="alert" className="basis-full text-[11px] leading-snug text-amber-200">
           {warning}
         </p>
       )}
@@ -97,7 +101,7 @@ function EngineIdentity({ engine }: { engine: EngineSnapshot }) {
           weights, in the order the fixed dashboard showed it. Each is omitted
           when unknown rather than rendered as a dash — an absent chip reads as
           "not reported", which is what it means. */}
-      <div className="flex items-start gap-1.5 flex-wrap content-start">
+      <div className="min-w-0 max-w-full flex items-start gap-1.5 flex-wrap content-start">
         <EngineChip label={engineDisplayName(engine.engine_type)} iconSrc="/icons/vllm.svg" />
         <DeploymentChip mode={engine.deployment_mode} />
         {engine.gpu_indexes && engine.gpu_indexes.length > 0 && (
