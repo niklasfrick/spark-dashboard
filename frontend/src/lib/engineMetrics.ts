@@ -7,7 +7,12 @@
  * started ships none at all while being perfectly healthy.
  */
 
-import type { EngineMetrics, EngineSnapshot } from '@/types/metrics'
+import {
+  METRIC_GROUPS,
+  type EngineMetrics,
+  type EngineSnapshot,
+  type MetricGroup,
+} from '@/types/metrics'
 
 /** The parts of an engine snapshot that decide what its metrics mean. */
 export type EngineReadable = Pick<EngineSnapshot, 'status' | 'model' | 'metrics'>
@@ -36,6 +41,23 @@ export type EngineMetricReader = <K extends keyof EngineMetrics>(
 export function engineMetricReader(engine: EngineReadable): EngineMetricReader {
   const metrics = engine.model === null ? null : engine.metrics
   return (key) => metrics?.[key] ?? null
+}
+
+/**
+ * The metric groups an engine reports — read off the snapshot, where its
+ * backend adapter declared them, and never inferred from its engine type
+ * (ADR-0004): what an engine exposes depends on its version and its launch
+ * flags, which only the backend sees.
+ *
+ * A snapshot without the field comes from a backend older than it, and that
+ * backend reported every group; reading the absence as "none" would turn every
+ * panel on an upgraded frontend into a placeholder. An empty list is different:
+ * that engine reports nothing.
+ */
+export function reportedMetricGroups(
+  engine: Pick<EngineSnapshot, 'metric_groups'>,
+): ReadonlySet<MetricGroup> {
+  return new Set(engine.metric_groups ?? METRIC_GROUPS)
 }
 
 /** Whether an engine has metrics worth rendering, and why not when it has not. */

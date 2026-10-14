@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { engineAvailability, engineMetricReader, type EngineReadable } from './engineMetrics'
-import type { EngineMetrics } from '@/types/metrics'
+import {
+  engineAvailability,
+  engineMetricReader,
+  reportedMetricGroups,
+  type EngineReadable,
+} from './engineMetrics'
+import { METRIC_GROUPS, type EngineMetrics } from '@/types/metrics'
 
 function metrics(overrides: Partial<EngineMetrics> = {}): EngineMetrics {
   return {
@@ -112,5 +117,41 @@ describe('engineAvailability', () => {
       kind: 'offline',
       detail: 'has no model loaded.',
     })
+  })
+})
+
+describe('reportedMetricGroups', () => {
+  it('reads the groups the backend declared for the engine', () => {
+    const groups = reportedMetricGroups({ metric_groups: ['Throughput', 'LatencyMeans'] })
+
+    expect([...groups].sort()).toEqual(['LatencyMeans', 'Throughput'])
+    expect(groups.has('LatencyPercentiles')).toBe(false)
+  })
+
+  it('reads an engine that declared nothing as reporting nothing', () => {
+    expect(reportedMetricGroups({ metric_groups: [] }).size).toBe(0)
+  })
+
+  it('reads a backend older than the field as reporting every group', () => {
+    // That backend filled every panel; an upgraded frontend in front of it
+    // must not turn them all into placeholders.
+    expect([...reportedMetricGroups({})]).toEqual([...METRIC_GROUPS])
+  })
+})
+
+describe('METRIC_GROUPS', () => {
+  it('names the groups exactly as the backend serializes them', () => {
+    // The mirror of `MetricGroup` in `src/engines/mod.rs`, whose wire-name
+    // spec pins the same eight strings in the same order.
+    expect(METRIC_GROUPS).toEqual([
+      'Throughput',
+      'Requests',
+      'LatencyMeans',
+      'LatencyPercentiles',
+      'QueueTime',
+      'KvCache',
+      'PrefixCache',
+      'SpeculativeDecoding',
+    ])
   })
 })

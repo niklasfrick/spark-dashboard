@@ -91,6 +91,25 @@ export type EngineStatus =
   | { type: 'Stopped' }
   | { type: 'Error'; message: string }
 
+/**
+ * Every metric group, in wire order — the one list the frontend holds. A
+ * metric group is a set of engine metrics an engine reports together or not
+ * at all (ADR-0004); each engine says on its snapshot which it reports. The
+ * names mirror the backend's `MetricGroup` enum, whose spec pins them.
+ */
+export const METRIC_GROUPS = [
+  'Throughput',
+  'Requests',
+  'LatencyMeans',
+  'LatencyPercentiles',
+  'QueueTime',
+  'KvCache',
+  'PrefixCache',
+  'SpeculativeDecoding',
+] as const
+
+export type MetricGroup = (typeof METRIC_GROUPS)[number]
+
 /** Why model metadata could not be read from the engine's `/v1/models`
  *  endpoint. `AuthRequired` means the request was rejected as unauthorized
  *  (401/403) — the dashboard lacks the engine's API key; `Unavailable`
@@ -206,6 +225,11 @@ export interface EngineSnapshot {
    *  metadata resolved normally — optional so snapshots from older backends
    *  still parse. */
   model_metadata_error?: ModelMetadataError | null
+  /** The metric groups this engine reports, as its backend adapter declares
+   *  them. An empty list is an engine reporting nothing. Absent only from a
+   *  backend older than the field, which reported every group — so read it
+   *  through `reportedMetricGroups`, which says so, rather than directly. */
+  metric_groups?: MetricGroup[]
   metrics: EngineMetrics | null
   recent_requests: InferenceRequestData[]
   deployment_mode: DeploymentMode

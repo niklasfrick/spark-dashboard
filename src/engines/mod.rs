@@ -5,7 +5,7 @@ pub mod vllm;
 pub mod warmup;
 
 use async_trait::async_trait;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
@@ -40,6 +40,60 @@ pub enum EngineStatus {
     Loading,
     Stopped,
     Error(String),
+}
+
+/// A set of engine metrics an engine reports together or not at all
+/// (ADR-0004). Each engine states on the metrics contract which groups it
+/// reports; a panel whose group is not reported says so rather than showing
+/// a zero, which a `null` field cannot carry — `null` already means "warming
+/// up", "not emitted yet" and "feature not configured".
+///
+/// The variant names are the wire format, mirrored by `METRIC_GROUPS` in
+/// `frontend/src/types/metrics.ts`. Adding or splitting a group is a
+/// metrics-contract change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
+pub enum MetricGroup {
+    /// Prefill and decode token rates and the lifetime token counters behind
+    /// them, plus tokens per engine step (`avg_batch_size`).
+    Throughput,
+    /// Running, queued and lifetime request counts, and the swap/preemption
+    /// counters.
+    Requests,
+    /// Mean TTFT, end-to-end latency, inter-token latency and time per output
+    /// token.
+    LatencyMeans,
+    /// p50/p95/p99 of those latencies and the histogram buckets SLO goodput
+    /// is computed from.
+    LatencyPercentiles,
+    /// Mean time a request waits in the queue before it is scheduled.
+    QueueTime,
+    /// KV cache utilization.
+    KvCache,
+    /// Prefix cache hit rate and query volume.
+    PrefixCache,
+    /// Draft/accepted token counters and the acceptance figures derived from
+    /// them. Reported by an engine that *can* speculate; whether this one is
+    /// configured to is what the counters themselves say.
+    SpeculativeDecoding,
+}
+
+impl MetricGroup {
+    /// Every metric group, in wire order.
+    pub const ALL: [MetricGroup; 8] = [
+        MetricGroup::Throughput,
+        MetricGroup::Requests,
+        MetricGroup::LatencyMeans,
+        MetricGroup::LatencyPercentiles,
+        MetricGroup::QueueTime,
+        MetricGroup::KvCache,
+        MetricGroup::PrefixCache,
+        MetricGroup::SpeculativeDecoding,
+    ];
+
+    /// The set of every group — what an engine reporting everything declares.
+    pub fn all() -> BTreeSet<MetricGroup> {
+        Self::ALL.into_iter().collect()
+    }
 }
 
 /// Why model metadata could not be read from the engine's `/v1/models`
@@ -233,6 +287,12 @@ pub struct EngineSnapshot {
     /// Why `model` is missing or only a command-line fallback. `None` when
     /// metadata resolved normally (or has not been attempted yet).
     pub model_metadata_error: Option<ModelMetadataError>,
+    /// The metric groups this engine reports, as its adapter declares them.
+    /// Always serialized — an empty set is an engine that reports nothing,
+    /// which is not the same as a snapshot from a backend that predates the
+    /// field (the frontend reads that as "every group", which is what such a
+    /// backend reported).
+    pub metric_groups: BTreeSet<MetricGroup>,
     pub metrics: Option<EngineMetrics>,
     pub recent_requests: Vec<RecentRequest>,
     pub deployment_mode: DeploymentMode,
@@ -264,6 +324,12 @@ pub struct EngineSnapshot {
 pub trait EngineAdapter: Send + Sync {
     fn engine_type(&self) -> EngineType;
     fn endpoint(&self) -> &str;
+    /// Which metric groups this engine reports. The adapter decides, per
+    /// engine rather than per type — what an engine exposes can depend on its
+    /// version and on how it was launched, and only the adapter sees the
+    /// scrape. A group listed here whose fields are momentarily `None` is
+    /// "not yet"; a group left out is "not reported", and its panels say so.
+    fn metric_groups(&self) -> BTreeSet<MetricGroup>;
     async fn health_check(&self) -> EngineStatus;
     async fn get_model_info(&self) -> ModelResolution;
     async fn get_metrics(&self) -> Option<EngineMetrics>;
@@ -398,6 +464,30 @@ impl EngineState {
                 }
                 self.status = EngineStatus::Stopped;
             }
+        }
+    }
+
+    /// The snapshot this engine contributes to a poll tick. What it reports is
+    /// whatever its adapter declares — the snapshot never decides that itself.
+    fn snapshot(
+        &self,
+        status: EngineStatus,
+        model: Option<ModelInfo>,
+        metrics: Option<EngineMetrics>,
+    ) -> EngineSnapshot {
+        EngineSnapshot {
+            engine_type: self.adapter.engine_type(),
+            endpoint: self.adapter.endpoint().to_string(),
+            status,
+            model,
+            model_metadata_error: self.model_metadata_error,
+            metric_groups: self.adapter.metric_groups(),
+            metrics,
+            recent_requests: Vec::new(),
+            deployment_mode: self.deployment_mode.clone(),
+            gpu_indexes: Vec::new(),
+            pids: self.pids.clone(),
+            container_id: self.container_id.clone(),
         }
     }
 
@@ -679,19 +769,7 @@ pub async fn engine_collector_loop(
                             None
                         };
 
-                        snapshots.push(EngineSnapshot {
-                            engine_type: state.adapter.engine_type(),
-                            endpoint: state.adapter.endpoint().to_string(),
-                            status,
-                            model,
-                            model_metadata_error: state.model_metadata_error,
-                            metrics,
-                            recent_requests: Vec::new(),
-                            deployment_mode: state.deployment_mode.clone(),
-                            gpu_indexes: Vec::new(),
-                            pids: state.pids.clone(),
-                            container_id: state.container_id.clone(),
-                        });
+                        snapshots.push(state.snapshot(status, model, metrics));
                     }
                 }
 
@@ -710,9 +788,12 @@ pub async fn engine_collector_loop(
 mod tests {
     use super::*;
 
-    /// Minimal adapter so `EngineState` can be constructed in tests. None of
-    /// these are exercised — the cache logic under test is pure.
-    struct StubAdapter;
+    /// Minimal adapter so `EngineState` can be constructed in tests. Only the
+    /// identity and the declared metric groups are read; the probes are never
+    /// exercised — the cache logic under test is pure.
+    struct StubAdapter {
+        groups: BTreeSet<MetricGroup>,
+    }
 
     #[async_trait]
     impl EngineAdapter for StubAdapter {
@@ -721,6 +802,9 @@ mod tests {
         }
         fn endpoint(&self) -> &str {
             "http://stub:8000"
+        }
+        fn metric_groups(&self) -> BTreeSet<MetricGroup> {
+            self.groups.clone()
         }
         async fn health_check(&self) -> EngineStatus {
             EngineStatus::Running
@@ -734,7 +818,12 @@ mod tests {
     }
 
     fn state() -> EngineState {
-        EngineState::new(Box::new(StubAdapter), DeploymentMode::Native)
+        state_reporting(MetricGroup::all())
+    }
+
+    /// An engine whose adapter declares exactly `groups`.
+    fn state_reporting(groups: BTreeSet<MetricGroup>) -> EngineState {
+        EngineState::new(Box::new(StubAdapter { groups }), DeploymentMode::Native)
     }
 
     fn model(name: &str) -> ModelInfo {
@@ -989,5 +1078,61 @@ mod tests {
             Some("k".into()),
         );
         let _without = create_adapter(EngineType::Vllm, "http://a:8000".into(), client, None, None);
+    }
+
+    /// The wire name of each group. Exhaustive on purpose: a new group does not
+    /// compile here until it is given the name `METRIC_GROUPS` in
+    /// `frontend/src/types/metrics.ts` mirrors.
+    fn wire_name(group: MetricGroup) -> &'static str {
+        match group {
+            MetricGroup::Throughput => "Throughput",
+            MetricGroup::Requests => "Requests",
+            MetricGroup::LatencyMeans => "LatencyMeans",
+            MetricGroup::LatencyPercentiles => "LatencyPercentiles",
+            MetricGroup::QueueTime => "QueueTime",
+            MetricGroup::KvCache => "KvCache",
+            MetricGroup::PrefixCache => "PrefixCache",
+            MetricGroup::SpeculativeDecoding => "SpeculativeDecoding",
+        }
+    }
+
+    #[test]
+    fn metric_groups_travel_under_the_names_the_frontend_mirrors() {
+        for group in MetricGroup::ALL {
+            assert_eq!(
+                serde_json::to_value(group).unwrap(),
+                serde_json::json!(wire_name(group)),
+            );
+        }
+        assert_eq!(
+            MetricGroup::all().len(),
+            MetricGroup::ALL.len(),
+            "ALL names each group exactly once",
+        );
+    }
+
+    #[test]
+    fn a_snapshot_carries_the_groups_its_adapter_declares() {
+        let partial = BTreeSet::from([MetricGroup::LatencyMeans, MetricGroup::Throughput]);
+        let snapshot = state_reporting(partial.clone()).snapshot(EngineStatus::Running, None, None);
+
+        assert_eq!(snapshot.metric_groups, partial);
+        // On the wire as a list in declaration order, whatever order the
+        // adapter built its set in — the frontend reads it as a set either way.
+        let json = serde_json::to_value(&snapshot).unwrap();
+        assert_eq!(
+            json["metric_groups"],
+            serde_json::json!(["Throughput", "LatencyMeans"])
+        );
+    }
+
+    #[test]
+    fn an_engine_reporting_nothing_says_so_rather_than_omitting_the_field() {
+        // An absent field means "a backend older than metric groups", which the
+        // frontend reads as every group; an engine with no metrics at all must
+        // not be mistaken for that.
+        let snapshot = state_reporting(BTreeSet::new()).snapshot(EngineStatus::Running, None, None);
+        let json = serde_json::to_value(&snapshot).unwrap();
+        assert_eq!(json["metric_groups"], serde_json::json!([]));
     }
 }

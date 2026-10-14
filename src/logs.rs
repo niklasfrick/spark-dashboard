@@ -351,7 +351,7 @@ fn flush_trailing(buffer: &mut String, prefix: Option<&str>, tx: &broadcast::Sen
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engines::{DeploymentMode, EngineStatus, EngineType};
+    use crate::engines::{DeploymentMode, EngineStatus, EngineType, MetricGroup};
 
     fn snapshot(endpoint: &str, container_id: Option<&str>) -> EngineSnapshot {
         EngineSnapshot {
@@ -360,6 +360,7 @@ mod tests {
             status: EngineStatus::Running,
             model: None,
             model_metadata_error: None,
+            metric_groups: MetricGroup::all(),
             metrics: None,
             recent_requests: Vec::new(),
             deployment_mode: match container_id {
