@@ -7,6 +7,7 @@ import {
   defaultPanelTitle,
   isKnownPanelType,
   panelBindingKind,
+  panelMetricGroups,
   panelUsesWindow,
 } from './panels'
 
@@ -143,5 +144,37 @@ describe('defaultPanelTitle', () => {
     // The placeholder can then say which panel type it could not render,
     // which is what tells an operator they rolled the dashboard back.
     expect(defaultPanelTitle('gpu-voltage')).toBe('gpu-voltage')
+  })
+})
+
+describe('panelMetricGroups', () => {
+  it('names the metric groups each engine metric panel shows', () => {
+    const declared = Object.fromEntries(
+      PANEL_TYPE_IDS.filter((id) => panelMetricGroups(id).length > 0).map((id) => [
+        id,
+        panelMetricGroups(id),
+      ]),
+    )
+    expect(declared).toEqual({
+      'engine-prefill-throughput': ['Throughput'],
+      'engine-decode-throughput': ['Throughput'],
+      'engine-latency': ['LatencyMeans', 'LatencyPercentiles', 'QueueTime'],
+      'engine-slo-goodput': ['LatencyPercentiles'],
+      'engine-requests': ['Requests'],
+      'engine-cache': ['KvCache', 'PrefixCache'],
+      'engine-spec-decode': ['SpeculativeDecoding'],
+    })
+  })
+
+  it('gives none to a panel that shows no engine metrics', () => {
+    // The engine's identity and its logs are there whatever it reports; the
+    // overview spans every engine and is not bound to one.
+    for (const id of ['engine-status', 'logs', 'inference-timeline', 'engines-overview', 'gpu-power']) {
+      expect(panelMetricGroups(id), id).toEqual([])
+    }
+  })
+
+  it('gives none to a panel type this build does not implement', () => {
+    expect(panelMetricGroups('gpu-voltage')).toEqual([])
   })
 })

@@ -13,6 +13,7 @@
  * Adding one is additive and needs none.
  */
 
+import type { MetricGroup } from '@/types/metrics'
 import type { PanelSize } from './grid'
 
 /** What a panel needs pointed at it before it can show anything. */
@@ -42,6 +43,13 @@ export interface PanelTypeSpec {
    * declares `false` when its window would be a control that changes nothing.
    */
   windowed?: boolean
+  /**
+   * The metric groups the panel shows (ADR-0004). Bound to an engine that
+   * reports none of them, the panel keeps its slot and says so; reporting only
+   * some, it omits the parts that are missing. Absent on a panel that shows no
+   * engine metrics — the engine's identity, its logs, its request timeline.
+   */
+  metricGroups?: readonly MetricGroup[]
 }
 
 /**
@@ -81,13 +89,38 @@ export const PANEL_TYPES = {
   // about one target.
   'engines-overview': { binds: 'none', title: 'All Engines' },
   'engine-status': { binds: 'engine', title: 'Engine' },
-  'engine-prefill-throughput': { binds: 'engine', title: 'Prefill Throughput' },
-  'engine-decode-throughput': { binds: 'engine', title: 'Decode Throughput' },
-  'engine-latency': { binds: 'engine', title: 'Latency' },
-  'engine-slo-goodput': { binds: 'engine', title: 'SLO Goodput' },
-  'engine-requests': { binds: 'engine', title: 'Requests' },
-  'engine-cache': { binds: 'engine', title: 'Cache' },
-  'engine-spec-decode': { binds: 'engine', title: 'Speculative Decoding' },
+  'engine-prefill-throughput': {
+    binds: 'engine',
+    title: 'Prefill Throughput',
+    metricGroups: ['Throughput'],
+  },
+  'engine-decode-throughput': {
+    binds: 'engine',
+    title: 'Decode Throughput',
+    metricGroups: ['Throughput'],
+  },
+  // Its batch-size tile follows the throughput group — tokens per engine step
+  // is not a latency — but the panel is about latency: an engine reporting none
+  // of these three gets the placeholder, batch size or not.
+  'engine-latency': {
+    binds: 'engine',
+    title: 'Latency',
+    metricGroups: ['LatencyMeans', 'LatencyPercentiles', 'QueueTime'],
+  },
+  // Goodput is read off the latency histograms, which are what an engine
+  // reporting percentiles has and one reporting only means does not.
+  'engine-slo-goodput': {
+    binds: 'engine',
+    title: 'SLO Goodput',
+    metricGroups: ['LatencyPercentiles'],
+  },
+  'engine-requests': { binds: 'engine', title: 'Requests', metricGroups: ['Requests'] },
+  'engine-cache': { binds: 'engine', title: 'Cache', metricGroups: ['KvCache', 'PrefixCache'] },
+  'engine-spec-decode': {
+    binds: 'engine',
+    title: 'Speculative Decoding',
+    metricGroups: ['SpeculativeDecoding'],
+  },
   // Windowed for the same reason as `gpu-events`, and it needs the window
   // twice over: the requests are filtered by it, and the timeline draws each
   // one against it as the axis it is positioned on.
@@ -152,6 +185,17 @@ export function defaultPanelSize(type: string): PanelSize {
  */
 export function panelUsesWindow(type: string): boolean {
   return isKnownPanelType(type) && panelSpec(type).windowed !== false
+}
+
+const NO_METRIC_GROUPS: readonly MetricGroup[] = []
+
+/**
+ * The metric groups a panel type shows — empty for a type that shows no engine
+ * metrics, and for one this build does not implement. The same array on every
+ * call, so a caller can depend on it.
+ */
+export function panelMetricGroups(type: string): readonly MetricGroup[] {
+  return (isKnownPanelType(type) ? panelSpec(type).metricGroups : undefined) ?? NO_METRIC_GROUPS
 }
 
 /**

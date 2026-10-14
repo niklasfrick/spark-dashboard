@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { engineDescription } from '@/lib/format'
+import { engineDescription, notReportedMessage } from '@/lib/format'
 import type { EnginePanelNoticeState } from './useEnginePanel'
 import type { GpuPanelResolution } from './useGpuPanel'
 
@@ -26,6 +26,13 @@ export function EnginePanelNotice({ resolution }: { resolution: EnginePanelNotic
   switch (resolution.status) {
     case 'waiting':
       return <PanelNotice>Waiting for metrics</PanelNotice>
+    // Not a moment that passes, unlike every other notice here: the engine
+    // never reports this, and saying "not yet" — or showing a zero — would
+    // promise data that is not coming.
+    case 'not-reported':
+      return (
+        <PanelNotice>{notReportedMessage(resolution.engine, resolution.groups)}</PanelNotice>
+      )
     case 'starting':
       return <PanelNotice>{engineDescription(resolution.engine)} has no metrics yet.</PanelNotice>
     case 'offline':

@@ -4,6 +4,7 @@ import {
   serializeLatencyMode,
   pickLatencyValue,
   latencyModeLabel,
+  shownLatencyStatistic,
 } from '@/lib/latencyMode'
 import { computeTrend, percentileSubline, type ChartDataPoint } from '@/lib/engineStats'
 import { fmtVal, fmtInt } from '@/lib/format'
@@ -48,6 +49,34 @@ describe('pickLatencyValue', () => {
 
   it('returns null when percentiles have not been observed', () => {
     expect(pickLatencyValue('p95', 5, null)).toBeNull()
+  })
+})
+
+describe('shownLatencyStatistic', () => {
+  const both = { means: true, percentiles: true }
+  const meansOnly = { means: true, percentiles: false }
+  const percentilesOnly = { means: false, percentiles: true }
+  const neither = { means: false, percentiles: false }
+
+  it('shows the chosen statistic on an engine that reports it', () => {
+    expect(shownLatencyStatistic('avg', both)).toBe('avg')
+    expect(shownLatencyStatistic('p95', both)).toBe('p95')
+    expect(shownLatencyStatistic('p99', percentilesOnly)).toBe('p99')
+  })
+
+  it('falls back to the mean in a percentile mode on a means-only engine', () => {
+    // The caller labels it as the mean — it is never a percentile.
+    expect(shownLatencyStatistic('p50', meansOnly)).toBe('avg')
+    expect(shownLatencyStatistic('p99', meansOnly)).toBe('avg')
+  })
+
+  it('never shows a percentile under the average', () => {
+    expect(shownLatencyStatistic('avg', percentilesOnly)).toBeNull()
+  })
+
+  it('shows nothing on an engine reporting neither', () => {
+    expect(shownLatencyStatistic('avg', neither)).toBeNull()
+    expect(shownLatencyStatistic('p95', neither)).toBeNull()
   })
 })
 

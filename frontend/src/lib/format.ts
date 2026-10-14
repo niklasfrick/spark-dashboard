@@ -1,5 +1,5 @@
 import type { EngineIdentity } from '@/lib/identity'
-import type { EngineType, ModelMetadataError } from '@/types/metrics'
+import type { EngineType, MetricGroup, ModelMetadataError } from '@/types/metrics'
 
 const KIB = 1024
 const MIB = 1024 * 1024
@@ -192,6 +192,46 @@ export function formatEndpoint(endpoint: string): string {
  */
 export function engineDescription(engine: EngineIdentity): string {
   return `${engineDisplayName(engine.engine_type)} ${formatEndpoint(engine.endpoint)}`
+}
+
+/**
+ * Each metric group as it reads in a sentence — the glossary's own words, so
+ * the placeholder an operator reads and the term the project uses agree.
+ */
+const METRIC_GROUP_NAMES: Record<MetricGroup, string> = {
+  Throughput: 'throughput',
+  Requests: 'requests',
+  LatencyMeans: 'latency means',
+  LatencyPercentiles: 'latency percentiles',
+  QueueTime: 'queue time',
+  KvCache: 'KV cache',
+  PrefixCache: 'prefix cache',
+  SpeculativeDecoding: 'speculative decoding',
+}
+
+/** A metric group as it reads in running text: "latency percentiles". */
+export function metricGroupName(group: MetricGroup): string {
+  return METRIC_GROUP_NAMES[group]
+}
+
+/**
+ * What a panel says when the engine it is bound to reports none of the metric
+ * groups it shows: "llama.cpp localhost:8080 does not report KV cache or prefix
+ * cache." The engine is named by type and endpoint, like every other engine
+ * placeholder, so the operator knows whose limitation it is — and it reads as
+ * a property of the engine, not as data that has yet to arrive.
+ */
+export function notReportedMessage(
+  engine: EngineIdentity,
+  groups: readonly MetricGroup[],
+): string {
+  return `${engineDescription(engine)} does not report ${listOfAlternatives(groups.map(metricGroupName))}.`
+}
+
+/** "a", "a or b", "a, b or c" — the list a negated verb ranges over. */
+function listOfAlternatives(items: readonly string[]): string {
+  if (items.length <= 1) return items.join('')
+  return `${items.slice(0, -1).join(', ')} or ${items[items.length - 1]}`
 }
 
 /**

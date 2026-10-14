@@ -6,14 +6,22 @@ import {
   serveConfiguration,
   type FetchMock,
 } from '../test/configurationServer'
+import { gridSubstitute } from '../test/gridSubstitute'
 import { MockWebSocket, substituteWebSocket } from '../test/websocket'
+import {
+  PANEL_TYPE_IDS,
+  defaultPanelTitle,
+  panelMetricGroups,
+  type PanelType,
+} from '../lib/dashboard/panels'
 import { DASHBOARD_SCHEMA_VERSION } from '../lib/dashboard/schema'
-import type {
-  EngineMetrics,
-  EngineSnapshot,
-  InferenceRequestData,
-  MetricsSnapshot,
-  ModelInfo,
+import {
+  METRIC_GROUPS,
+  type EngineMetrics,
+  type EngineSnapshot,
+  type InferenceRequestData,
+  type MetricsSnapshot,
+  type ModelInfo,
 } from '../types/metrics'
 
 // The engine panels through the application seam (#81): real routing, real
@@ -726,6 +734,304 @@ describe('the engine panels on a grid page', () => {
     receive(makeSnapshot(1000, [makeEngine(ALPHA)]))
     expect(screen.queryByText('Waiting for metrics')).not.toBeInTheDocument()
     expect(within(region('Decode Throughput')).getByText('120.0')).toBeInTheDocument()
+  })
+})
+
+// What an engine reports is declared on its snapshot (ADR-0004, #128). Only
+// vLLM exists yet and it reports every group, so these specs hand the panels
+// snapshots that declare a partial set — exactly what the next engine type's
+// adapter will put on the wire.
+describe('an engine that does not report a panel’s metric group', () => {
+  /** What each engine metric panel says, bound to an engine reporting nothing. */
+  const NOT_REPORTED: Partial<Record<PanelType, string>> = {
+    'engine-prefill-throughput': 'vLLM localhost:8000 does not report throughput.',
+    'engine-decode-throughput': 'vLLM localhost:8000 does not report throughput.',
+    'engine-latency':
+      'vLLM localhost:8000 does not report latency means, latency percentiles or queue time.',
+    'engine-slo-goodput': 'vLLM localhost:8000 does not report latency percentiles.',
+    'engine-requests': 'vLLM localhost:8000 does not report requests.',
+    'engine-cache': 'vLLM localhost:8000 does not report KV cache or prefix cache.',
+    'engine-spec-decode': 'vLLM localhost:8000 does not report speculative decoding.',
+  }
+
+  /** Every panel type that shows an engine's metrics, two to a row. */
+  const metricPanels = PANEL_TYPE_IDS.filter((type) => panelMetricGroups(type).length > 0).map(
+    (type, i) => ({
+      id: type,
+      type,
+      geometry: { x: (i % 2) * 6, y: Math.floor(i / 2) * 2, w: 6, h: 2 },
+    }),
+  )
+
+  beforeEach(() => gridSubstitute.reset())
+
+  it('keeps every engine metric panel’s slot and says so, naming the engine type', async () => {
+    // Held against the vocabulary, so a panel type added later that shows
+    // engine metrics is in this spec the moment it declares its groups.
+    expect(metricPanels.map((p) => p.type).sort()).toEqual(Object.keys(NOT_REPORTED).sort())
+
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        ...metricPanels,
+        { id: 'who', type: 'engine-status', geometry: { x: 0, y: 8, w: 6, h: 2 } },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, [makeEngine(ALPHA, { metric_groups: [] })]))
+
+    for (const { id, type, geometry } of metricPanels) {
+      const panel = region(defaultPanelTitle(type))
+      expect(within(panel).getByText(NOT_REPORTED[type]!), type).toBeInTheDocument()
+      // Never a zero or a dash in the group's place, and never a chart of one.
+      expect(within(panel).queryByText('--'), type).not.toBeInTheDocument()
+      expect(within(panel).queryByText('0'), type).not.toBeInTheDocument()
+      expect(within(panel).queryByTestId('chart'), type).not.toBeInTheDocument()
+      // The slot is the one the operator authored; nothing reflowed around it.
+      expect(gridSubstitute.geometry().get(id), type).toEqual(geometry)
+    }
+
+    // The engine's identity is not a metric group: it still says what it is.
+    expect(within(region('Engine')).getByText('Qwen3-8B')).toBeInTheDocument()
+  })
+
+  it('says so beside a neighbour that does report, naming whose limitation it is', async () => {
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        {
+          id: 'alpha',
+          type: 'engine-cache',
+          title: 'Alpha cache',
+          binding: { kind: 'engine', endpoint: ALPHA },
+          geometry: { x: 0, y: 0, w: 6, h: 4 },
+        },
+        {
+          id: 'beta',
+          type: 'engine-cache',
+          title: 'Beta cache',
+          binding: { kind: 'engine', endpoint: BETA },
+          geometry: { x: 6, y: 0, w: 6, h: 4 },
+        },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(
+      makeSnapshot(1000, [
+        makeEngine(ALPHA),
+        makeEngine(BETA, { metric_groups: ['Throughput', 'Requests'] }),
+      ]),
+    )
+
+    expect(within(region('Alpha cache')).getByText('42')).toBeInTheDocument()
+    expect(
+      within(region('Beta cache')).getByText(
+        'vLLM localhost:8001 does not report KV cache or prefix cache.',
+      ),
+    ).toBeInTheDocument()
+    expect(gridSubstitute.geometry().get('alpha')).toEqual({ x: 0, y: 0, w: 6, h: 4 })
+    expect(gridSubstitute.geometry().get('beta')).toEqual({ x: 6, y: 0, w: 6, h: 4 })
+  })
+
+  it('says so rather than "no metrics yet" — the group is not coming', async () => {
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        { id: 'spec', type: 'engine-spec-decode', geometry: { x: 0, y: 0, w: 6, h: 4 } },
+        { id: 'decode', type: 'engine-decode-throughput', geometry: { x: 6, y: 0, w: 6, h: 4 } },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(
+      makeSnapshot(1000, [
+        makeEngine(ALPHA, {
+          status: { type: 'Loading' },
+          metrics: null,
+          metric_groups: ['Throughput'],
+        }),
+      ]),
+    )
+
+    // The unreported group says so in every state of the engine; the reported
+    // one keeps today's "not yet", which will pass.
+    expect(
+      within(region('Speculative Decoding')).getByText(
+        'vLLM localhost:8000 does not report speculative decoding.',
+      ),
+    ).toBeInTheDocument()
+    expect(
+      within(region('Decode Throughput')).getByText('vLLM localhost:8000 has no metrics yet.'),
+    ).toBeInTheDocument()
+  })
+
+  it('omits the latency parts that are not reported, with nothing standing in', async () => {
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        { id: 'latency', type: 'engine-latency', geometry: { x: 0, y: 0, w: 6, h: 4 } },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, [makeEngine(ALPHA, { metric_groups: ['LatencyMeans'] })]))
+
+    const latency = region('Latency')
+    // The means are all there, under their plain names in the average mode…
+    expect(within(latency).getByText('TTFT')).toBeInTheDocument()
+    expect(within(latency).getByText('210')).toBeInTheDocument()
+    expect(within(latency).getByText('4.20')).toBeInTheDocument()
+    expect(within(latency).getByText('9')).toBeInTheDocument()
+    // …while queue time and the batch size are omitted rather than dashed.
+    expect(within(latency).queryByText('Queue')).not.toBeInTheDocument()
+    expect(within(latency).queryByText('Batch')).not.toBeInTheDocument()
+    expect(within(latency).queryByText('--')).not.toBeInTheDocument()
+    expect(within(latency).queryByTestId('chart-series-Queue')).not.toBeInTheDocument()
+    expect(within(latency).getByTestId('chart-series-TTFT')).toHaveAttribute('data-values', '210')
+  })
+
+  it('shows the mean, labelled as the mean, in a percentile mode on a means-only engine', async () => {
+    window.localStorage.setItem('spark-dashboard:latency-mode', 'p95')
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        { id: 'latency', type: 'engine-latency', geometry: { x: 0, y: 0, w: 6, h: 4 } },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(
+      makeSnapshot(1000, [
+        makeEngine(ALPHA, { metric_groups: ['LatencyMeans', 'QueueTime', 'Throughput'] }),
+      ]),
+    )
+
+    const latency = region('Latency')
+    // The header still names p95; each figure says it is the mean instead —
+    // the mean TTFT (210), never the p95 the snapshot also happens to carry.
+    expect(within(latency).getByRole('combobox', { name: 'Statistic display mode' })).toHaveValue(
+      'p95',
+    )
+    for (const label of ['TTFT mean', 'E2E mean', 'ITL mean', 'TPOT mean']) {
+      expect(within(latency).getByText(label), label).toBeInTheDocument()
+    }
+    expect(within(latency).queryByText('TTFT')).not.toBeInTheDocument()
+    expect(within(latency).getByText('210')).toBeInTheDocument()
+    expect(within(latency).queryByText('400')).not.toBeInTheDocument()
+    // The chart draws the mean's own series, under the same label.
+    expect(within(latency).getByTestId('chart-series-TTFT mean')).toHaveAttribute(
+      'data-values',
+      '210',
+    )
+    // Queue time and batch size are reported here, and read as they always have.
+    expect(within(latency).getByText('Queue')).toBeInTheDocument()
+    expect(within(latency).getByText('6.5')).toBeInTheDocument()
+  })
+
+  it('keeps percentile headings on an engine that reports percentiles', async () => {
+    // vLLM's own behavior in a percentile mode, pinned beside the fallback.
+    window.localStorage.setItem('spark-dashboard:latency-mode', 'p95')
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        { id: 'latency', type: 'engine-latency', geometry: { x: 0, y: 0, w: 6, h: 4 } },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, [makeEngine(ALPHA, { metric_groups: [...METRIC_GROUPS] })]))
+
+    const latency = region('Latency')
+    expect(within(latency).getByText('TTFT')).toBeInTheDocument()
+    expect(within(latency).getByText('400')).toBeInTheDocument()
+    expect(within(latency).queryByText('TTFT mean')).not.toBeInTheDocument()
+  })
+
+  it('says SLO goodput is not reported by an engine with means but no percentiles', async () => {
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        { id: 'goodput', type: 'engine-slo-goodput', geometry: { x: 0, y: 0, w: 6, h: 4 } },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, [makeEngine(ALPHA, { metric_groups: ['LatencyMeans'] })]))
+
+    const goodput = region('SLO Goodput')
+    expect(
+      within(goodput).getByText('vLLM localhost:8000 does not report latency percentiles.'),
+    ).toBeInTheDocument()
+    // Not the backend's goodput figures, which this snapshot still carries.
+    expect(within(goodput).queryByText('97.0')).not.toBeInTheDocument()
+  })
+
+  it('shows only the half of the cache panel the engine reports', async () => {
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        {
+          id: 'prefix',
+          type: 'engine-cache',
+          title: 'Prefix only',
+          binding: { kind: 'engine', endpoint: ALPHA },
+          geometry: { x: 0, y: 0, w: 6, h: 4 },
+        },
+        {
+          id: 'kv',
+          type: 'engine-cache',
+          title: 'KV only',
+          binding: { kind: 'engine', endpoint: BETA },
+          geometry: { x: 6, y: 0, w: 6, h: 4 },
+        },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(
+      makeSnapshot(1000, [
+        makeEngine(ALPHA, { metric_groups: ['PrefixCache'] }),
+        makeEngine(BETA, { metric_groups: ['KvCache'] }),
+      ]),
+    )
+
+    const prefix = region('Prefix only')
+    expect(within(prefix).getByText('55')).toBeInTheDocument()
+    expect(within(prefix).getByText('2M')).toBeInTheDocument()
+    expect(within(prefix).queryByText('KV Cache')).not.toBeInTheDocument()
+    expect(within(prefix).queryByTestId('chart-series-KV Cache')).not.toBeInTheDocument()
+
+    const kv = region('KV only')
+    expect(within(kv).getByText('42')).toBeInTheDocument()
+    expect(within(kv).queryByText('Prefix Hit')).not.toBeInTheDocument()
+    expect(within(kv).queryByText('Prefix Queries')).not.toBeInTheDocument()
+    expect(within(kv).queryByTestId('chart-series-Prefix Hit')).not.toBeInTheDocument()
+  })
+
+  it('changes nothing for an engine that declares every group', async () => {
+    // What vLLM puts on the wire. Rendered exactly as the older backend's
+    // snapshot without the field is in the specs above.
+    const fetchMock = serveConfiguration({ document: storedDocument(enginePanels()) })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, [makeEngine(ALPHA, { metric_groups: [...METRIC_GROUPS] })]))
+
+    expect(screen.queryByText(/does not report/)).not.toBeInTheDocument()
+    expect(within(region('Decode Throughput')).getByText('120.0')).toBeInTheDocument()
+    expect(within(region('Latency')).getByText('Queue')).toBeInTheDocument()
+    expect(within(region('Latency')).getByText('6.5')).toBeInTheDocument()
+    expect(within(region('Cache')).getByText('42')).toBeInTheDocument()
+    expect(within(region('SLO Goodput')).getByText('99.0')).toBeInTheDocument()
+    // Speculative decoding is reported, and this engine is not configured for
+    // it — which the panel says exactly as it did before groups existed.
+    expect(
+      within(region('Speculative Decoding')).getByText(
+        'This engine is not using speculative decoding.',
+      ),
+    ).toBeInTheDocument()
   })
 })
 

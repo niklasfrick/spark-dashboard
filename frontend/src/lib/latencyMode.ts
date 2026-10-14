@@ -44,6 +44,33 @@ export function pickLatencyValue(
   return percentiles.p99_ms
 }
 
+/** Which of the latency statistics an engine reports (ADR-0004). */
+export interface ReportedLatencyStatistics {
+  /** The latency means group. */
+  means: boolean
+  /** The latency percentiles group. */
+  percentiles: boolean
+}
+
+/**
+ * The statistic a latency panel can actually show in the chosen mode, given
+ * what its engine reports — null when it reports none it could.
+ *
+ * A percentile mode on an engine that reports means but no percentiles falls
+ * back to the mean, and the caller **labels it as the mean**: a mean under a
+ * percentile heading is exactly how a tail-latency problem gets read as a
+ * healthy average. The reverse never happens — the average mode does not borrow
+ * a percentile, because a p50 under "avg" would be the same misreading turned
+ * around.
+ */
+export function shownLatencyStatistic(
+  mode: LatencyMode,
+  reported: ReportedLatencyStatistics,
+): LatencyMode | null {
+  if (mode !== 'avg' && reported.percentiles) return mode
+  return reported.means ? 'avg' : null
+}
+
 /** Title-friendly label for the active mode. */
 export function latencyModeLabel(mode: LatencyMode): string {
   if (mode === 'avg') return 'avg'

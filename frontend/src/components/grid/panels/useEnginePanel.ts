@@ -2,9 +2,15 @@ import { useMemo } from 'react'
 import { useInferenceRequests, useLatestSnapshot, useMetricsStore } from '@/hooks/useMetricsStore'
 import { usePageSelection } from '@/hooks/usePageSelection'
 import { resolveEngineBinding } from '@/lib/dashboard/bindings'
+import { panelMetricGroups } from '@/lib/dashboard/panels'
 import { pageSelection } from '@/lib/dashboard/selection'
 import { aggregateEngineMetrics } from '@/lib/engineAggregate'
-import { engineAvailability, engineMetricReader, type EngineMetricReader } from '@/lib/engineMetrics'
+import {
+  engineAvailability,
+  engineMetricReader,
+  reportedMetricGroups,
+  type EngineMetricReader,
+} from '@/lib/engineMetrics'
 import { engineKey } from '@/lib/identity'
 import {
   ALL_ENGINES_KEY,
@@ -13,7 +19,12 @@ import {
   type EngineSeriesName,
 } from '@/lib/metricsHistoryStore'
 import type { DashboardPanel } from '@/lib/dashboard/schema'
-import type { EngineMetrics, EngineSnapshot, InferenceRequestData } from '@/types/metrics'
+import type {
+  EngineMetrics,
+  EngineSnapshot,
+  InferenceRequestData,
+  MetricGroup,
+} from '@/types/metrics'
 
 /** Which engine a panel's binding names on this host, before anything is asked
  *  about whether that engine is serving. */
@@ -43,20 +54,32 @@ export type ResolvedEngineTarget = Extract<EngineTargetResolution, { status: 're
 /** The all-engines aggregate a panel resolved its binding to. */
 export type AggregateEngineTarget = Extract<EngineTargetResolution, { status: 'aggregate' }>
 
+/** What a panel reads off the target it resolved to. */
+interface EngineReadings {
+  /** The target's metrics; for one engine, with the no-model rule applied. */
+  metric: EngineMetricReader
+  /** One of the target's series over the panel's own time window. */
+  series: (name: EngineSeriesName) => DataPoint[]
+  /**
+   * Whether the target reports a metric group. A panel showing several groups
+   * asks this to omit the parts that are not reported — never a zero or a dash
+   * in their place; a panel whose groups are all unreported never gets here.
+   */
+  reports: (group: MetricGroup) => boolean
+}
+
 /** What an engine panel found at the other end of its binding. */
 export type EnginePanelResolution =
-  | (ResolvedEngineTarget & {
-      /** This engine's metrics, with the no-model rule applied. */
-      metric: EngineMetricReader
-      /** One of this engine's series over the panel's own time window. */
-      series: (name: EngineSeriesName) => DataPoint[]
-    })
+  | (ResolvedEngineTarget & EngineReadings)
   /** The combined figures, read through the same reader and series shape a
    *  single engine uses — which is what lets one panel render either. */
-  | (AggregateEngineTarget & {
-      metric: EngineMetricReader
-      series: (name: EngineSeriesName) => DataPoint[]
-    })
+  | (AggregateEngineTarget & EngineReadings)
+  /**
+   * The engine resolved, and reports none of the metric groups the panel shows
+   * — a property of the engine rather than a moment in its life, so the panel
+   * says so in place of its data and keeps its slot (ADR-0004).
+   */
+  | { status: 'not-reported'; engine: EngineSnapshot; groups: readonly MetricGroup[] }
   /** The engine resolved, and has no metrics yet — starting, or loading a model. */
   | { status: 'starting'; engine: EngineSnapshot }
   /** The engine resolved and is not serving; `detail` says why. */
@@ -150,6 +173,7 @@ export function useEnginePanel(panel: DashboardPanel): EnginePanelResolution {
   const snapshot = useLatestSnapshot()
   const target = useEngineTarget(panel)
   const window = panel.window
+  const groups = panelMetricGroups(panel.type)
 
   return useMemo(() => {
     if (target.status === 'aggregate') {
@@ -163,11 +187,23 @@ export function useEnginePanel(panel: DashboardPanel): EnginePanelResolution {
         ...target,
         metric: <K extends keyof EngineMetrics>(key: K) => metrics[key],
         series: (name) => store.getChartData(engineSeries(name, ALL_ENGINES_KEY), window),
+        // The combination is unchanged by metric groups for now: it reads as
+        // reporting every group, as it always has. Combining only the engines
+        // that report a metric is its own change (#130).
+        reports: () => true,
       }
     }
     if (target.status !== 'resolved') return target
 
     const { engine } = target
+    const reported = reportedMetricGroups(engine)
+    // Asked before whether the engine is serving: "does not report" is true in
+    // every state the engine can be in, while "is not running" or "has no
+    // metrics yet" would promise the panel fills once that passes.
+    if (groups.length > 0 && !groups.some((group) => reported.has(group))) {
+      return { status: 'not-reported', engine, groups }
+    }
+
     const availability = engineAvailability(engine)
     if (availability.kind === 'starting') return { status: 'starting', engine }
     if (availability.kind === 'offline') {
@@ -179,6 +215,7 @@ export function useEnginePanel(panel: DashboardPanel): EnginePanelResolution {
       ...target,
       metric: engineMetricReader(engine),
       series: (name) => store.getChartData(engineSeries(name, key), window),
+      reports: (group) => reported.has(group),
     }
-  }, [store, snapshot, target, window])
+  }, [store, snapshot, target, window, groups])
 }
