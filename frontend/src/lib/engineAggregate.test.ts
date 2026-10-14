@@ -369,6 +369,19 @@ describe('aggregateEngines over engines that report different metric groups', ()
     expect(snap.coverage).toEqual({ running: 2, included: everyGroup(1) })
   })
 
+  it('leaves out an engine whose metrics are off even when it still carries stale figures', () => {
+    const stale = fullMetrics({ tokens_per_sec: 50, active_requests: 3, ttft_ms: 500 })
+    const snap = aggregateEngines([
+      engine('Running', fullMetrics({ tokens_per_sec: 100, active_requests: 2, ttft_ms: 100 })),
+      engine('Running', stale, 'b', { metric_groups: [...METRIC_GROUPS], metrics_off: '--enable-metrics' }),
+    ])
+
+    expect(snap.tokens_per_sec).toBe(100)
+    expect(snap.active_requests).toBe(2)
+    expect(snap.ttft_ms).toBe(100)
+    expect(snap.coverage).toEqual({ running: 2, included: everyGroup(1) })
+  })
+
   it('reads a figure no running engine reports as null, not zero', () => {
     const snap = aggregateEngines([
       reporting(fullMetrics({ tokens_per_sec: 100 }), ['Requests']),
@@ -416,6 +429,17 @@ describe('aggregateEngines over engines that report different metric groups', ()
     const weighted = aggregateEngines([a, b(['LatencyMeans', 'Requests'])])
     expect(weighted.ttft_ms).toBeCloseTo(460, 5)
     expect(weighted.coverage.included.LatencyMeans).toBe(2)
+  })
+
+  it('masks the latency of an engine outside the group, not only its weight', () => {
+    // A reports every group but no request count, so no engine carries a weight;
+    // B's 500 ms must be absent because B is masked, not for want of a weight.
+    const a = engine('Running', fullMetrics({ ttft_ms: 100, total_requests: null }))
+    const b = reporting(fullMetrics({ ttft_ms: 500 }), ['LatencyMeans'])
+
+    const snap = aggregateEngines([a, b])
+    expect(snap.ttft_ms).toBe(100)
+    expect(snap.coverage.included.LatencyMeans).toBe(1)
   })
 
   it('means a percentage over the engines that report it, and its estimate flag with it', () => {
