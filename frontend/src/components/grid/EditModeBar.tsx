@@ -35,6 +35,13 @@ interface EditModeBarProps {
    * and mid-session the document under the unsaved panels must hold still.
    */
   pageConfig?: ReactNode
+  /**
+   * This browser's engine rotation control, shown beside the page config.
+   * Mounted in both modes, unlike the page config: it owns the rotation clock,
+   * which has to outlive an edit session to hold the page where it was, so it
+   * withholds itself while one is open rather than being withheld here.
+   */
+  rotation?: ReactNode
   onBegin: () => void
   onAdd: (type: PanelType) => void
   onSave: () => void
@@ -59,6 +66,7 @@ export function EditModeBar({
   narrow,
   refused,
   pageConfig,
+  rotation,
   onBegin,
   onAdd,
   onSave,
@@ -69,6 +77,7 @@ export function EditModeBar({
       <Status editing={editing} narrow={narrow} readOnly={readOnly} refused={refused} />
 
       <div className="flex items-center gap-2">
+        {rotation}
         {editing ? (
           <>
             {/* The rule for the collapsed column is about *cells*, not about

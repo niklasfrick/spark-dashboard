@@ -142,14 +142,15 @@
   animation: pulse-dot 1.5s ease-in-out infinite;
 }
 
-/* Tab rotation countdown bar — browser-driven, jitter-free. */
-@keyframes tab-rotation-shrink {
+/* Engine rotation countdown (EngineRotationControl) — browser-driven, so it
+   costs no React render per frame. Restarted per step by remounting. */
+@keyframes engine-rotation-countdown {
   from { transform: scaleX(1); }
   to { transform: scaleX(0); }
 }
-.tab-rotation-bar {
+.engine-rotation-bar {
   transform-origin: left center;
-  animation-name: tab-rotation-shrink;
+  animation-name: engine-rotation-countdown;
   animation-timing-function: linear;
   animation-fill-mode: forwards;
   animation-duration: var(--rotation-duration, 10000ms);
@@ -160,7 +161,8 @@
 @media (prefers-reduced-motion: reduce) {
   .recharts-line-curve path { transition: none !important; }
   .animate-pulse-dot { animation: none; }
-  .tab-rotation-bar { animation: none; transform: scaleX(0); }
+  /* Held full rather than hidden: it is also what says rotation is running. */
+  .engine-rotation-bar { animation: none; transform: none; }
 }
 
 /* Subtle scrollbar for dark theme */

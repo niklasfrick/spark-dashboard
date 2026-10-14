@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { LiveMotionContext } from '@/hooks/useLiveMotion'
+import { PageSelectionProvider } from '@/hooks/PageSelectionProvider'
 import { useElementSize } from '@/hooks/useElementSize'
 import type { PanelBinding } from '@/lib/dashboard/bindings'
 import type { SaveOutcome } from '@/lib/dashboard/client'
@@ -17,6 +18,7 @@ import { defaultPanelTitle, type PanelType } from '@/lib/dashboard/panels'
 import type { DashboardPage, DashboardPanel } from '@/lib/dashboard/schema'
 import type { TimeWindow } from '@/types/events'
 import { EditModeBar, type Refusal } from './EditModeBar'
+import { EngineRotationControl } from './EngineRotationControl'
 import { PageConfig } from './PageConfig'
 import { PanelSettings } from './PanelSettings'
 import { isNarrow } from './breakpoint'
@@ -216,56 +218,65 @@ export function GridPageEditor({
       // which runs no Tailwind build.
       style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' }}
     >
-      <EditModeBar
-        editing={session !== null}
-        readOnly={readOnly}
-        saving={saving}
-        narrow={narrow}
-        refused={refused}
-        pageConfig={
-          onChangeSource && (
-            <PageConfig source={page.source} readOnly={readOnly} onChange={onChangeSource} />
-          )
-        }
-        onBegin={() => setSession({ panels: page.panels, refused: null, configuringId: null })}
-        onAdd={add}
-        onSave={() => void save()}
-        onDiscard={() => setSession(null)}
-      />
+      {/* The page's selection lives here rather than in the grid, so the edit
+          bar's engine rotation steps the same selection every following panel
+          reads. It is per page because this editor is keyed by page id: a page
+          opened at another id starts from its own source — or the host's
+          defaults — again.
 
-      {/* Everything below holds still while the page is being edited: no tab
-          rotation, no counting, no chart or log redrawing under a panel in
-          flight — and no target appearing in the settings row's own lists
+          Everything inside holds still while the page is being edited: no
+          engine rotation, no counting, no chart or log redrawing under a panel
+          in flight — and no target appearing in the settings row's own lists
           while the operator is choosing between them. */}
-      <LiveMotionContext.Provider value={session === null}>
-        {configured && (
-          <PanelSettings
-            // Keyed by the panel, so opening another one's settings starts its
-            // title field from that panel rather than from the last.
-            key={configured.id}
-            panel={configured}
-            onRename={(title) => editConfigured((panels, id) => renamePanel(panels, id, title))}
-            onWindowChange={(window: TimeWindow) =>
-              editConfigured((panels, id) => setPanelWindow(panels, id, window))
+      <PageSelectionProvider source={page.source}>
+        <LiveMotionContext.Provider value={session === null}>
+          <EditModeBar
+            editing={session !== null}
+            readOnly={readOnly}
+            saving={saving}
+            narrow={narrow}
+            refused={refused}
+            rotation={<EngineRotationControl />}
+            pageConfig={
+              onChangeSource && (
+                <PageConfig source={page.source} readOnly={readOnly} onChange={onChangeSource} />
+              )
             }
-            onRepoint={(binding: PanelBinding) =>
-              editConfigured((panels, id) => repointPanel(panels, id, binding))
-            }
-            onRemove={() => remove(configured.id)}
-            onClose={() =>
-              setSession((current) => (current ? { ...current, configuringId: null } : current))
-            }
+            onBegin={() => setSession({ panels: page.panels, refused: null, configuringId: null })}
+            onAdd={add}
+            onSave={() => void save()}
+            onDiscard={() => setSession(null)}
           />
-        )}
 
-        <div style={{ flex: 1, minHeight: 0 }}>
-          <GridPage
-            page={shown}
-            editing={session ? editingApi : undefined}
-            chrome={session ? chrome : undefined}
-          />
-        </div>
-      </LiveMotionContext.Provider>
+          {configured && (
+            <PanelSettings
+              // Keyed by the panel, so opening another one's settings starts its
+              // title field from that panel rather than from the last.
+              key={configured.id}
+              panel={configured}
+              onRename={(title) => editConfigured((panels, id) => renamePanel(panels, id, title))}
+              onWindowChange={(window: TimeWindow) =>
+                editConfigured((panels, id) => setPanelWindow(panels, id, window))
+              }
+              onRepoint={(binding: PanelBinding) =>
+                editConfigured((panels, id) => repointPanel(panels, id, binding))
+              }
+              onRemove={() => remove(configured.id)}
+              onClose={() =>
+                setSession((current) => (current ? { ...current, configuringId: null } : current))
+              }
+            />
+          )}
+
+          <div style={{ flex: 1, minHeight: 0 }}>
+            <GridPage
+              page={shown}
+              editing={session ? editingApi : undefined}
+              chrome={session ? chrome : undefined}
+            />
+          </div>
+        </LiveMotionContext.Provider>
+      </PageSelectionProvider>
     </div>
   )
 }

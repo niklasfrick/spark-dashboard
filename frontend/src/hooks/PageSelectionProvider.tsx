@@ -14,8 +14,10 @@ import { PageSelectionContext, type PageSelectionValue } from './usePageSelectio
  * The **chosen** targets are session state, deliberately not part of the saved
  * document: which GPU an operator is looking at right now is not an arrangement
  * they authored, and writing it would make every glance at a second GPU a
- * change to what everyone else sees. It resets per page because the provider
- * sits inside the page, which is keyed by page id.
+ * change to what everyone else sees. Engine rotation steps the engine half of
+ * it for the same reason — a kiosk cycling must not set everyone cycling. It
+ * resets per page because the provider sits in the page editor, which is keyed
+ * by page id.
  *
  * The **source** is the opposite — the page's persisted default, read from the
  * document and merely carried through here so the panel hooks resolve both

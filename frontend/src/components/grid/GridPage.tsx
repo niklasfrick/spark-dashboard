@@ -8,7 +8,6 @@ import {
   type GridStackNode,
   type GridStackOptions,
 } from 'gridstack/dist/react'
-import { PageSelectionProvider } from '@/hooks/PageSelectionProvider'
 import { useElementSize } from '@/hooks/useElementSize'
 import {
   judgeDrop,
@@ -262,33 +261,30 @@ export function GridPage({
       style={{ height: '100%' }}
       className={`min-h-0 ${narrow ? 'overflow-y-auto' : 'overflow-hidden'}`}
     >
-      {/* The selection is per page and lives inside it: every following panel
-          on this page reads the same GPU and engine, and a page mounted at
-          another id starts from its own configured source — or the host's
-          defaults — again. */}
-      <PageSelectionProvider source={page.source}>
-        <GridStack
-          ref={gridHandle}
-          options={options}
-          onChange={draggable ? handleChange : undefined}
-          onDragStart={draggable ? beginMove : undefined}
-          onDragStop={draggable ? endGesture : undefined}
-          onResizeStart={draggable ? beginResize : undefined}
-          onResizeStop={draggable ? endGesture : undefined}
-        >
-          {page.panels.map((panel) => (
-            <GridStackItem key={panel.id} id={panel.id} options={panel.geometry}>
-              <GridPanel
-                panel={panel}
-                editing={Boolean(editing)}
-                configuring={chrome?.configuringId === panel.id}
-                onConfigure={chrome && (() => chrome.onConfigure(panel.id))}
-                onRemove={chrome && (() => chrome.onRemove(panel.id))}
-              />
-            </GridStackItem>
-          ))}
-        </GridStack>
-      </PageSelectionProvider>
+      {/* No page selection of its own: the editor around the grid provides it,
+          so every following panel here and the edit bar's engine rotation
+          share one. */}
+      <GridStack
+        ref={gridHandle}
+        options={options}
+        onChange={draggable ? handleChange : undefined}
+        onDragStart={draggable ? beginMove : undefined}
+        onDragStop={draggable ? endGesture : undefined}
+        onResizeStart={draggable ? beginResize : undefined}
+        onResizeStop={draggable ? endGesture : undefined}
+      >
+        {page.panels.map((panel) => (
+          <GridStackItem key={panel.id} id={panel.id} options={panel.geometry}>
+            <GridPanel
+              panel={panel}
+              editing={Boolean(editing)}
+              configuring={chrome?.configuringId === panel.id}
+              onConfigure={chrome && (() => chrome.onConfigure(panel.id))}
+              onRemove={chrome && (() => chrome.onRemove(panel.id))}
+            />
+          </GridStackItem>
+        ))}
+      </GridStack>
     </div>
   )
 }

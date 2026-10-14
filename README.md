@@ -117,6 +117,10 @@ page is whatever set of panels you choose to put on it.
 - **Per-page model selection** — a page can show one engine, every engine
   combined, or whatever the host happens to be serving. See
   [Configuring what a page shows](#configuring-what-a-page-shows)
+- **Engine rotation for wall displays** — a browser can step a page's engine
+  panels through all models and each running engine every 3–20 s, without
+  changing what anyone else sees. See
+  [Rotating between engines](#rotating-between-engines)
 - **Per-panel settings** — retitle it, choose its time window (5m / 10m / 15m),
   or pin it to a specific GPU or engine instead of following the page
 - **Fits the viewport** on desktop with no scrolling; stacks into one column on
@@ -444,6 +448,28 @@ address one engine by endpoint. An engine that has gone away is still offered as
 a choice and marked as absent rather than hidden — hiding it is how a page
 silently ends up showing something else — and a pinned panel whose engine is
 gone keeps its slot and says the target is missing.
+
+### Rotating between engines
+
+A wall display nobody is standing at can cycle through the engines on its own.
+**Rotate**, beside *Page config* above the panels, offers *Off*, *3 s*, *5 s*,
+*10 s* and *20 s*. While it runs, every following engine panel on the page steps
+through **all models**, then each running engine in turn, then all models again.
+The control reads *Rotating*, with a bar counting down to the next step, and each
+panel names the engine (or *All models*) it is showing.
+
+- **Per browser, not per instance.** The setting lives in this browser's storage:
+  set it once on a kiosk and it survives reloads and reboots, on every page that
+  browser opens. It is never written to the dashboard configuration, so nobody
+  else's screen starts moving.
+- **Off by default**, and only offered while two or more engines are running.
+  Engines that start or stop are picked up on the next step.
+- **Only following engine panels move.** Pinned panels, GPU panels and host
+  panels stay where they are. Rotation overrides the page's model selection
+  while it runs, starting from whatever the page shows; turning it off returns
+  the page to it.
+- **It pauses while you edit a layout** and starts a fresh countdown after
+  *Save layout* or *Discard*.
 
 ### Log viewer (`--enable-log-viewer`, Linux only, opt-in)
 

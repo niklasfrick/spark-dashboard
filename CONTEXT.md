@@ -105,9 +105,9 @@ _Avoid_: auto, inherit, default binding
 
 **Page selection**:
 The GPU and engine target a page's `follow` panels resolve against. Three layers,
-strongest first: what the operator chose this session (stored sparsely, so an
-absent key means "never chose" rather than "chose nothing"), the page's **page
-source**, then the host's defaults.
+strongest first: what was chosen this session — by the operator, or by **engine
+rotation** — (stored sparsely, so an absent key means "never chose" rather than
+"chose nothing"), the page's **page source**, then the host's defaults.
 _Avoid_: current GPU, active engine, global filter
 
 **Page source**:
@@ -127,6 +127,20 @@ the engines that report the metric — saying so when that is not all of them.
 Per-engine things (logs, engine identity, a pin) never aggregate.
 _Avoid_: global view, all engines (the panel type "All Engines" is the overview
 panel; the page source is about what following panels render)
+
+**Engine rotation**:
+A browser's setting — off, or 3, 5, 10 or 20 s — that steps a page's following
+engine panels through **all models** and then each running engine in snapshot
+order, for a wall display nobody is standing at. It writes the page selection's
+session layer, so it overrides the **page source** for that browser only and
+hands the page back to it when it stops; pinned, GPU and host panels never move.
+Off by default, idle with fewer than two engines running, and frozen in **edit
+mode**. Kept in browser storage like the latency statistic and never in the
+**dashboard configuration**: one screen cycling must not set every screen
+cycling.
+_Avoid_: auto-rotate, carousel, tab rotation (the pre-0.14 feature it replaces
+cycled in-page engine tabs), page rotation (cycling between pages is a different
+thing, and not built)
 
 **Time window**:
 How much history a panel's chart covers (`5m`, `10m`, `15m`). Per panel, not per
