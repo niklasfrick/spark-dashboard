@@ -1,5 +1,5 @@
 import 'gridstack/dist/gridstack.css'
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   GridStack,
   GridStackItem,
@@ -139,6 +139,29 @@ export function GridPage({
     if (gridHandle.current?.getGrid()) setCollapsible(true)
   }, [])
 
+  // Whether the grid animates yet: not until the measured row height has been
+  // painted. The page arriving is not a layout change.
+  //
+  // The first frame is painted at the fallback row height, and the measured
+  // one replaces it a frame later. Handed both in one options update, the
+  // engine turns its transitions on first and only then sets the row height,
+  // so every panel would grow and slide from the fallback to its fitted size
+  // for 300ms, on every load and page switch, at any width.
+  //
+  // So animation is switched on two frames later. The first frame lays the
+  // panels out at the measured height with transitions still off, and by the
+  // second there is nothing left to move. One frame would not be enough on its
+  // own: a row height and a transition switched on before the same frame are
+  // animated together.
+  const [animated, setAnimated] = useState(false)
+  useEffect(() => {
+    if (!measured || animated) return
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => setAnimated(true))
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [measured, animated])
+
   const options = useMemo(
     (): GridStackOptions => ({
       column: GRID_COLUMNS,
@@ -159,13 +182,14 @@ export function GridPage({
       // everything upward on load and quietly rewrites the operator's layout.
       float: true,
       staticGrid: !draggable,
-      // No animation until the container has been measured, which is after the
-      // first paint. Until then the engine is placing panels where the page
-      // starts rather than moving them: animated, every panel would fly in from
-      // the top-left cell, and a page opening narrow would be seen collapsing.
-      animate: measured,
+      // No animation until the measured row height has been painted, which is
+      // after the first paint (see `animated`). Until then the engine is placing
+      // panels where the page starts rather than moving them: animated, every
+      // panel would fly in from the top-left cell, a page opening narrow would
+      // be seen collapsing, and every panel would then grow into its row height.
+      animate: animated,
     }),
-    [cellHeight, collapsible, draggable, measured],
+    [animated, cellHeight, collapsible, draggable],
   )
 
   // The gesture under way: what it is doing, where the panel started, and where

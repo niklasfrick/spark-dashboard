@@ -201,6 +201,74 @@ describe('a page opened at phone width', () => {
   })
 })
 
+describe('a page as it opens', () => {
+  // Until the container has been measured the grid lays rows out at a fallback
+  // height, and the first frame is painted that way. The measured height then
+  // replaces it. That swap is the page arriving, not the layout changing, so no
+  // panel may be seen growing or sliding into place, at either width. Later
+  // relayouts still animate.
+
+  it.each([
+    ['at phone width', 390],
+    ['at desktop width', 1280],
+  ])('takes the measured row height without animating to it %s', async (_name, width) => {
+    const [preset] = defaultDashboardDocument().pages
+    const { container, rerender } = render(
+      <Harness width={width} height={800} content={preset} />,
+    )
+
+    // The first check that sees the measured height runs in the task that
+    // applied it, well inside the library's 300ms transition: a panel that is
+    // being animated to it is still running that transition here.
+    await waitFor(() => expect(rowHeight(container)).toBe(rowHeightFor(800)))
+    expect(animatingPanels(container)).toEqual([])
+    const arrived = drawnBoxes(container)
+    await nextFrames()
+    expect(drawnBoxes(container)).toEqual(arrived)
+
+    // Animation is on once the page has arrived: a later change of row height,
+    // such as a shorter window, still moves the panels rather than jumping.
+    await waitFor(() =>
+      expect(container.querySelector('.grid-stack')).toHaveClass('grid-stack-animate'),
+    )
+    rerender(<Harness width={width} height={600} content={preset} />)
+    await waitFor(() => expect(rowHeight(container)).toBe(rowHeightFor(600)))
+    expect(animatingPanels(container)).not.toEqual([])
+  })
+})
+
+/** The row height the engine lays every item out with. */
+function rowHeight(container: HTMLElement): string {
+  return container.querySelector<HTMLElement>('.grid-stack')!.style.getPropertyValue('--gs-cell-height')
+}
+
+/** The row height fit-to-viewport divides out of a container this tall. */
+function rowHeightFor(height: number): string {
+  return `${Math.floor(height / GRID_MAX_ROWS)}px`
+}
+
+/** The panels with a transition running, by id. */
+function animatingPanels(container: HTMLElement): string[] {
+  return [...container.querySelectorAll('.grid-stack-item')]
+    .filter((el) => el.getAnimations().length > 0)
+    .map((el) => el.getAttribute('gs-id')!)
+}
+
+/** Where every panel is drawn, by id. */
+function drawnBoxes(container: HTMLElement): Record<string, number[]> {
+  return Object.fromEntries(
+    [...container.querySelectorAll('.grid-stack-item')].map((el) => {
+      const { top, left, width, height } = el.getBoundingClientRect()
+      return [el.getAttribute('gs-id')!, [top, left, width, height]]
+    }),
+  )
+}
+
+/** Two painted frames. */
+function nextFrames(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+}
+
 /**
  * A page whose panels are stored in an order that is not its reading order
  * (cpu, slo, memory, disk, net), as an operator's edits leave them.
