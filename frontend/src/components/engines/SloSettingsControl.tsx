@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { createPortal } from 'react-dom'
+import { useAnchoredPosition } from '@/hooks/useAnchoredPosition'
 import { useDismissablePopover } from '@/hooks/useDismissablePopover'
 import { DEFAULT_SLO, type SloThresholds } from '@/lib/slo'
 
@@ -49,8 +51,11 @@ export function SloSettingsControl({
   onChange,
   onReset,
 }: SloSettingsControlProps) {
-  const { open, setOpen, toggle, containerRef } = useDismissablePopover<HTMLDivElement>()
+  const { open, setOpen, toggle, containerRef, popoverRef } =
+    useDismissablePopover<HTMLButtonElement>()
   const [draft, setDraft] = useState<FieldDraft>(() => toDraft(thresholds))
+  const shown = open && !disabled
+  useAnchoredPosition(shown, containerRef, popoverRef)
 
   // Sync the local draft when external thresholds change (e.g. user switches
   // model and the hook reloads stored values). The draft is derived from the
@@ -82,8 +87,9 @@ export function SloSettingsControl({
   }
 
   return (
-    <div ref={containerRef} className="relative inline-flex">
+    <div className="inline-flex">
       <button
+        ref={containerRef}
         type="button"
         aria-label="Edit SLO thresholds"
         aria-haspopup="dialog"
@@ -102,78 +108,91 @@ export function SloSettingsControl({
         <GearIcon />
       </button>
 
-      {open && !disabled && (
-        <div
-          role="dialog"
-          aria-label="SLO threshold settings"
-          className="absolute right-0 top-[calc(100%+4px)] z-50 w-[14rem] rounded-md border border-white/[0.08] bg-[#0d0d10]/95 backdrop-blur-sm shadow-xl p-3 text-[11px] text-zinc-200"
-        >
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 mb-2">
-            SLO Thresholds
-          </div>
-          <div className="flex flex-col gap-2">
-            <SloField
-              label="TTFT"
-              unit="ms"
-              value={draft.ttftMs}
-              onChange={(ttftMs) => setDraft((d) => ({ ...d, ttftMs }))}
-              onCommit={apply}
-            />
-            <SloField
-              label="ITL"
-              unit="ms"
-              value={draft.itlMs}
-              onChange={(itlMs) => setDraft((d) => ({ ...d, itlMs }))}
-              onCommit={apply}
-            />
-            <SloField
-              label="TPOT"
-              unit="ms"
-              value={draft.tpotMs}
-              onChange={(tpotMs) => setDraft((d) => ({ ...d, tpotMs }))}
-              onCommit={apply}
-            />
-            <SloField
-              label="E2E"
-              unit="ms"
-              value={draft.e2eMs}
-              onChange={(e2eMs) => setDraft((d) => ({ ...d, e2eMs }))}
-              onCommit={apply}
-            />
-          </div>
-          {parsed === null && (
-            <div className="mt-2 text-[10px] text-amber-400">
-              All values must be positive numbers.
+      {/* Rendered at the end of the page rather than in the panel: the panel
+          body, its frame and the grid all clip, so a dialog inside them is cut
+          off wherever it would cross a panel edge — and on a single-engine
+          host the cog sits at the panel's left, so it would open leftwards out
+          of the panel entirely. Out here it is placed from the cog's own box
+          and kept inside the viewport (`useAnchoredPosition`). */}
+      {shown &&
+        createPortal(
+          <div
+            ref={popoverRef}
+            role="dialog"
+            aria-label="SLO threshold settings"
+            // Inline: the placement is computed from this box, so its width
+            // must hold anywhere the dialog renders — including the browser
+            // test project, which runs no Tailwind build.
+            style={{ position: 'fixed', width: '14rem' }}
+            className="z-50 rounded-md border border-white/[0.08] bg-[#0d0d10]/95 backdrop-blur-sm shadow-xl p-3 text-[11px] text-zinc-200"
+          >
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 mb-2">
+              SLO Thresholds
             </div>
-          )}
-          <div className="mt-3 flex items-center justify-between gap-2">
-            <button
-              type="button"
-              onClick={reset}
-              disabled={!isCustomized}
-              className={`text-[10px] uppercase tracking-wider px-2 py-1 rounded border transition-colors ${
-                isCustomized
-                  ? 'border-white/[0.08] text-zinc-300 hover:bg-white/[0.06]'
-                  : 'border-white/[0.04] text-zinc-600 cursor-not-allowed opacity-60'
-              }`}
-            >
-              Reset
-            </button>
-            <button
-              type="button"
-              onClick={apply}
-              disabled={!dirty || parsed === null}
-              className={`text-[10px] uppercase tracking-wider px-2 py-1 rounded border transition-colors ${
-                dirty && parsed !== null
-                  ? 'bg-[#76B900]/20 hover:bg-[#76B900]/30 border-[#76B900]/40 text-[#cfe98a]'
-                  : 'border-white/[0.04] text-zinc-600 cursor-not-allowed opacity-60'
-              }`}
-            >
-              Apply
-            </button>
-          </div>
-        </div>
-      )}
+            <div className="flex flex-col gap-2">
+              <SloField
+                label="TTFT"
+                unit="ms"
+                value={draft.ttftMs}
+                onChange={(ttftMs) => setDraft((d) => ({ ...d, ttftMs }))}
+                onCommit={apply}
+              />
+              <SloField
+                label="ITL"
+                unit="ms"
+                value={draft.itlMs}
+                onChange={(itlMs) => setDraft((d) => ({ ...d, itlMs }))}
+                onCommit={apply}
+              />
+              <SloField
+                label="TPOT"
+                unit="ms"
+                value={draft.tpotMs}
+                onChange={(tpotMs) => setDraft((d) => ({ ...d, tpotMs }))}
+                onCommit={apply}
+              />
+              <SloField
+                label="E2E"
+                unit="ms"
+                value={draft.e2eMs}
+                onChange={(e2eMs) => setDraft((d) => ({ ...d, e2eMs }))}
+                onCommit={apply}
+              />
+            </div>
+            {parsed === null && (
+              <div className="mt-2 text-[10px] text-amber-400">
+                All values must be positive numbers.
+              </div>
+            )}
+            <div className="mt-3 flex items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={reset}
+                disabled={!isCustomized}
+                className={`text-[10px] uppercase tracking-wider px-2 py-1 rounded border transition-colors ${
+                  isCustomized
+                    ? 'border-white/[0.08] text-zinc-300 hover:bg-white/[0.06]'
+                    : 'border-white/[0.04] text-zinc-600 cursor-not-allowed opacity-60'
+                }`}
+              >
+                Reset
+              </button>
+              <button
+                type="button"
+                onClick={apply}
+                disabled={!dirty || parsed === null}
+                className={`text-[10px] uppercase tracking-wider px-2 py-1 rounded border transition-colors ${
+                  dirty && parsed !== null
+                    ? 'bg-[#76B900]/20 hover:bg-[#76B900]/30 border-[#76B900]/40 text-[#cfe98a]'
+                    : 'border-white/[0.04] text-zinc-600 cursor-not-allowed opacity-60'
+                }`}
+              >
+                Apply
+              </button>
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   )
 }
