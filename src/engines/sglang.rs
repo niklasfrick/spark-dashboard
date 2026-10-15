@@ -194,14 +194,28 @@ impl EngineAdapter for SglangAdapter {
         self.http.endpoint()
     }
 
-    /// SGLang reports every group its endpoint can fill; fields a given
-    /// version or launch does not expose (TPOT without its own histogram,
-    /// swap counters, per-iteration batch size, spec counters) stay `None`
-    /// beside them — a field the engine never emits is "not reported" at
-    /// field level, which the panels already render as absence, exactly as
-    /// vLLM's optional sections do.
+    /// SGLang reports every metric group but four, each left out because no
+    /// series in its scrape measures that quantity, and a stand-in would be a
+    /// different one (ADR-0004):
+    /// - `TpotMean` and `TpotPercentiles`: time per output token has no
+    ///   histogram of its own in any probed version, and the per-request
+    ///   decode throughput is derived from it.
+    /// - `BatchSize`: there is no per-iteration token counter to read tokens
+    ///   per engine step off.
+    /// - `Preemptions`: `num_retracted_reqs` is a gauge of the requests
+    ///   retracted now, not the lifetime preemption counter, and there is no
+    ///   swap counter.
     fn metric_groups(&self) -> BTreeSet<MetricGroup> {
-        MetricGroup::all()
+        let mut groups = MetricGroup::all();
+        for group in [
+            MetricGroup::TpotMean,
+            MetricGroup::TpotPercentiles,
+            MetricGroup::BatchSize,
+            MetricGroup::Preemptions,
+        ] {
+            groups.remove(&group);
+        }
+        groups
     }
 
     fn metrics_launch_flag(&self) -> Option<&'static str> {
@@ -462,8 +476,9 @@ fn engine_metrics(
     // not reported, never proxied by a stand-in): TPOT has no histogram
     // of its own in any probed version, `num_retracted_reqs` is a gauge
     // of how many requests are retracted now rather than the lifetime
-    // preemption counter the Requests group names, and there is no
-    // per-iteration token counter behind avg_batch_size.
+    // preemption counter the Preemptions group names, and there is no
+    // per-iteration token counter behind avg_batch_size. Their groups are
+    // the ones `metric_groups` leaves out.
     let blank = warming_up;
     EngineMetrics {
         tokens_per_sec: if blank { None } else { rates.tokens_per_sec },
@@ -679,9 +694,11 @@ mod tests {
             "hit rate is cached-over-prompt of the same summed series"
         );
 
-        // Absent series, enumerated (ADR-0004): each of these renders as a
-        // dash, and the moment one gains a value from a stand-in this test
-        // is where the reviewer sees it.
+        // Absent series, enumerated (ADR-0004): the moment one gains a value
+        // from a stand-in this test is where the reviewer sees it. The TPOT,
+        // batch-size and preemption fields belong to groups `metric_groups`
+        // leaves out, so their tiles read "not reported"; the spec counters
+        // sit in a group SGLang reports and stay empty within it.
         assert_eq!(m.per_request_tps, None);
         assert_eq!(m.swapped_requests, None);
         assert_eq!(m.preemptions_total, None);
@@ -916,17 +933,73 @@ sglang:time_to_first_token_seconds_bucket{le=\"+Inf\",role=\"decode\"} 4
         assert_eq!(ttft[1].1, 4.0);
     }
 
-    /// SGLang says "metrics off" with a flag name, not with an empty group
-    /// list — the two states render differently in the UI (ADR-0004).
-    #[test]
-    fn metrics_off_names_its_flag_beyond_the_group_declaration() {
-        let adapter = SglangAdapter::new(
+    fn adapter() -> SglangAdapter {
+        SglangAdapter::new(
             reqwest::Client::new(),
             "http://127.0.0.1:30000".into(),
             None,
             None,
+        )
+    }
+
+    /// Every group but TPOT's two, batch size and preemptions — written out,
+    /// so a group added later is a decision for SGLang rather than a default.
+    fn sglang_groups() -> BTreeSet<MetricGroup> {
+        BTreeSet::from([
+            MetricGroup::Throughput,
+            MetricGroup::ActiveRequests,
+            MetricGroup::RequestTotal,
+            MetricGroup::QueueTime,
+            MetricGroup::KvCache,
+            MetricGroup::PrefixCache,
+            MetricGroup::SpeculativeDecoding,
+            MetricGroup::TtftMean,
+            MetricGroup::TtftPercentiles,
+            MetricGroup::E2eMean,
+            MetricGroup::E2ePercentiles,
+            MetricGroup::ItlMean,
+            MetricGroup::ItlPercentiles,
+        ])
+    }
+
+    /// The declaration and the mapping agree in both directions, over the
+    /// real scrape: a group SGLang leaves out has no field the mapping fills,
+    /// and each group it declares has one the scrape fills.
+    #[test]
+    fn sglang_reports_every_group_but_tpot_batch_size_and_preemptions() {
+        let adapter = adapter();
+        assert_eq!(adapter.metric_groups(), sglang_groups());
+
+        let rates = RateInputs {
+            tokens_per_sec: Some(30.0),
+            prompt_tokens_per_sec: Some(100.0),
+            avg_tokens_per_sec: Some(25.0),
+            avg_prompt_tokens_per_sec: Some(90.0),
+        };
+        let parsed = parsed_real();
+        let metrics = engine_metrics(&parsed, &parsed, rates, false, Some(true));
+        let json = |m: EngineMetrics| serde_json::to_value(m).unwrap();
+
+        assert_eq!(
+            json(metrics.clone().reported_only(&adapter.metric_groups())),
+            json(metrics.clone()),
+            "nothing SGLang fills belongs to a group it leaves out",
         );
-        assert_eq!(adapter.metric_groups(), MetricGroup::all());
+        for group in adapter.metric_groups() {
+            assert_ne!(
+                json(metrics.clone().reported_only(&BTreeSet::from([group]))),
+                json(EngineMetrics::default()),
+                "the real scrape fills {group:?}",
+            );
+        }
+    }
+
+    /// SGLang says "metrics off" with a flag name, not with an empty group
+    /// list — the two states render differently in the UI (ADR-0004).
+    #[test]
+    fn metrics_off_names_its_flag_beyond_the_group_declaration() {
+        let adapter = adapter();
+        assert_eq!(adapter.metric_groups(), sglang_groups());
         assert!(!adapter.metrics_off());
         assert_eq!(adapter.metrics_launch_flag(), Some("--enable-metrics"));
     }
