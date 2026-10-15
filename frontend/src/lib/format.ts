@@ -206,6 +206,9 @@ export function engineDescription(engine: EngineIdentity): string {
   return `${engineDisplayName(engine.engine_type)} ${formatEndpoint(engine.endpoint)}`
 }
 
+/** What a tile shows in place of a figure its engine does not report. */
+export const NOT_REPORTED = 'not reported'
+
 /**
  * Each metric group as it reads in a sentence — the glossary's own words, so
  * the placeholder an operator reads and the term the project uses agree.

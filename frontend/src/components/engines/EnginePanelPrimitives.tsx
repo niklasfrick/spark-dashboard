@@ -4,7 +4,7 @@
  * one visual vocabulary without duplicating logic.
  */
 
-import { formatCompactTokens, formatAcceptanceLength, fmtVal } from '@/lib/format'
+import { formatCompactTokens, formatAcceptanceLength, fmtVal, NOT_REPORTED } from '@/lib/format'
 import type { Trend } from '@/lib/engineStats'
 import { AnimatedCounter } from './AnimatedCounter'
 
@@ -33,26 +33,38 @@ interface MetricTileProps {
   warn?: boolean
   /** Optional small line under the value — used for latency percentiles. */
   subline?: string
+  /**
+   * The engine does not report this figure: the label stays, the value, unit,
+   * trend and subline are not rendered, and "not reported" takes their place.
+   * `value` is ignored.
+   */
+  notReported?: boolean
 }
 
 /** Big metric tile with optional trend indicator. */
-export function MetricTile({ label, value, unit, trend, invertTrend, warn, subline }: MetricTileProps) {
+export function MetricTile({ label, value, unit, trend, invertTrend, warn, subline, notReported }: MetricTileProps) {
   return (
-    <div className="flex flex-col gap-0.5 min-w-0">
+    <div role="group" aria-label={label} className="flex flex-col gap-0.5 min-w-0">
       <span className={`text-[10px] 2xl:text-xs min-[1920px]:text-sm font-medium uppercase tracking-wider truncate ${warn ? 'text-red-400/70' : 'text-zinc-400'}`}>
         {label}
       </span>
-      <div className="flex items-baseline">
-        <span className={`text-lg xl:text-xl 2xl:text-2xl min-[1920px]:text-3xl min-[2560px]:text-4xl font-bold font-mono tabular-nums leading-none ${warn ? 'text-red-400' : 'text-zinc-100'}`}>
-          {value}
-        </span>
-        {unit && <span className="text-[10px] 2xl:text-xs ml-1 text-zinc-500">{unit}</span>}
-        {trend && <TrendArrow trend={trend} invertColor={invertTrend} />}
-      </div>
-      {subline && (
-        <span className="text-[9px] text-zinc-500 font-mono tabular-nums tracking-tight truncate">
-          {subline}
-        </span>
+      {notReported ? (
+        <span className="text-xs text-zinc-500">{NOT_REPORTED}</span>
+      ) : (
+        <>
+          <div className="flex items-baseline">
+            <span className={`text-lg xl:text-xl 2xl:text-2xl min-[1920px]:text-3xl min-[2560px]:text-4xl font-bold font-mono tabular-nums leading-none ${warn ? 'text-red-400' : 'text-zinc-100'}`}>
+              {value}
+            </span>
+            {unit && <span className="text-[10px] 2xl:text-xs ml-1 text-zinc-500">{unit}</span>}
+            {trend && <TrendArrow trend={trend} invertColor={invertTrend} />}
+          </div>
+          {subline && (
+            <span className="text-[9px] text-zinc-500 font-mono tabular-nums tracking-tight truncate">
+              {subline}
+            </span>
+          )}
+        </>
       )}
     </div>
   )
@@ -66,6 +78,8 @@ interface LiveWithTotalProps {
   /** Right half: cumulative lifetime token total (animated, abbreviated). */
   totalLabel: string
   total: number | null
+  /** The engine reports neither figure: both labels stay, "not reported" replaces both values. */
+  notReported?: boolean
 }
 
 /**
@@ -80,33 +94,42 @@ export function LiveWithTotal({
   trend,
   totalLabel,
   total,
+  notReported,
 }: LiveWithTotalProps) {
   return (
-    <div className="flex items-start justify-between gap-2 min-w-0">
+    <div role="group" aria-label="Live" className="flex items-start justify-between gap-2 min-w-0">
       <div className="flex flex-col gap-0.5 min-w-0">
         <span className="text-[10px] 2xl:text-xs min-[1920px]:text-sm font-medium uppercase tracking-wider truncate text-zinc-400">
           Live
         </span>
-        <div className="flex items-baseline min-w-0">
-          <span className="text-base xl:text-lg 2xl:text-xl min-[1920px]:text-2xl min-[2560px]:text-3xl font-bold font-mono tabular-nums leading-none text-zinc-100">
-            {liveValue}
-          </span>
-          {liveUnit && <span className="text-[10px] 2xl:text-xs ml-1 text-zinc-500">{liveUnit}</span>}
-          {trend && <TrendArrow trend={trend} />}
-        </div>
+        {notReported ? (
+          <span className="text-xs text-zinc-500">{NOT_REPORTED}</span>
+        ) : (
+          <div className="flex items-baseline min-w-0">
+            <span className="text-base xl:text-lg 2xl:text-xl min-[1920px]:text-2xl min-[2560px]:text-3xl font-bold font-mono tabular-nums leading-none text-zinc-100">
+              {liveValue}
+            </span>
+            {liveUnit && <span className="text-[10px] 2xl:text-xs ml-1 text-zinc-500">{liveUnit}</span>}
+            {trend && <TrendArrow trend={trend} />}
+          </div>
+        )}
       </div>
       <div className="flex flex-col gap-0.5 min-w-0 items-end text-right">
         <span className="text-[10px] 2xl:text-xs min-[1920px]:text-sm font-medium uppercase tracking-wider truncate text-zinc-400">
           {totalLabel}
         </span>
-        <div className="flex items-baseline min-w-0">
-          <AnimatedCounter
-            value={total}
-            format={formatCompactTokens}
-            className="text-base xl:text-lg 2xl:text-xl min-[1920px]:text-2xl min-[2560px]:text-3xl font-bold font-mono tabular-nums leading-none text-zinc-100 truncate"
-          />
-          <span className="text-[10px] 2xl:text-xs ml-1 text-zinc-500">tok</span>
-        </div>
+        {notReported ? (
+          <span className="text-xs text-zinc-500">{NOT_REPORTED}</span>
+        ) : (
+          <div className="flex items-baseline min-w-0">
+            <AnimatedCounter
+              value={total}
+              format={formatCompactTokens}
+              className="text-base xl:text-lg 2xl:text-xl min-[1920px]:text-2xl min-[2560px]:text-3xl font-bold font-mono tabular-nums leading-none text-zinc-100 truncate"
+            />
+            <span className="text-[10px] 2xl:text-xs ml-1 text-zinc-500">tok</span>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -233,6 +256,8 @@ interface GoodputTileProps {
   pct: number | null
   /** When true, render the value with extra emphasis (used for the headline). */
   emphasize?: boolean
+  /** The engine does not report this figure: label stays, "not reported" replaces the value. `pct` is ignored. */
+  notReported?: boolean
 }
 
 /**
@@ -243,7 +268,7 @@ interface GoodputTileProps {
  *
  * Returns `--` when there is no data yet.
  */
-export function GoodputTile({ label, pct, emphasize }: GoodputTileProps) {
+export function GoodputTile({ label, pct, emphasize, notReported }: GoodputTileProps) {
   const color =
     pct === null
       ? 'text-zinc-100'
@@ -257,16 +282,20 @@ export function GoodputTile({ label, pct, emphasize }: GoodputTileProps) {
     : 'text-lg xl:text-xl 2xl:text-2xl min-[1920px]:text-3xl min-[2560px]:text-4xl'
   const display = pct === null ? '--' : pct.toFixed(pct >= 99.95 ? 0 : 1)
   return (
-    <div className="flex flex-col gap-0.5 min-w-0">
+    <div role="group" aria-label={label} className="flex flex-col gap-0.5 min-w-0">
       <span className="text-[10px] 2xl:text-xs min-[1920px]:text-sm font-medium text-zinc-400 uppercase tracking-wider truncate">
         {label}
       </span>
-      <div className="flex items-baseline">
-        <span className={`${sizeClass} font-bold font-mono tabular-nums leading-none ${color}`}>
-          {display}
-        </span>
-        <span className="text-[10px] 2xl:text-xs ml-1 text-zinc-500">%</span>
-      </div>
+      {notReported ? (
+        <span className="text-xs text-zinc-500">{NOT_REPORTED}</span>
+      ) : (
+        <div className="flex items-baseline">
+          <span className={`${sizeClass} font-bold font-mono tabular-nums leading-none ${color}`}>
+            {display}
+          </span>
+          <span className="text-[10px] 2xl:text-xs ml-1 text-zinc-500">%</span>
+        </div>
+      )}
     </div>
   )
 }

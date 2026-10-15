@@ -11,6 +11,7 @@ import {
   engineIconPath,
   metricGroupName,
   modelMetadataWarning,
+  NOT_REPORTED,
   notReportedByAnyMessage,
   notReportedMessage,
 } from '../lib/format'
@@ -143,6 +144,12 @@ describe('modelMetadataWarning', () => {
     expect(modelMetadataWarning('Unavailable')).toBeNull()
     expect(modelMetadataWarning(null)).toBeNull()
     expect(modelMetadataWarning(undefined)).toBeNull()
+  })
+})
+
+describe('NOT_REPORTED', () => {
+  it('is the copy a tile shows for a figure its engine does not report', () => {
+    expect(NOT_REPORTED).toBe('not reported')
   })
 })
 
