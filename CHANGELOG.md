@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.15.0](https://github.com/niklasfrick/spark-dashboard/compare/spark-dashboard-v0.14.0...spark-dashboard-v0.15.0) (2026-10-15)
+
+
+### Features
+
+* **frontend:** add a GPU PCIe panel ([1ea2780](https://github.com/niklasfrick/spark-dashboard/commit/1ea2780c8f95286c84711b946b36dc5b86eb83b9)), closes [#98](https://github.com/niklasfrick/spark-dashboard/issues/98)
+* **frontend:** combine only the engines that report a metric group ([23e9cd9](https://github.com/niklasfrick/spark-dashboard/commit/23e9cd9e6544ab8c53df1bf91228ccb5631a6d93)), closes [#130](https://github.com/niklasfrick/spark-dashboard/issues/130)
+* **frontend:** file each engine metric under its metric group ([6ce64a1](https://github.com/niklasfrick/spark-dashboard/commit/6ce64a12a1a492ad574752a6dce191446fa90c19)), closes [#130](https://github.com/niklasfrick/spark-dashboard/issues/130)
+* **frontend:** open an unconfigured page on an engine that reports metrics ([0bf40aa](https://github.com/niklasfrick/spark-dashboard/commit/0bf40aa219233b57e730dda3114152a949dd8099))
+* **frontend:** rotate a page's engine for wall displays ([875a5aa](https://github.com/niklasfrick/spark-dashboard/commit/875a5aa443ad44b869bb924dc76750060bb77b7f))
+* **frontend:** say how many engines all-models figures cover ([6ba4631](https://github.com/niklasfrick/spark-dashboard/commit/6ba4631e4d23b6e3eb8fd87479bb83a073908859)), closes [#130](https://github.com/niklasfrick/spark-dashboard/issues/130)
+* **frontend:** say when an engine does not report a panel's metrics ([8b283ba](https://github.com/niklasfrick/spark-dashboard/commit/8b283bafe977437ba0a12e9ce7c8380b94d77c3d)), closes [#128](https://github.com/niklasfrick/spark-dashboard/issues/128)
+* **frontend:** start a new page from the Legacy layout ([bb41e33](https://github.com/niklasfrick/spark-dashboard/commit/bb41e33a0819c89011768de6e95a833c3d038a9a))
+* **frontend:** word all-models coverage and unreported groups ([7e2e24c](https://github.com/niklasfrick/spark-dashboard/commit/7e2e24cbf661c81e2192145d271a8384937a1dcb)), closes [#130](https://github.com/niklasfrick/spark-dashboard/issues/130)
+* **metrics:** engines declare the metric groups they report ([091838b](https://github.com/niklasfrick/spark-dashboard/commit/091838b9947b9942b53f1205aab06e7b2e871212)), closes [#128](https://github.com/niklasfrick/spark-dashboard/issues/128)
+* **metrics:** report per-GPU PCIe throughput ([e5887dd](https://github.com/niklasfrick/spark-dashboard/commit/e5887dd9769e8664931dc68a016014a8c9a19719)), closes [#98](https://github.com/niklasfrick/spark-dashboard/issues/98)
+
+
+### Bug Fixes
+
+* **frontend:** keep the engine's identity on one line in a wide, short panel ([91d2f7d](https://github.com/niklasfrick/spark-dashboard/commit/91d2f7dcc8d6f68816a4560ee550b24c1312daf4))
+* **frontend:** keep the SLO settings dialog on its cog while the grid moves it ([130579e](https://github.com/niklasfrick/spark-dashboard/commit/130579e7b5c90d2f651fb0a11531706e8e056aca))
+* **frontend:** keep the SLO settings dialog on screen and outside the panel's clip ([9db55bf](https://github.com/niklasfrick/spark-dashboard/commit/9db55bf078d2e9dad6e0c146c1a0483bd57022f9)), closes [#123](https://github.com/niklasfrick/spark-dashboard/issues/123)
+* **frontend:** let a page take its measured row height without animating ([556b4ec](https://github.com/niklasfrick/spark-dashboard/commit/556b4ec0fad79ac9b3228db553296fd483f37da1))
+* **frontend:** stack a page opened at phone width in reading order ([d628f4d](https://github.com/niklasfrick/spark-dashboard/commit/d628f4d87a59947fd1ec6fb3c98efd9d1c8ec1ca)), closes [#139](https://github.com/niklasfrick/spark-dashboard/issues/139)
+* **metrics:** read disk I/O rates from /proc/diskstats ([53849d5](https://github.com/niklasfrick/spark-dashboard/commit/53849d55fe968166a44e3bf3c5cc2687e9d371b8)), closes [#118](https://github.com/niklasfrick/spark-dashboard/issues/118)
+
+
+### Dependencies & Chores
+
+* **deps:** update async-trait to 0.1.92 ([fad0b96](https://github.com/niklasfrick/spark-dashboard/commit/fad0b96cfc48e7a1a6083c2c4f9405b2ca07deac))
+
 ## [0.14.0](https://github.com/niklasfrick/spark-dashboard/compare/spark-dashboard-v0.13.0...spark-dashboard-v0.14.0) (2026-09-04)
 
 
