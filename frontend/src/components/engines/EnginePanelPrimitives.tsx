@@ -24,6 +24,15 @@ export function TrendArrow({ trend, invertColor }: TrendArrowProps) {
   return <span className={`${color} text-[11px] ml-0.5`}>{isUp ? '▲' : '▼'}</span>
 }
 
+/**
+ * What a tile shows in place of its figure when the engine does not report it:
+ * muted, so it reads as a property of the engine rather than a value — never a
+ * dash, which says "not yet", and never a zero (ADR-0004).
+ */
+export function NotReported() {
+  return <span className="text-xs text-zinc-500">{NOT_REPORTED}</span>
+}
+
 interface MetricTileProps {
   label: string
   value: string
@@ -49,7 +58,7 @@ export function MetricTile({ label, value, unit, trend, invertTrend, warn, subli
         {label}
       </span>
       {notReported ? (
-        <span className="text-xs text-zinc-500">{NOT_REPORTED}</span>
+        <NotReported />
       ) : (
         <>
           <div className="flex items-baseline">
@@ -103,7 +112,7 @@ export function LiveWithTotal({
           Live
         </span>
         {notReported ? (
-          <span className="text-xs text-zinc-500">{NOT_REPORTED}</span>
+          <NotReported />
         ) : (
           <div className="flex items-baseline min-w-0">
             <span className="text-base xl:text-lg 2xl:text-xl min-[1920px]:text-2xl min-[2560px]:text-3xl font-bold font-mono tabular-nums leading-none text-zinc-100">
@@ -119,7 +128,7 @@ export function LiveWithTotal({
           {totalLabel}
         </span>
         {notReported ? (
-          <span className="text-xs text-zinc-500">{NOT_REPORTED}</span>
+          <NotReported />
         ) : (
           <div className="flex items-baseline min-w-0">
             <AnimatedCounter
@@ -287,7 +296,7 @@ export function GoodputTile({ label, pct, emphasize, notReported }: GoodputTileP
         {label}
       </span>
       {notReported ? (
-        <span className="text-xs text-zinc-500">{NOT_REPORTED}</span>
+        <NotReported />
       ) : (
         <div className="flex items-baseline">
           <span className={`${sizeClass} font-bold font-mono tabular-nums leading-none ${color}`}>

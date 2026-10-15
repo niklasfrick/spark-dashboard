@@ -215,18 +215,71 @@ export const NOT_REPORTED = 'not reported'
  */
 const METRIC_GROUP_NAMES: Record<MetricGroup, string> = {
   Throughput: 'throughput',
-  Requests: 'requests',
-  LatencyMeans: 'latency means',
-  LatencyPercentiles: 'latency percentiles',
+  BatchSize: 'batch size',
+  ActiveRequests: 'active requests',
+  RequestTotal: 'request total',
+  Preemptions: 'preemptions',
   QueueTime: 'queue time',
   KvCache: 'KV cache',
   PrefixCache: 'prefix cache',
   SpeculativeDecoding: 'speculative decoding',
+  TtftMean: 'TTFT mean',
+  TtftPercentiles: 'TTFT percentiles',
+  E2eMean: 'E2E mean',
+  E2ePercentiles: 'E2E percentiles',
+  ItlMean: 'ITL mean',
+  ItlPercentiles: 'ITL percentiles',
+  TpotMean: 'TPOT mean',
+  TpotPercentiles: 'TPOT percentiles',
 }
 
 /** A metric group as it reads in running text: "latency percentiles". */
 export function metricGroupName(group: MetricGroup): string {
   return METRIC_GROUP_NAMES[group]
+}
+
+/** The families of groups that read as one in a sentence: the four latency
+ *  means, the four latency percentiles, and the two request groups. */
+type PhraseFamily = 'latency means' | 'latency percentiles' | 'requests'
+
+/** Which family each group belongs to, if any. Exhaustive over `MetricGroup`,
+ *  so a new group fails `tsc` until it is placed. */
+const PHRASE_FAMILY = {
+  Throughput: null,
+  ActiveRequests: 'requests',
+  RequestTotal: 'requests',
+  Preemptions: null,
+  BatchSize: null,
+  QueueTime: null,
+  KvCache: null,
+  PrefixCache: null,
+  SpeculativeDecoding: null,
+  TtftMean: 'latency means',
+  TtftPercentiles: 'latency percentiles',
+  E2eMean: 'latency means',
+  E2ePercentiles: 'latency percentiles',
+  ItlMean: 'latency means',
+  ItlPercentiles: 'latency percentiles',
+  TpotMean: 'latency means',
+  TpotPercentiles: 'latency percentiles',
+} as const satisfies Record<MetricGroup, PhraseFamily | null>
+
+/**
+ * The groups a panel shows, as a placeholder says them: a family collapses —
+ * the means to "latency means", the percentiles to "latency percentiles", the
+ * two request groups to "requests" — only when two or more of its members are
+ * listed. A lone member, and every other group, goes by its own name. Repeats
+ * are dropped, keeping the first appearance, and the phrases are joined as
+ * alternatives ("throughput or TTFT mean").
+ */
+export function metricGroupsPhrase(groups: readonly MetricGroup[]): string {
+  const members = (family: PhraseFamily) =>
+    groups.filter(group => PHRASE_FAMILY[group] === family).length
+  const phrases = groups.map(group => {
+    const family = PHRASE_FAMILY[group]
+    return family !== null && members(family) >= 2 ? family : metricGroupName(group)
+  })
+  return listOfAlternatives([...new Set(phrases)])
 }
 
 /**
@@ -240,7 +293,7 @@ export function notReportedMessage(
   engine: EngineIdentity,
   groups: readonly MetricGroup[],
 ): string {
-  return `${engineDescription(engine)} does not report ${listOfAlternatives(groups.map(metricGroupName))}.`
+  return `${engineDescription(engine)} does not report ${metricGroupsPhrase(groups)}.`
 }
 
 /** What an all-models panel says when no running engine reports any of its groups:
@@ -248,7 +301,7 @@ export function notReportedMessage(
  *  counterpart of `notReportedMessage` — a property of the host's engines, not
  *  data that has yet to arrive. */
 export function notReportedByAnyMessage(groups: readonly MetricGroup[]): string {
-  return `No running engine reports ${listOfAlternatives(groups.map(metricGroupName))}.`
+  return `No running engine reports ${metricGroupsPhrase(groups)}.`
 }
 
 /** How many engines a panel's combined figures cover, when not all of them:

@@ -10,6 +10,7 @@ import {
   engineDisplayName,
   engineIconPath,
   metricGroupName,
+  metricGroupsPhrase,
   modelMetadataWarning,
   NOT_REPORTED,
   notReportedByAnyMessage,
@@ -157,14 +158,85 @@ describe('metricGroupName', () => {
   it('names every group in the glossary’s words', () => {
     expect(METRIC_GROUPS.map(metricGroupName)).toEqual([
       'throughput',
-      'requests',
-      'latency means',
-      'latency percentiles',
+      'batch size',
+      'active requests',
+      'request total',
+      'preemptions',
       'queue time',
       'KV cache',
       'prefix cache',
       'speculative decoding',
+      'TTFT mean',
+      'TTFT percentiles',
+      'E2E mean',
+      'E2E percentiles',
+      'ITL mean',
+      'ITL percentiles',
+      'TPOT mean',
+      'TPOT percentiles',
     ])
+  })
+})
+
+describe('metricGroupsPhrase', () => {
+  it('collapses the four latency means into one phrase', () => {
+    expect(metricGroupsPhrase(['TtftMean', 'E2eMean', 'ItlMean', 'TpotMean'])).toBe('latency means')
+  })
+
+  it('collapses the four latency percentiles into one phrase', () => {
+    expect(
+      metricGroupsPhrase(['TtftPercentiles', 'E2ePercentiles', 'ItlPercentiles', 'TpotPercentiles']),
+    ).toBe('latency percentiles')
+  })
+
+  it('collapses the two request groups into "requests"', () => {
+    expect(metricGroupsPhrase(['ActiveRequests', 'RequestTotal'])).toBe('requests')
+  })
+
+  it('names a lone mean, percentiles or request group on its own', () => {
+    expect(metricGroupsPhrase(['TtftMean'])).toBe('TTFT mean')
+    expect(metricGroupsPhrase(['E2ePercentiles'])).toBe('E2E percentiles')
+    expect(metricGroupsPhrase(['ActiveRequests'])).toBe('active requests')
+    expect(metricGroupsPhrase(['RequestTotal'])).toBe('request total')
+  })
+
+  it('collapses a family once two of its members are listed', () => {
+    expect(metricGroupsPhrase(['TtftMean', 'ItlMean'])).toBe('latency means')
+    expect(metricGroupsPhrase(['TtftPercentiles', 'TpotPercentiles'])).toBe('latency percentiles')
+  })
+
+  it('reads the prefill panel’s groups', () => {
+    expect(metricGroupsPhrase(['Throughput', 'TtftMean'])).toBe('throughput or TTFT mean')
+  })
+
+  it('reads the decode panel’s groups', () => {
+    expect(metricGroupsPhrase(['Throughput', 'TpotMean'])).toBe('throughput or TPOT mean')
+  })
+
+  it('reads the latency panel’s groups, in order of first appearance', () => {
+    expect(
+      metricGroupsPhrase([
+        'TtftMean',
+        'TtftPercentiles',
+        'E2eMean',
+        'E2ePercentiles',
+        'ItlMean',
+        'ItlPercentiles',
+        'TpotMean',
+        'TpotPercentiles',
+        'QueueTime',
+      ]),
+    ).toBe('latency means, latency percentiles or queue time')
+  })
+
+  it('reads the requests panel’s groups', () => {
+    expect(metricGroupsPhrase(['ActiveRequests', 'RequestTotal', 'Preemptions'])).toBe(
+      'requests or preemptions',
+    )
+  })
+
+  it('names a group that has no collapsed phrase as itself', () => {
+    expect(metricGroupsPhrase(['BatchSize', 'KvCache'])).toBe('batch size or KV cache')
   })
 })
 
@@ -181,8 +253,11 @@ describe('notReportedMessage', () => {
     expect(notReportedMessage(engine, ['KvCache', 'PrefixCache'])).toBe(
       'vLLM localhost:8080 does not report KV cache or prefix cache.',
     )
-    expect(notReportedMessage(engine, ['LatencyMeans', 'LatencyPercentiles', 'QueueTime'])).toBe(
-      'vLLM localhost:8080 does not report latency means, latency percentiles or queue time.',
+    expect(notReportedMessage(engine, ['Throughput', 'TtftMean'])).toBe(
+      'vLLM localhost:8080 does not report throughput or TTFT mean.',
+    )
+    expect(notReportedMessage(engine, ['ActiveRequests', 'RequestTotal', 'Preemptions'])).toBe(
+      'vLLM localhost:8080 does not report requests or preemptions.',
     )
   })
 })
@@ -195,8 +270,11 @@ describe('notReportedByAnyMessage', () => {
     expect(notReportedByAnyMessage(['KvCache', 'PrefixCache'])).toBe(
       'No running engine reports KV cache or prefix cache.',
     )
-    expect(notReportedByAnyMessage(['LatencyMeans', 'LatencyPercentiles', 'QueueTime'])).toBe(
-      'No running engine reports latency means, latency percentiles or queue time.',
+    expect(notReportedByAnyMessage(['TtftPercentiles', 'E2ePercentiles'])).toBe(
+      'No running engine reports latency percentiles.',
+    )
+    expect(notReportedByAnyMessage(['ActiveRequests', 'RequestTotal', 'Preemptions'])).toBe(
+      'No running engine reports requests or preemptions.',
     )
   })
 })
@@ -254,9 +332,21 @@ describe('coverageNote', () => {
         running: 3,
         groups: [
           { group: 'Throughput', included: 3 },
-          { group: 'Requests', included: 2 },
+          { group: 'ActiveRequests', included: 2 },
         ],
       }),
-    ).toBe('Throughput 3 of 3, requests 2 of 3 engines')
+    ).toBe('Throughput 3 of 3, active requests 2 of 3 engines')
+  })
+
+  it('names the tile-grain latency groups one by one', () => {
+    expect(
+      coverageNote({
+        running: 2,
+        groups: [
+          { group: 'TtftMean', included: 2 },
+          { group: 'TpotMean', included: 1 },
+        ],
+      }),
+    ).toBe('TTFT mean 2 of 2, TPOT mean 1 of 2 engines')
   })
 })

@@ -4,6 +4,8 @@ import { computeTrend } from '@/lib/engineStats'
 import { formatTps, fmtVal } from '@/lib/format'
 import type { NumericEngineMetric } from '@/lib/engineMetrics'
 import type { EngineSeriesName } from '@/lib/metricsHistoryStore'
+import type { MetricGroup } from '@/types/metrics'
+import { reportedLines } from './reportedLines'
 import { EnginePanelBody } from './EnginePanelBody'
 import { engineIdentity } from './engineLabel'
 import { EnginePanelNotice } from './PanelNotice'
@@ -23,6 +25,9 @@ interface ThroughputFields {
   total: NumericEngineMetric
   /** What the cumulative total counts, as the tile labels it. */
   totalLabel: string
+  /** The group the per-request rate is reported in: it is derived from the
+   *  phase's latency mean, so it is reported exactly when that mean is. */
+  perRequestGroup: MetricGroup
   series: { live: EngineSeriesName; average: EngineSeriesName; perRequest: EngineSeriesName }
 }
 
@@ -32,6 +37,7 @@ const PREFILL: ThroughputFields = {
   perRequest: 'per_request_prompt_tps',
   total: 'total_prompt_tokens',
   totalLabel: 'Processed',
+  perRequestGroup: 'TtftMean',
   series: { live: 'promptTps', average: 'avgPromptTps', perRequest: 'perReqPromptTps' },
 }
 
@@ -41,6 +47,7 @@ const DECODE: ThroughputFields = {
   perRequest: 'per_request_tps',
   total: 'total_generation_tokens',
   totalLabel: 'Generated',
+  perRequestGroup: 'TpotMean',
   series: { live: 'tps', average: 'avgTps', perRequest: 'perReqTps' },
 }
 
@@ -60,10 +67,20 @@ function ThroughputPanel({ panel, fields }: PanelContentProps & { fields: Throug
     return <EnginePanelNotice resolution={resolution} />
   }
 
-  const { metric, series } = resolution
-  const live = series(fields.series.live)
-  const average = series(fields.series.average)
-  const perRequest = series(fields.series.perRequest)
+  // A tile whose group the engine does not report keeps its slot and says so,
+  // and draws no line (ADR-0004).
+  const { metric, series, reports } = resolution
+  const throughput = reports('Throughput')
+  const perRequestReported = reports(fields.perRequestGroup)
+  const live = throughput ? series(fields.series.live) : []
+  const average = throughput ? series(fields.series.average) : []
+  const perRequest = perRequestReported ? series(fields.series.perRequest) : []
+
+  const chartSeries = reportedLines([
+    throughput && { data: live, label: 'Live', color: '#76B900' },
+    throughput && { data: average, label: 'Avg', color: '#3b82f6' },
+    perRequestReported && { data: perRequest, label: 'Per-req', color: '#a855f7' },
+  ])
 
   return (
     <EnginePanelBody
@@ -76,31 +93,28 @@ function ThroughputPanel({ panel, fields }: PanelContentProps & { fields: Throug
             trend={computeTrend(live)}
             totalLabel={fields.totalLabel}
             total={metric(fields.total)}
+            notReported={!throughput}
           />
           <MetricTile
             label="Avg"
             value={fmtVal(metric(fields.average), formatTps)}
             unit="tok/s"
             trend={computeTrend(average)}
+            notReported={!throughput}
           />
           <MetricTile
             label="Per-Req Avg"
             value={fmtVal(metric(fields.perRequest), formatTps)}
             unit="tok/s"
             trend={computeTrend(perRequest)}
+            notReported={!perRequestReported}
           />
         </div>
       }
       chart={
-        <TimeSeriesChart
-          hideTooltipLabel
-          series={[
-            { data: live, label: 'Live', color: '#76B900' },
-            { data: average, label: 'Avg', color: '#3b82f6' },
-            { data: perRequest, label: 'Per-req', color: '#a855f7' },
-          ]}
-          unit="tok/s"
-        />
+        chartSeries.length > 0 ? (
+          <TimeSeriesChart hideTooltipLabel series={chartSeries} unit="tok/s" />
+        ) : undefined
       }
     />
   )

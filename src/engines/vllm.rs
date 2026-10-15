@@ -68,10 +68,11 @@ impl EngineAdapter for VllmAdapter {
         self.http.endpoint()
     }
 
-    /// vLLM reports every group. Speculative decoding included: the group says
-    /// the engine *can* report it, and the `spec_decode_*` counters — present
-    /// only when a draft model is configured — say whether this one does, which
-    /// the panel already tells apart ("not using speculative decoding").
+    /// vLLM reports every one of the seventeen metric groups. Speculative
+    /// decoding included: the group says the engine *can* report it, and the
+    /// `spec_decode_*` counters — present only when a draft model is
+    /// configured — say whether this one does, which the panel already tells
+    /// apart ("not using speculative decoding").
     fn metric_groups(&self) -> BTreeSet<MetricGroup> {
         MetricGroup::all()
     }
@@ -461,8 +462,9 @@ mod tests {
     use super::super::histogram::percentile;
     use super::*;
 
-    /// vLLM fills every engine panel, so it declares every group — an operator
-    /// running it sees no "not reported" placeholder anywhere.
+    /// vLLM fills every engine panel, so it declares every one of the
+    /// seventeen groups — an operator running it sees no "not reported" tile
+    /// or placeholder anywhere.
     #[test]
     fn vllm_reports_every_metric_group() {
         let adapter = VllmAdapter::new(

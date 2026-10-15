@@ -62,47 +62,32 @@ export function reportedMetricGroups(
 
 /**
  * The metric group each engine metric belongs to — the grain at which an engine
- * reports a field or does not. Exhaustive by type: a field added to
- * `EngineMetrics` does not compile until it is filed here.
+ * reports a field or does not, and the grain of a tile. Exhaustive by type: a
+ * field added to `EngineMetrics` does not compile until it is filed here.
  *
- * Batch size is filed under throughput because the latency panel shows its tile
- * when the engine reports throughput; the percentiles, goodput and histogram
- * buckets all derive from the same histograms, so they share one group.
+ * A per-request rate is filed with the latency mean of its phase (prompt rate
+ * with TTFT, generation rate with TPOT), because an engine reports it exactly
+ * when it reports that mean. The percentiles, goodput and histogram buckets of
+ * one dimension all derive from the same histogram, so they share one group.
+ * The backend mirrors this table in `EngineMetrics::reported_only`.
  */
 export const METRIC_FIELD_GROUP = {
   tokens_per_sec: 'Throughput',
   avg_tokens_per_sec: 'Throughput',
-  per_request_tps: 'Throughput',
   prompt_tokens_per_sec: 'Throughput',
   avg_prompt_tokens_per_sec: 'Throughput',
-  per_request_prompt_tps: 'Throughput',
   total_prompt_tokens: 'Throughput',
   total_generation_tokens: 'Throughput',
-  avg_batch_size: 'Throughput',
 
-  active_requests: 'Requests',
-  queued_requests: 'Requests',
-  total_requests: 'Requests',
-  swapped_requests: 'Requests',
-  preemptions_total: 'Requests',
+  avg_batch_size: 'BatchSize',
 
-  ttft_ms: 'LatencyMeans',
-  e2e_latency_ms: 'LatencyMeans',
-  inter_token_latency_ms: 'LatencyMeans',
-  tpot_ms: 'LatencyMeans',
+  active_requests: 'ActiveRequests',
+  queued_requests: 'ActiveRequests',
 
-  ttft_percentiles: 'LatencyPercentiles',
-  itl_percentiles: 'LatencyPercentiles',
-  e2e_percentiles: 'LatencyPercentiles',
-  tpot_percentiles: 'LatencyPercentiles',
-  ttft_goodput_pct: 'LatencyPercentiles',
-  itl_goodput_pct: 'LatencyPercentiles',
-  e2e_goodput_pct: 'LatencyPercentiles',
-  tpot_goodput_pct: 'LatencyPercentiles',
-  ttft_buckets: 'LatencyPercentiles',
-  itl_buckets: 'LatencyPercentiles',
-  e2e_buckets: 'LatencyPercentiles',
-  tpot_buckets: 'LatencyPercentiles',
+  total_requests: 'RequestTotal',
+
+  swapped_requests: 'Preemptions',
+  preemptions_total: 'Preemptions',
 
   queue_time_ms: 'QueueTime',
 
@@ -118,6 +103,28 @@ export const METRIC_FIELD_GROUP = {
   spec_decode_acceptance_rate: 'SpeculativeDecoding',
   spec_decode_acceptance_rate_live: 'SpeculativeDecoding',
   spec_decode_mean_acceptance_length: 'SpeculativeDecoding',
+
+  ttft_ms: 'TtftMean',
+  per_request_prompt_tps: 'TtftMean',
+  ttft_percentiles: 'TtftPercentiles',
+  ttft_buckets: 'TtftPercentiles',
+  ttft_goodput_pct: 'TtftPercentiles',
+
+  e2e_latency_ms: 'E2eMean',
+  e2e_percentiles: 'E2ePercentiles',
+  e2e_buckets: 'E2ePercentiles',
+  e2e_goodput_pct: 'E2ePercentiles',
+
+  inter_token_latency_ms: 'ItlMean',
+  itl_percentiles: 'ItlPercentiles',
+  itl_buckets: 'ItlPercentiles',
+  itl_goodput_pct: 'ItlPercentiles',
+
+  tpot_ms: 'TpotMean',
+  per_request_tps: 'TpotMean',
+  tpot_percentiles: 'TpotPercentiles',
+  tpot_buckets: 'TpotPercentiles',
+  tpot_goodput_pct: 'TpotPercentiles',
 } as const satisfies Record<keyof EngineMetrics, MetricGroup>
 
 /** The metric group an engine metric belongs to. */

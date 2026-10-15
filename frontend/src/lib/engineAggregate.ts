@@ -6,30 +6,32 @@ import {
   type MetricGroup,
 } from '@/types/metrics'
 import { contributesGroup, metricGroupOf, type NumericEngineMetric } from './engineMetrics'
+import { LATENCY_GROUPS } from './latencyMode'
 import { getProviderLogo, type ProviderLogo } from './providerLogo'
 
 /**
- * The metric groups whose combined figures are request-weighted means. An
- * engine has to report request counts to carry a weight, so one that reports
- * such a group without the Requests group cannot enter its mean.
+ * The metric groups whose combined figures are request-weighted means: the
+ * eight latency groups (mean and percentiles of TTFT, end-to-end, inter-token
+ * and per-output-token latency) and queue time. An engine has to report
+ * request counts to carry a weight, so one that reports such a group without
+ * the RequestTotal group cannot enter its mean.
  */
 export const REQUEST_WEIGHTED_GROUPS: ReadonlySet<MetricGroup> = new Set<MetricGroup>([
-  'LatencyMeans',
-  'LatencyPercentiles',
+  ...Object.values(LATENCY_GROUPS).flatMap(({ mean, percentiles }) => [mean, percentiles]),
   'QueueTime',
 ])
 
 /**
  * Whether an engine enters the combined all-models figures of `group`: it is
  * running, its metrics are on, it declares the group — and, for a
- * request-weighted group, it declares the Requests group too. Decided by
+ * request-weighted group, it declares the RequestTotal group too. Decided by
  * declaration, never by value, so a host running only vLLM combines exactly as
  * it did before engines declared their groups.
  */
 export function includedIn(engine: EngineSnapshot, group: MetricGroup): boolean {
   return (
     contributesGroup(engine, group) &&
-    (!REQUEST_WEIGHTED_GROUPS.has(group) || contributesGroup(engine, 'Requests'))
+    (!REQUEST_WEIGHTED_GROUPS.has(group) || contributesGroup(engine, 'RequestTotal'))
   )
 }
 

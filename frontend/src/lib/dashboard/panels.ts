@@ -95,29 +95,43 @@ export const PANEL_TYPES = {
   'engine-prefill-throughput': {
     binds: 'engine',
     title: 'Prefill Throughput',
-    metricGroups: ['Throughput'],
+    metricGroups: ['Throughput', 'TtftMean'],
   },
   'engine-decode-throughput': {
     binds: 'engine',
     title: 'Decode Throughput',
-    metricGroups: ['Throughput'],
+    metricGroups: ['Throughput', 'TpotMean'],
   },
-  // Its batch-size tile follows the throughput group — tokens per engine step
-  // is not a latency — but the panel is about latency: an engine reporting none
-  // of these three gets the placeholder, batch size or not.
+  // `BatchSize` is deliberately left out: its tile is shown here, but tokens
+  // per engine step is not a latency, so an engine reporting no latency group
+  // gets the placeholder, batch size or not.
   'engine-latency': {
     binds: 'engine',
     title: 'Latency',
-    metricGroups: ['LatencyMeans', 'LatencyPercentiles', 'QueueTime'],
+    metricGroups: [
+      'TtftMean',
+      'TtftPercentiles',
+      'E2eMean',
+      'E2ePercentiles',
+      'ItlMean',
+      'ItlPercentiles',
+      'TpotMean',
+      'TpotPercentiles',
+      'QueueTime',
+    ],
   },
   // Goodput is read off the latency histograms, which are what an engine
   // reporting percentiles has and one reporting only means does not.
   'engine-slo-goodput': {
     binds: 'engine',
     title: 'SLO Goodput',
-    metricGroups: ['LatencyPercentiles'],
+    metricGroups: ['TtftPercentiles', 'E2ePercentiles', 'ItlPercentiles', 'TpotPercentiles'],
   },
-  'engine-requests': { binds: 'engine', title: 'Requests', metricGroups: ['Requests'] },
+  'engine-requests': {
+    binds: 'engine',
+    title: 'Requests',
+    metricGroups: ['ActiveRequests', 'RequestTotal', 'Preemptions'],
+  },
   'engine-cache': { binds: 'engine', title: 'Cache', metricGroups: ['KvCache', 'PrefixCache'] },
   'engine-spec-decode': {
     binds: 'engine',

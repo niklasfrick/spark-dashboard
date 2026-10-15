@@ -205,7 +205,7 @@ describe('MetricsHistoryStore all-engines aggregate series', () => {
       makeSnapshot(1_000, {
         engines: [
           makeEngine(100),
-          { ...makeEngine(50), endpoint: 'http://localhost:8001', metric_groups: ['Requests'] },
+          { ...makeEngine(50), endpoint: 'http://localhost:8001', metric_groups: ['ActiveRequests'] },
         ],
       }),
     )
@@ -221,7 +221,7 @@ describe('MetricsHistoryStore all-engines aggregate series', () => {
       return {
         ...engine,
         endpoint,
-        metric_groups: ['Requests'],
+        metric_groups: ['ActiveRequests'],
         metrics: { ...engine.metrics!, active_requests: 2 },
       }
     }

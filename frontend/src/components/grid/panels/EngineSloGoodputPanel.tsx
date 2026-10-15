@@ -22,6 +22,11 @@ import type { PanelContentProps } from '../panelRegistry'
  * Thresholds are per model and stored in the browser, which is why the control
  * sits in the panel: they are one operator's reading of their own workload, not
  * part of the shared dashboard document.
+ *
+ * Goodput is read off a latency's percentiles histogram, so each latency's tile
+ * follows its own percentiles group: one the engine does not report keeps its
+ * slot, says "not reported", and stays out of the combined figure — which is
+ * itself not reported when none of the latencies it combines is (ADR-0004).
  */
 export function EngineSloGoodputPanel({ panel }: PanelContentProps) {
   const resolution = useEnginePanel(panel)
@@ -40,15 +45,23 @@ export function EngineSloGoodputPanel({ panel }: PanelContentProps) {
     return <EnginePanelNotice resolution={resolution} />
   }
 
-  const { metric } = resolution
-  const ttft = recomputeGoodputPct(metric('ttft_buckets'), thresholds.ttftMs)
-    ?? metric('ttft_goodput_pct')
-  const itl = recomputeGoodputPct(metric('itl_buckets'), thresholds.itlMs)
-    ?? metric('itl_goodput_pct')
-  const e2e = recomputeGoodputPct(metric('e2e_buckets'), thresholds.e2eMs)
-    ?? metric('e2e_goodput_pct')
-  const tpot = recomputeGoodputPct(metric('tpot_buckets'), thresholds.tpotMs)
-    ?? metric('tpot_goodput_pct')
+  const { metric, reports } = resolution
+  const ttftReported = reports('TtftPercentiles')
+  const itlReported = reports('ItlPercentiles')
+  const e2eReported = reports('E2ePercentiles')
+  const tpotReported = reports('TpotPercentiles')
+  const ttft = ttftReported
+    ? (recomputeGoodputPct(metric('ttft_buckets'), thresholds.ttftMs) ?? metric('ttft_goodput_pct'))
+    : null
+  const itl = itlReported
+    ? (recomputeGoodputPct(metric('itl_buckets'), thresholds.itlMs) ?? metric('itl_goodput_pct'))
+    : null
+  const e2e = e2eReported
+    ? (recomputeGoodputPct(metric('e2e_buckets'), thresholds.e2eMs) ?? metric('e2e_goodput_pct'))
+    : null
+  const tpot = tpotReported
+    ? (recomputeGoodputPct(metric('tpot_buckets'), thresholds.tpotMs) ?? metric('tpot_goodput_pct'))
+    : null
 
   return (
     <EnginePanelBody
@@ -65,12 +78,33 @@ export function EngineSloGoodputPanel({ panel }: PanelContentProps) {
       tiles={
         <div className="grid grid-cols-2 gap-1.5">
           <div className="col-span-2">
-            <GoodputTile label="Combined" pct={combinedGoodput(ttft, itl, e2e)} emphasize />
+            <GoodputTile
+              label="Combined"
+              pct={combinedGoodput(ttft, itl, e2e)}
+              emphasize
+              notReported={!ttftReported && !itlReported && !e2eReported}
+            />
           </div>
-          <GoodputTile label={`TTFT ≤ ${formatSloThreshold(thresholds.ttftMs)}`} pct={ttft} />
-          <GoodputTile label={`ITL ≤ ${formatSloThreshold(thresholds.itlMs)}`} pct={itl} />
-          <GoodputTile label={`TPOT ≤ ${formatSloThreshold(thresholds.tpotMs)}`} pct={tpot} />
-          <GoodputTile label={`E2E ≤ ${formatSloThreshold(thresholds.e2eMs)}`} pct={e2e} />
+          <GoodputTile
+            label={`TTFT ≤ ${formatSloThreshold(thresholds.ttftMs)}`}
+            pct={ttft}
+            notReported={!ttftReported}
+          />
+          <GoodputTile
+            label={`ITL ≤ ${formatSloThreshold(thresholds.itlMs)}`}
+            pct={itl}
+            notReported={!itlReported}
+          />
+          <GoodputTile
+            label={`TPOT ≤ ${formatSloThreshold(thresholds.tpotMs)}`}
+            pct={tpot}
+            notReported={!tpotReported}
+          />
+          <GoodputTile
+            label={`E2E ≤ ${formatSloThreshold(thresholds.e2eMs)}`}
+            pct={e2e}
+            notReported={!e2eReported}
+          />
         </div>
       }
     />

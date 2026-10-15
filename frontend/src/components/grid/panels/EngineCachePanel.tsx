@@ -1,6 +1,11 @@
 import { TimeSeriesChart, type ChartSeries } from '@/components/charts/TimeSeriesChart'
 import { AnimatedCounter } from '@/components/engines/AnimatedCounter'
-import { KvBar, MetricTile, TrendArrow } from '@/components/engines/EnginePanelPrimitives'
+import {
+  KvBar,
+  MetricTile,
+  NotReported,
+  TrendArrow,
+} from '@/components/engines/EnginePanelPrimitives'
 import { computeTrend } from '@/lib/engineStats'
 import { formatCompactTokens } from '@/lib/format'
 import { EnginePanelBody } from './EnginePanelBody'
@@ -16,7 +21,8 @@ import type { PanelContentProps } from '../panelRegistry'
  * The two belong together: a KV cache filling up is what limits how many
  * requests an engine can hold, and prefix hits are what keep it from filling.
  * They are separate metric groups all the same, so an engine reporting one of
- * them gets that half of the panel — never a dash standing in for the other.
+ * them gets that half of the panel, and the other half's tiles keep their slots
+ * and say "not reported" — never a dash standing in for them (ADR-0004).
  */
 export function EngineCachePanel({ panel }: PanelContentProps) {
   const resolution = useEnginePanel(panel)
@@ -42,42 +48,47 @@ export function EngineCachePanel({ panel }: PanelContentProps) {
       tiles={
         <div className="flex flex-col gap-2">
           <div className="grid grid-cols-2 gap-1.5">
-            {kvCache && (
-              <div className="flex flex-col gap-0.5 min-w-0">
-                <span className="text-[10px] font-medium text-zinc-400 uppercase tracking-wider truncate">
-                  KV Cache
-                </span>
-                <div className="flex items-baseline">
-                  <span className="text-lg xl:text-xl 2xl:text-2xl min-[1920px]:text-3xl font-bold text-zinc-100 font-mono tabular-nums leading-none">
-                    {kvPercent !== null ? Math.round(kvPercent) : '--'}
-                  </span>
-                  <span className="text-xs text-zinc-500 ml-1">%</span>
-                  {/* A filling cache is bad news, so the arrow's colours invert. */}
-                  <TrendArrow trend={computeTrend(kvSeries)} invertColor />
-                </div>
-                {kvPercent !== null && <KvBar percent={kvPercent} />}
-              </div>
-            )}
-            {prefixCache && (
-              <MetricTile
-                label="Prefix Hit"
-                value={prefixHit !== null ? `${Math.round(prefixHit)}` : '--'}
-                unit="%"
-              />
-            )}
-          </div>
-          {prefixCache && (
-            <div className="flex flex-col gap-0.5 min-w-0">
-              <span className="text-[10px] 2xl:text-xs font-medium text-zinc-400 uppercase tracking-wider truncate">
-                Prefix Queries
+            <div role="group" aria-label="KV Cache" className="flex flex-col gap-0.5 min-w-0">
+              <span className="text-[10px] font-medium text-zinc-400 uppercase tracking-wider truncate">
+                KV Cache
               </span>
+              {kvCache ? (
+                <>
+                  <div className="flex items-baseline">
+                    <span className="text-lg xl:text-xl 2xl:text-2xl min-[1920px]:text-3xl font-bold text-zinc-100 font-mono tabular-nums leading-none">
+                      {kvPercent !== null ? Math.round(kvPercent) : '--'}
+                    </span>
+                    <span className="text-xs text-zinc-500 ml-1">%</span>
+                    {/* A filling cache is bad news, so the arrow's colours invert. */}
+                    <TrendArrow trend={computeTrend(kvSeries)} invertColor />
+                  </div>
+                  {kvPercent !== null && <KvBar percent={kvPercent} />}
+                </>
+              ) : (
+                <NotReported />
+              )}
+            </div>
+            <MetricTile
+              label="Prefix Hit"
+              value={prefixHit !== null ? `${Math.round(prefixHit)}` : '--'}
+              unit="%"
+              notReported={!prefixCache}
+            />
+          </div>
+          <div role="group" aria-label="Prefix Queries" className="flex flex-col gap-0.5 min-w-0">
+            <span className="text-[10px] 2xl:text-xs font-medium text-zinc-400 uppercase tracking-wider truncate">
+              Prefix Queries
+            </span>
+            {prefixCache ? (
               <AnimatedCounter
                 value={metric('prefix_cache_queries_total')}
                 format={formatCompactTokens}
                 className="text-lg xl:text-xl 2xl:text-2xl min-[1920px]:text-3xl font-bold text-zinc-100 font-mono tabular-nums leading-none"
               />
-            </div>
-          )}
+            ) : (
+              <NotReported />
+            )}
+          </div>
         </div>
       }
       chart={

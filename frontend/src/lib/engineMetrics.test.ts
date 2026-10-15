@@ -126,10 +126,10 @@ describe('engineAvailability', () => {
 
 describe('reportedMetricGroups', () => {
   it('reads the groups the backend declared for the engine', () => {
-    const groups = reportedMetricGroups({ metric_groups: ['Throughput', 'LatencyMeans'] })
+    const groups = reportedMetricGroups({ metric_groups: ['Throughput', 'ItlMean'] })
 
-    expect([...groups].sort()).toEqual(['LatencyMeans', 'Throughput'])
-    expect(groups.has('LatencyPercentiles')).toBe(false)
+    expect([...groups].sort()).toEqual(['ItlMean', 'Throughput'])
+    expect(groups.has('ItlPercentiles')).toBe(false)
   })
 
   it('reads an engine that declared nothing as reporting nothing', () => {
@@ -140,22 +140,32 @@ describe('reportedMetricGroups', () => {
     // That backend filled every panel; an upgraded frontend in front of it
     // must not turn them all into placeholders.
     expect([...reportedMetricGroups({})]).toEqual([...METRIC_GROUPS])
+    expect(reportedMetricGroups({}).size).toBe(17)
   })
 })
 
 describe('METRIC_GROUPS', () => {
   it('names the groups exactly as the backend serializes them', () => {
     // The mirror of `MetricGroup` in `src/engines/mod.rs`, whose wire-name
-    // spec pins the same eight strings in the same order.
+    // spec pins the same seventeen strings in the same order.
     expect(METRIC_GROUPS).toEqual([
       'Throughput',
-      'Requests',
-      'LatencyMeans',
-      'LatencyPercentiles',
+      'BatchSize',
+      'ActiveRequests',
+      'RequestTotal',
+      'Preemptions',
       'QueueTime',
       'KvCache',
       'PrefixCache',
       'SpeculativeDecoding',
+      'TtftMean',
+      'TtftPercentiles',
+      'E2eMean',
+      'E2ePercentiles',
+      'ItlMean',
+      'ItlPercentiles',
+      'TpotMean',
+      'TpotPercentiles',
     ])
   })
 })
@@ -172,15 +182,27 @@ describe('METRIC_FIELD_GROUP', () => {
     expect(Object.keys(METRIC_FIELD_GROUP).sort()).toEqual([...keys].sort())
   })
 
-  it('files each field with the group a panel keys its tile on', () => {
-    // Batch size is a throughput tile: the latency panel shows it on
-    // reports('Throughput').
-    expect(metricGroupOf('avg_batch_size')).toBe('Throughput')
-    expect(metricGroupOf('total_requests')).toBe('Requests')
-    expect(metricGroupOf('tpot_ms')).toBe('LatencyMeans')
-    expect(metricGroupOf('e2e_goodput_pct')).toBe('LatencyPercentiles')
-    expect(metricGroupOf('itl_buckets')).toBe('LatencyPercentiles')
+  it('leaves no metric group without a field', () => {
+    const owned = new Set(Object.values(METRIC_FIELD_GROUP))
+
+    for (const group of METRIC_GROUPS) expect(owned.has(group), group).toBe(true)
+  })
+
+  it('files each field with the group a tile keys on', () => {
+    expect(metricGroupOf('avg_batch_size')).toBe('BatchSize')
+    expect(metricGroupOf('per_request_tps')).toBe('TpotMean')
+    expect(metricGroupOf('per_request_prompt_tps')).toBe('TtftMean')
+    expect(metricGroupOf('swapped_requests')).toBe('Preemptions')
+    expect(metricGroupOf('preemptions_total')).toBe('Preemptions')
+    expect(metricGroupOf('total_requests')).toBe('RequestTotal')
+    expect(metricGroupOf('active_requests')).toBe('ActiveRequests')
+    expect(metricGroupOf('queued_requests')).toBe('ActiveRequests')
+    expect(metricGroupOf('tpot_ms')).toBe('TpotMean')
+    expect(metricGroupOf('ttft_ms')).toBe('TtftMean')
+    expect(metricGroupOf('e2e_goodput_pct')).toBe('E2ePercentiles')
+    expect(metricGroupOf('itl_buckets')).toBe('ItlPercentiles')
     expect(metricGroupOf('queue_time_ms')).toBe('QueueTime')
+    expect(metricGroupOf('tokens_per_sec')).toBe('Throughput')
     expect(metricGroupOf('kv_cache_is_estimated')).toBe('KvCache')
     expect(metricGroupOf('prefix_cache_queries_total')).toBe('PrefixCache')
     expect(metricGroupOf('spec_decode_acceptance_rate_live')).toBe('SpeculativeDecoding')

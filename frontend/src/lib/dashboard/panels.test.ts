@@ -157,11 +157,26 @@ describe('panelMetricGroups', () => {
       ]),
     )
     expect(declared).toEqual({
-      'engine-prefill-throughput': ['Throughput'],
-      'engine-decode-throughput': ['Throughput'],
-      'engine-latency': ['LatencyMeans', 'LatencyPercentiles', 'QueueTime'],
-      'engine-slo-goodput': ['LatencyPercentiles'],
-      'engine-requests': ['Requests'],
+      'engine-prefill-throughput': ['Throughput', 'TtftMean'],
+      'engine-decode-throughput': ['Throughput', 'TpotMean'],
+      'engine-latency': [
+        'TtftMean',
+        'TtftPercentiles',
+        'E2eMean',
+        'E2ePercentiles',
+        'ItlMean',
+        'ItlPercentiles',
+        'TpotMean',
+        'TpotPercentiles',
+        'QueueTime',
+      ],
+      'engine-slo-goodput': [
+        'TtftPercentiles',
+        'E2ePercentiles',
+        'ItlPercentiles',
+        'TpotPercentiles',
+      ],
+      'engine-requests': ['ActiveRequests', 'RequestTotal', 'Preemptions'],
       'engine-cache': ['KvCache', 'PrefixCache'],
       'engine-spec-decode': ['SpeculativeDecoding'],
     })

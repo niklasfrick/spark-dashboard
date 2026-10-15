@@ -15,6 +15,8 @@ import {
   type PanelType,
 } from '../lib/dashboard/panels'
 import { DASHBOARD_SCHEMA_VERSION } from '../lib/dashboard/schema'
+import { metricGroupOf } from '../lib/engineMetrics'
+import { LLAMA_CPP_GROUPS, SGLANG_GROUPS } from '../test/engineGroups'
 import {
   METRIC_GROUPS,
   type EngineMetrics,
@@ -139,6 +141,21 @@ function makeEngine(
   }
 }
 
+/** An engine declaring `groups`, with its metrics as the backend puts them on
+ *  the wire for it: every field of a group it does not declare is null. */
+function declaring(
+  endpoint: string,
+  groups: readonly MetricGroup[],
+  overrides: Partial<EngineMetrics> = {},
+): EngineSnapshot {
+  const metrics = engineMetrics(overrides)
+  for (const key of Object.keys(metrics) as Array<keyof EngineMetrics>) {
+    if (groups.includes(metricGroupOf(key))) continue
+    Object.assign(metrics, { [key]: key === 'kv_cache_is_estimated' ? false : null })
+  }
+  return makeEngine(endpoint, { metric_groups: [...groups], metrics })
+}
+
 function makeSnapshot(ts: number, engines: EngineSnapshot[]): MetricsSnapshot {
   return {
     timestamp_ms: ts,
@@ -198,6 +215,12 @@ function region(name: string): HTMLElement {
   return screen.getByRole('region', { name })
 }
 
+/** One tile of a panel, by the label it wears. Numbers repeat across tiles, so a
+ *  value is looked for inside the tile it belongs to. */
+function tile(panel: HTMLElement, name: string): HTMLElement {
+  return within(panel).getByRole('group', { name })
+}
+
 /** The engine block's six tiles as panels, tiled inside the 12×8 grid. Cache
  *  and speculative decoding are one tile on the old card and two panels here,
  *  because a panel is one metric. */
@@ -222,6 +245,9 @@ const SPEC_DECODE: Partial<EngineMetrics> = {
   spec_decode_acceptance_rate_live: 71,
   spec_decode_mean_acceptance_length: 3,
 }
+
+/** The four latency means, without their percentiles. */
+const LATENCY_MEANS: MetricGroup[] = ['TtftMean', 'E2eMean', 'ItlMean', 'TpotMean']
 
 beforeEach(() => {
   MockWebSocket.instances = []
@@ -288,6 +314,9 @@ describe('the engine panels on a grid page', () => {
 
     // Every panel on the page is implemented — no slot-keeping placeholders.
     expect(screen.queryByText('This panel is not available yet.')).not.toBeInTheDocument()
+    // A backend older than the declaration reported every group: no tile says
+    // otherwise.
+    expect(screen.queryByText('not reported')).not.toBeInTheDocument()
 
     // One engine on the host: nothing to tell apart, so no panel wears its
     // name or its provider mark.
@@ -767,12 +796,12 @@ describe('the engine panels on a grid page', () => {
 describe('an engine that does not report a panel’s metric group', () => {
   /** What each engine metric panel says, bound to an engine reporting nothing. */
   const NOT_REPORTED: Partial<Record<PanelType, string>> = {
-    'engine-prefill-throughput': 'vLLM localhost:8000 does not report throughput.',
-    'engine-decode-throughput': 'vLLM localhost:8000 does not report throughput.',
+    'engine-prefill-throughput': 'vLLM localhost:8000 does not report throughput or TTFT mean.',
+    'engine-decode-throughput': 'vLLM localhost:8000 does not report throughput or TPOT mean.',
     'engine-latency':
       'vLLM localhost:8000 does not report latency means, latency percentiles or queue time.',
     'engine-slo-goodput': 'vLLM localhost:8000 does not report latency percentiles.',
-    'engine-requests': 'vLLM localhost:8000 does not report requests.',
+    'engine-requests': 'vLLM localhost:8000 does not report requests or preemptions.',
     'engine-cache': 'vLLM localhost:8000 does not report KV cache or prefix cache.',
     'engine-spec-decode': 'vLLM localhost:8000 does not report speculative decoding.',
   }
@@ -844,7 +873,7 @@ describe('an engine that does not report a panel’s metric group', () => {
     receive(
       makeSnapshot(1000, [
         makeEngine(ALPHA),
-        makeEngine(BETA, { metric_groups: ['Throughput', 'Requests'] }),
+        makeEngine(BETA, { metric_groups: ['Throughput', 'ActiveRequests'] }),
       ]),
     )
 
@@ -890,7 +919,7 @@ describe('an engine that does not report a panel’s metric group', () => {
     ).toBeInTheDocument()
   })
 
-  it('omits the latency parts that are not reported, with nothing standing in', async () => {
+  it('keeps the slot of each latency tile that is not reported, and says so', async () => {
     const fetchMock = serveConfiguration({
       document: storedDocument([
         { id: 'latency', type: 'engine-latency', geometry: { x: 0, y: 0, w: 6, h: 4 } },
@@ -899,17 +928,17 @@ describe('an engine that does not report a panel’s metric group', () => {
 
     render(<App />)
     await configurationSettles(fetchMock)
-    receive(makeSnapshot(1000, [makeEngine(ALPHA, { metric_groups: ['LatencyMeans'] })]))
+    receive(makeSnapshot(1000, [makeEngine(ALPHA, { metric_groups: LATENCY_MEANS })]))
 
     const latency = region('Latency')
     // The means are all there, under their plain names in the average mode…
-    expect(within(latency).getByText('TTFT')).toBeInTheDocument()
-    expect(within(latency).getByText('210')).toBeInTheDocument()
-    expect(within(latency).getByText('4.20')).toBeInTheDocument()
-    expect(within(latency).getByText('9')).toBeInTheDocument()
-    // …while queue time and the batch size are omitted rather than dashed.
-    expect(within(latency).queryByText('Queue')).not.toBeInTheDocument()
-    expect(within(latency).queryByText('Batch')).not.toBeInTheDocument()
+    expect(within(tile(latency, 'TTFT')).getByText('210')).toBeInTheDocument()
+    expect(within(tile(latency, 'E2E')).getByText('4.20')).toBeInTheDocument()
+    expect(within(tile(latency, 'ITL')).getByText('9')).toBeInTheDocument()
+    // …while queue time and the batch size keep their slots and say they are
+    // not reported, rather than being dashed or left out.
+    expect(within(tile(latency, 'Queue')).getByText('not reported')).toBeInTheDocument()
+    expect(within(tile(latency, 'Batch')).getByText('not reported')).toBeInTheDocument()
     expect(within(latency).queryByText('--')).not.toBeInTheDocument()
     expect(within(latency).queryByTestId('chart-series-Queue')).not.toBeInTheDocument()
     expect(within(latency).getByTestId('chart-series-TTFT')).toHaveAttribute('data-values', '210')
@@ -927,7 +956,7 @@ describe('an engine that does not report a panel’s metric group', () => {
     await configurationSettles(fetchMock)
     receive(
       makeSnapshot(1000, [
-        makeEngine(ALPHA, { metric_groups: ['LatencyMeans', 'QueueTime', 'Throughput'] }),
+        makeEngine(ALPHA, { metric_groups: [...LATENCY_MEANS, 'QueueTime', 'BatchSize'] }),
       ]),
     )
 
@@ -981,7 +1010,7 @@ describe('an engine that does not report a panel’s metric group', () => {
 
     render(<App />)
     await configurationSettles(fetchMock)
-    receive(makeSnapshot(1000, [makeEngine(ALPHA, { metric_groups: ['LatencyMeans'] })]))
+    receive(makeSnapshot(1000, [makeEngine(ALPHA, { metric_groups: LATENCY_MEANS })]))
 
     const goodput = region('SLO Goodput')
     expect(
@@ -991,7 +1020,7 @@ describe('an engine that does not report a panel’s metric group', () => {
     expect(within(goodput).queryByText('97.0')).not.toBeInTheDocument()
   })
 
-  it('shows only the half of the cache panel the engine reports', async () => {
+  it('keeps the slots of the cache half the engine does not report, and says so', async () => {
     const fetchMock = serveConfiguration({
       document: storedDocument([
         {
@@ -1020,17 +1049,23 @@ describe('an engine that does not report a panel’s metric group', () => {
       ]),
     )
 
+    // Each half reads as before; the other keeps its slots, says it is not
+    // reported — not the value this snapshot happens to carry — and draws no line.
     const prefix = region('Prefix only')
-    expect(within(prefix).getByText('55')).toBeInTheDocument()
-    expect(within(prefix).getByText('2M')).toBeInTheDocument()
-    expect(within(prefix).queryByText('KV Cache')).not.toBeInTheDocument()
+    expect(within(tile(prefix, 'Prefix Hit')).getByText('55')).toBeInTheDocument()
+    expect(within(tile(prefix, 'Prefix Queries')).getByText('2M')).toBeInTheDocument()
+    expect(within(tile(prefix, 'KV Cache')).getByText('not reported')).toBeInTheDocument()
+    expect(within(prefix).queryByText('42')).not.toBeInTheDocument()
     expect(within(prefix).queryByTestId('chart-series-KV Cache')).not.toBeInTheDocument()
+    expect(within(prefix).getByTestId('chart-series-Prefix Hit')).toBeInTheDocument()
 
     const kv = region('KV only')
-    expect(within(kv).getByText('42')).toBeInTheDocument()
-    expect(within(kv).queryByText('Prefix Hit')).not.toBeInTheDocument()
-    expect(within(kv).queryByText('Prefix Queries')).not.toBeInTheDocument()
+    expect(within(tile(kv, 'KV Cache')).getByText('42')).toBeInTheDocument()
+    expect(within(tile(kv, 'Prefix Hit')).getByText('not reported')).toBeInTheDocument()
+    expect(within(tile(kv, 'Prefix Queries')).getByText('not reported')).toBeInTheDocument()
+    expect(within(kv).queryByText('55')).not.toBeInTheDocument()
     expect(within(kv).queryByTestId('chart-series-Prefix Hit')).not.toBeInTheDocument()
+    expect(within(kv).getByTestId('chart-series-KV Cache')).toBeInTheDocument()
   })
 
   it('changes nothing for an engine that declares every group', async () => {
@@ -1043,6 +1078,7 @@ describe('an engine that does not report a panel’s metric group', () => {
     receive(makeSnapshot(1000, [makeEngine(ALPHA, { metric_groups: [...METRIC_GROUPS] })]))
 
     expect(screen.queryByText(/does not report/)).not.toBeInTheDocument()
+    expect(screen.queryByText('not reported')).not.toBeInTheDocument()
     expect(within(region('Decode Throughput')).getByText('120.0')).toBeInTheDocument()
     expect(within(region('Latency')).getByText('Queue')).toBeInTheDocument()
     expect(within(region('Latency')).getByText('6.5')).toBeInTheDocument()
@@ -1055,6 +1091,231 @@ describe('an engine that does not report a panel’s metric group', () => {
         'This engine is not using speculative decoding.',
       ),
     ).toBeInTheDocument()
+  })
+})
+
+// The grain of a metric group is the tile (#142): a panel some of whose groups
+// are reported shows those, and every tile of a group that is not keeps its
+// slot and says so — so a panel's tiles are the same whichever engine it shows.
+describe('a tile whose metric group is not reported', () => {
+  beforeEach(() => gridSubstitute.reset())
+
+  async function showEngine(engine: EngineSnapshot, panels: unknown[] = enginePanels()) {
+    const fetchMock = serveConfiguration({ document: storedDocument(panels) })
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, [engine]))
+  }
+
+  it('says which tiles an SGLang-shaped engine does not report, and shows the rest', async () => {
+    await showEngine(declaring(ALPHA, SGLANG_GROUPS))
+
+    const latency = region('Latency')
+    expect(within(tile(latency, 'TTFT')).getByText('210')).toBeInTheDocument()
+    expect(within(tile(latency, 'E2E')).getByText('4.20')).toBeInTheDocument()
+    expect(within(tile(latency, 'ITL')).getByText('9')).toBeInTheDocument()
+    expect(within(tile(latency, 'Queue')).getByText('12')).toBeInTheDocument()
+    expect(within(tile(latency, 'TPOT')).getByText('not reported')).toBeInTheDocument()
+    expect(within(tile(latency, 'Batch')).getByText('not reported')).toBeInTheDocument()
+    // No TPOT line, while the reported latencies keep theirs.
+    expect(within(latency).queryByTestId('chart-series-TPOT')).not.toBeInTheDocument()
+    expect(within(latency).getByTestId('chart-series-TTFT')).toBeInTheDocument()
+
+    // Per-request decode throughput is derived from TPOT; prefill's from TTFT.
+    const decode = region('Decode Throughput')
+    expect(within(tile(decode, 'Live')).getByText('120.0')).toBeInTheDocument()
+    expect(within(tile(decode, 'Avg')).getByText('100.0')).toBeInTheDocument()
+    expect(within(tile(decode, 'Per-Req Avg')).getByText('not reported')).toBeInTheDocument()
+    expect(within(decode).queryByTestId('chart-series-Per-req')).not.toBeInTheDocument()
+    expect(within(decode).getByTestId('chart-series-Live')).toBeInTheDocument()
+    const prefill = region('Prefill Throughput')
+    expect(within(tile(prefill, 'Per-Req Avg')).getByText('800.0')).toBeInTheDocument()
+    expect(within(prefill).getByTestId('chart-series-Per-req')).toBeInTheDocument()
+
+    const requests = region('Requests')
+    expect(within(tile(requests, 'Active')).getByText('3')).toBeInTheDocument()
+    expect(within(tile(requests, 'Queued')).getByText('1')).toBeInTheDocument()
+    expect(within(tile(requests, 'Total')).getByText('900')).toBeInTheDocument()
+    expect(within(tile(requests, 'Swapped')).getByText('not reported')).toBeInTheDocument()
+    expect(within(tile(requests, 'Preempt')).getByText('not reported')).toBeInTheDocument()
+
+    const goodput = region('SLO Goodput')
+    expect(within(tile(goodput, 'TTFT ≤ 500ms')).getByText('99.0')).toBeInTheDocument()
+    expect(within(tile(goodput, 'ITL ≤ 50ms')).getByText('98.0')).toBeInTheDocument()
+    expect(within(tile(goodput, 'E2E ≤ 5s')).getByText('97.0')).toBeInTheDocument()
+    expect(within(tile(goodput, 'Combined')).getByText('97.0')).toBeInTheDocument()
+    expect(within(tile(goodput, 'TPOT ≤ 50ms')).getByText('not reported')).toBeInTheDocument()
+
+    const cache = region('Cache')
+    expect(within(cache).getByText('42')).toBeInTheDocument()
+    expect(within(cache).getByText('55')).toBeInTheDocument()
+    expect(within(cache).queryByText('not reported')).not.toBeInTheDocument()
+  })
+
+  // Its latency mean is a mean in every mode: plain under the "avg" the header
+  // names, as every engine's mean is there, and labelled as the mean under a
+  // percentile.
+  it.each([
+    ['avg', 'ITL'],
+    ['p95', 'ITL mean'],
+  ])('shows a llama.cpp-shaped engine’s ITL mean in %s, and says the rest is not reported', async (mode, itlLabel) => {
+    window.localStorage.setItem('spark-dashboard:latency-mode', mode)
+    await showEngine(declaring(ALPHA, LLAMA_CPP_GROUPS))
+
+    const latency = region('Latency')
+    expect(within(tile(latency, itlLabel)).getByText('9')).toBeInTheDocument()
+    for (const name of ['TTFT', 'E2E', 'TPOT', 'Queue', 'Batch']) {
+      expect(within(tile(latency, name)).getByText('not reported'), name).toBeInTheDocument()
+    }
+    expect(within(latency).getByTestId(`chart-series-${itlLabel}`)).toBeInTheDocument()
+    expect(within(latency).queryByTestId('chart-series-TTFT')).not.toBeInTheDocument()
+
+    const requests = region('Requests')
+    expect(within(tile(requests, 'Active')).getByText('3')).toBeInTheDocument()
+    expect(within(tile(requests, 'Queued')).getByText('1')).toBeInTheDocument()
+    for (const name of ['Total', 'Swapped', 'Preempt']) {
+      expect(within(tile(requests, name)).getByText('not reported'), name).toBeInTheDocument()
+    }
+    expect(within(requests).queryByTestId('chart-series-Total')).not.toBeInTheDocument()
+
+    for (const [title, live] of [
+      ['Prefill Throughput', '3000.0'],
+      ['Decode Throughput', '120.0'],
+    ]) {
+      const throughput = region(title)
+      expect(within(tile(throughput, 'Live')).getByText(live), title).toBeInTheDocument()
+      expect(within(tile(throughput, 'Avg')).queryByText('not reported'), title).toBeNull()
+      expect(within(tile(throughput, 'Per-Req Avg')).getByText('not reported'), title).toBeInTheDocument()
+    }
+
+    expect(
+      within(region('SLO Goodput')).getByText(
+        'vLLM localhost:8000 does not report latency percentiles.',
+      ),
+    ).toBeInTheDocument()
+    expect(
+      within(region('Cache')).getByText('vLLM localhost:8000 does not report KV cache or prefix cache.'),
+    ).toBeInTheDocument()
+  })
+
+  it('keeps the same tiles in the same slots whichever engine the panel shows', async () => {
+    // What engine rotation does to a following panel: the next snapshot shows
+    // another engine. Its tiles must not come and go and reflow the panel.
+    // The Requests panel is left out on purpose: vLLM's Swapped and Preempt
+    // tiles stay hidden while they read zero (the vLLM specs above pin that),
+    // so its tile set differs by design between engines.
+    const fetchMock = serveConfiguration({ document: storedDocument(enginePanels()) })
+    render(<App />)
+    await configurationSettles(fetchMock)
+
+    const tiles = (title: string) =>
+      within(region(title))
+        .getAllByRole('group')
+        .map((group) => group.getAttribute('aria-label'))
+    const shown: Record<string, Array<string | null>>[] = []
+    for (const [ts, engine] of [
+      [1000, makeEngine(ALPHA)],
+      [2000, declaring(ALPHA, SGLANG_GROUPS)],
+      [3000, declaring(ALPHA, LLAMA_CPP_GROUPS)],
+    ] as const) {
+      receive(makeSnapshot(ts, [engine]))
+      shown.push(
+        Object.fromEntries(
+          ['Latency', 'Prefill Throughput', 'Decode Throughput'].map((title) => [title, tiles(title)]),
+        ),
+      )
+    }
+
+    expect(shown[0].Latency).toEqual(['TTFT', 'E2E', 'Queue', 'ITL', 'TPOT', 'Batch'])
+    expect(shown[1]).toEqual(shown[0])
+    expect(shown[2]).toEqual(shown[0])
+  })
+
+  it('never reads as a dash or a zero', async () => {
+    // On the wire, every field of an undeclared group is null — which a tile
+    // left to itself renders as the "not yet" dash.
+    await showEngine(declaring(ALPHA, LLAMA_CPP_GROUPS))
+
+    const notReported = screen.getAllByText('not reported')
+    // TTFT, E2E, Queue, TPOT, Batch; Total, Swapped, Preempt; two Per-Req.
+    expect(notReported).toHaveLength(10)
+    for (const text of notReported) {
+      const group = text.closest('[role="group"]') as HTMLElement
+      expect(group, group.getAttribute('aria-label') ?? '').not.toHaveTextContent('--')
+      expect(within(group).queryByText('0')).not.toBeInTheDocument()
+    }
+  })
+
+  it('goes by what the engine declares, not by a value it happens to carry', async () => {
+    // A snapshot declaring no TPOT or preemption group, with a TPOT figure and
+    // zero counters in it all the same.
+    await showEngine(
+      makeEngine(ALPHA, { metric_groups: ['Throughput', 'TtftMean', 'ActiveRequests'] }),
+    )
+
+    const tpot = tile(region('Latency'), 'TPOT')
+    expect(within(tpot).getByText('not reported')).toBeInTheDocument()
+    expect(within(tpot).queryByText('8')).not.toBeInTheDocument()
+    const perRequest = tile(region('Decode Throughput'), 'Per-Req Avg')
+    expect(within(perRequest).getByText('not reported')).toBeInTheDocument()
+    expect(within(perRequest).queryByText('40.0')).not.toBeInTheDocument()
+    // Not hidden as a reported zero would be: the engine has no such counter.
+    expect(within(tile(region('Requests'), 'Preempt')).getByText('not reported')).toBeInTheDocument()
+    expect(within(tile(region('Requests'), 'Swapped')).getByText('not reported')).toBeInTheDocument()
+  })
+
+  it('still dashes a figure of a reported group that has no value yet', async () => {
+    // "Not yet" and "not reported" side by side: the ITL percentiles are
+    // reported and have no sample, TPOT is not reported at all.
+    window.localStorage.setItem('spark-dashboard:latency-mode', 'p95')
+    await showEngine(declaring(ALPHA, SGLANG_GROUPS, { itl_percentiles: null }))
+
+    const latency = region('Latency')
+    const itl = tile(latency, 'ITL')
+    expect(within(itl).getByText('--')).toBeInTheDocument()
+    expect(within(itl).queryByText('not reported')).not.toBeInTheDocument()
+    expect(within(tile(latency, 'TPOT')).getByText('not reported')).toBeInTheDocument()
+  })
+
+  it('applies the latency mode to each latency on its own', async () => {
+    // Percentiles for TTFT, only a mean for ITL, nothing for E2E or TPOT.
+    window.localStorage.setItem('spark-dashboard:latency-mode', 'p95')
+    await showEngine(declaring(ALPHA, ['TtftPercentiles', 'TtftMean', 'ItlMean']))
+
+    const latency = region('Latency')
+    expect(within(tile(latency, 'TTFT')).getByText('400')).toBeInTheDocument()
+    expect(within(tile(latency, 'ITL mean')).getByText('9')).toBeInTheDocument()
+    expect(within(tile(latency, 'E2E')).getByText('not reported')).toBeInTheDocument()
+    expect(within(tile(latency, 'TPOT')).getByText('not reported')).toBeInTheDocument()
+    expect(within(latency).queryByText('TTFT mean')).not.toBeInTheDocument()
+    // Each line is drawn in the statistic its tile shows, under the same label.
+    expect(within(latency).getByTestId('chart-series-TTFT')).toHaveAttribute('data-values', '400')
+    expect(within(latency).getByTestId('chart-series-ITL mean')).toHaveAttribute('data-values', '9')
+    expect(within(latency).queryByTestId('chart-series-TPOT')).not.toBeInTheDocument()
+  })
+
+  it('decides SLO goodput for each latency on its own', async () => {
+    await showEngine(declaring(ALPHA, ['TtftPercentiles']))
+
+    const goodput = region('SLO Goodput')
+    expect(within(tile(goodput, 'TTFT ≤ 500ms')).getByText('99.0')).toBeInTheDocument()
+    // The combined figure is the worst of the latencies that are reported.
+    expect(within(tile(goodput, 'Combined')).getByText('99.0')).toBeInTheDocument()
+    for (const name of ['ITL ≤ 50ms', 'E2E ≤ 5s', 'TPOT ≤ 50ms']) {
+      expect(within(tile(goodput, name)).getByText('not reported'), name).toBeInTheDocument()
+    }
+  })
+
+  it('says the combined goodput is not reported when none of its latencies is', async () => {
+    // Combined is the worst of TTFT, ITL and E2E; TPOT alone does not enter it,
+    // so without those three it would be a dash that never fills.
+    await showEngine(declaring(ALPHA, ['TpotPercentiles']))
+
+    const goodput = region('SLO Goodput')
+    expect(within(tile(goodput, 'TPOT ≤ 50ms')).getByText('96.0')).toBeInTheDocument()
+    const combined = tile(goodput, 'Combined')
+    expect(within(combined).getByText('not reported')).toBeInTheDocument()
+    expect(combined).not.toHaveTextContent('--')
   })
 })
 
@@ -1093,7 +1354,7 @@ describe('all models on engines that report different groups', () => {
       [
         makeEngine(ALPHA),
         // Its throughput figure would be read as a sample; it is not reported.
-        makeEngine(BETA, { metric_groups: ['Requests'] }, { tokens_per_sec: 640 }),
+        makeEngine(BETA, { metric_groups: ['ActiveRequests'] }, { tokens_per_sec: 640 }),
       ],
     )
 
@@ -1143,12 +1404,12 @@ describe('all models on engines that report different groups', () => {
   it('says a group no running engine reports is not reported, rather than showing a zero', async () => {
     /** What each engine metric panel says when no running engine reports its groups. */
     const NOT_REPORTED_BY_ANY: Partial<Record<PanelType, string>> = {
-      'engine-prefill-throughput': 'No running engine reports throughput.',
-      'engine-decode-throughput': 'No running engine reports throughput.',
+      'engine-prefill-throughput': 'No running engine reports throughput or TTFT mean.',
+      'engine-decode-throughput': 'No running engine reports throughput or TPOT mean.',
       'engine-latency':
         'No running engine reports latency means, latency percentiles or queue time.',
       'engine-slo-goodput': 'No running engine reports latency percentiles.',
-      'engine-requests': 'No running engine reports requests.',
+      'engine-requests': 'No running engine reports requests or preemptions.',
       'engine-cache': 'No running engine reports KV cache or prefix cache.',
       'engine-spec-decode': 'No running engine reports speculative decoding.',
     }
@@ -1198,14 +1459,47 @@ describe('all models on engines that report different groups', () => {
       [{ id: 'latency', type: 'engine-latency', geometry: { x: 0, y: 0, w: 6, h: 4 } }],
       [
         makeEngine(ALPHA),
-        // Means without request counts carry no weight, so they cannot enter.
-        makeEngine(BETA, { metric_groups: ['LatencyMeans'] }, { ttft_ms: 99_999 }),
+        // Means without a request total carry no weight, so they cannot enter.
+        makeEngine(BETA, { metric_groups: ['TtftMean'] }, { ttft_ms: 99_999 }),
       ],
     )
 
     const latency = region('Latency')
     expect(within(latency).getByText('210')).toBeInTheDocument()
     expect(within(latency).getByText('1 of 2 engines')).toBeInTheDocument()
+  })
+
+  it('combines TPOT from the engines that report it, and says how many that is', async () => {
+    await showAllModels(
+      [{ id: 'latency', type: 'engine-latency', geometry: { x: 0, y: 0, w: 6, h: 4 } }],
+      [makeEngine(ALPHA), declaring(BETA, SGLANG_GROUPS)],
+    )
+
+    const latency = region('Latency')
+    // vLLM's TPOT alone: the SGLang-shaped engine has none to enter.
+    expect(within(tile(latency, 'TPOT')).getByText('8')).toBeInTheDocument()
+    expect(within(tile(latency, 'TTFT')).getByText('210')).toBeInTheDocument()
+    expect(within(latency).getByText(/TPOT mean 1 of 2/)).toBeInTheDocument()
+    expect(within(latency).queryByText('not reported')).not.toBeInTheDocument()
+  })
+
+  it('says a tile no running engine reports is not reported', async () => {
+    await showAllModels(enginePanels(), [
+      declaring(ALPHA, SGLANG_GROUPS),
+      declaring(BETA, SGLANG_GROUPS),
+    ])
+
+    const latency = region('Latency')
+    expect(within(tile(latency, 'TPOT')).getByText('not reported')).toBeInTheDocument()
+    expect(within(tile(latency, 'Batch')).getByText('not reported')).toBeInTheDocument()
+    expect(within(tile(latency, 'TTFT')).getByText('210')).toBeInTheDocument()
+    expect(within(latency).queryByTestId('chart-series-TPOT')).not.toBeInTheDocument()
+    expect(
+      within(tile(region('Decode Throughput'), 'Per-Req Avg')).getByText('not reported'),
+    ).toBeInTheDocument()
+    expect(within(tile(region('Requests'), 'Preempt')).getByText('not reported')).toBeInTheDocument()
+    // Every figure shown covers both engines, so no count is said.
+    expect(screen.queryByText(/of 2 engines/)).not.toBeInTheDocument()
   })
 
   it('says speculative decoding is not reported rather than not in use', async () => {

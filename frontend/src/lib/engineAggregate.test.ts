@@ -7,6 +7,7 @@ import {
   includedIn,
   panelCoverage,
 } from './engineAggregate'
+import { SGLANG_GROUPS } from '@/test/engineGroups'
 import {
   METRIC_GROUPS,
   type EngineMetrics,
@@ -391,13 +392,13 @@ describe('aggregateEngines over engines that report different metric groups', ()
   it('sums only the engines that report the group', () => {
     const snap = aggregateEngines([
       engine('Running', fullMetrics({ tokens_per_sec: 100 })),
-      reporting(fullMetrics({ tokens_per_sec: 50 }), ['Requests']),
+      reporting(fullMetrics({ tokens_per_sec: 50 }), ['ActiveRequests']),
     ])
 
     expect(snap.tokens_per_sec).toBe(100)
     expect(snap.coverage.running).toBe(2)
     expect(snap.coverage.included.Throughput).toBe(1)
-    expect(snap.coverage.included.Requests).toBe(2)
+    expect(snap.coverage.included.ActiveRequests).toBe(2)
   })
 
   it('does not count a zero from an engine that reports nothing', () => {
@@ -440,7 +441,7 @@ describe('aggregateEngines over engines that report different metric groups', ()
 
   it('reads a figure no running engine reports as null, not zero', () => {
     const snap = aggregateEngines([
-      reporting(fullMetrics({ tokens_per_sec: 100 }), ['Requests']),
+      reporting(fullMetrics({ tokens_per_sec: 100 }), ['ActiveRequests']),
       reporting(fullMetrics({ tokens_per_sec: 50 }), ['KvCache']),
     ])
 
@@ -468,34 +469,59 @@ describe('aggregateEngines over engines that report different metric groups', ()
       total_requests: 90,
     }), groups)
 
-    const means = aggregateEngines([a, b(['LatencyMeans'])])
+    const means = aggregateEngines([a, b(['TtftMean'])])
     expect(means.ttft_ms).toBe(100)
-    expect(means.coverage.included.LatencyMeans).toBe(1)
+    expect(means.coverage.included.TtftMean).toBe(1)
 
     const queue = aggregateEngines([a, b(['QueueTime'])])
     expect(queue.queue_time_ms).toBe(20)
     expect(queue.coverage.included.QueueTime).toBe(1)
 
-    const tails = aggregateEngines([a, b(['LatencyPercentiles'])])
+    const tails = aggregateEngines([a, b(['TtftPercentiles'])])
     expect(tails.ttft_percentiles).toEqual(percentiles(100))
     expect(tails.ttft_goodput_pct).toBe(90)
-    expect(tails.coverage.included.LatencyPercentiles).toBe(1)
+    expect(tails.coverage.included.TtftPercentiles).toBe(1)
 
     // Reporting requests as well, B enters with its weight: (100·10 + 500·90) / 100.
-    const weighted = aggregateEngines([a, b(['LatencyMeans', 'Requests'])])
+    const weighted = aggregateEngines([a, b(['TtftMean', 'RequestTotal'])])
     expect(weighted.ttft_ms).toBeCloseTo(460, 5)
-    expect(weighted.coverage.included.LatencyMeans).toBe(2)
+    expect(weighted.coverage.included.TtftMean).toBe(2)
   })
 
   it('masks the latency of an engine outside the group, not only its weight', () => {
     // A reports every group but no request count, so no engine carries a weight;
     // B's 500 ms must be absent because B is masked, not for want of a weight.
     const a = engine('Running', fullMetrics({ ttft_ms: 100, total_requests: null }))
-    const b = reporting(fullMetrics({ ttft_ms: 500 }), ['LatencyMeans'])
+    const b = reporting(fullMetrics({ ttft_ms: 500 }), ['TtftMean'])
 
     const snap = aggregateEngines([a, b])
     expect(snap.ttft_ms).toBe(100)
-    expect(snap.coverage.included.LatencyMeans).toBe(1)
+    expect(snap.coverage.included.TtftMean).toBe(1)
+  })
+
+  it('combines a figure only over the engines that report its group, and weights the rest by requests', () => {
+    // vLLM-shaped: every group. SGLang-shaped: every group but TPOT, batch size
+    // and preemptions (it exposes none of them).
+    const vllm = engine('Running', fullMetrics({
+      total_requests: 10, ttft_ms: 100, tpot_ms: 20, avg_batch_size: 4, swapped_requests: 3,
+    }))
+    const sglang = reporting(fullMetrics({
+      total_requests: 30, ttft_ms: 500, tpot_ms: 99, avg_batch_size: 9, swapped_requests: 7,
+    }), SGLANG_GROUPS)
+
+    const snap = aggregateEngines([vllm, sglang])
+
+    // TPOT, batch size and swaps: vLLM's alone, not blended with SGLang's 99 / 9 / 7.
+    expect(snap.tpot_ms).toBe(20)
+    expect(snap.avg_batch_size).toBe(4)
+    expect(snap.swapped_requests).toBe(3)
+    expect(snap.coverage.included.TpotMean).toBe(1)
+    expect(snap.coverage.included.BatchSize).toBe(1)
+    expect(snap.coverage.included.Preemptions).toBe(1)
+    // TTFT: request-weighted over both, (100*10 + 500*30) / 40 = 400.
+    expect(snap.ttft_ms).toBeCloseTo(400, 5)
+    expect(snap.coverage.included.TtftMean).toBe(2)
+    expect(snap.total_requests).toBe(40)
   })
 
   it('means a percentage over the engines that report it, and its estimate flag with it', () => {
@@ -522,15 +548,24 @@ describe('aggregateEngines over engines that report different metric groups', ()
 })
 
 describe('includedIn', () => {
-  it('requires a request-weighted group to come with request counts', () => {
-    expect(includedIn(reporting(null, ['LatencyMeans']), 'LatencyMeans')).toBe(false)
-    expect(includedIn(reporting(null, ['LatencyMeans', 'Requests']), 'LatencyMeans')).toBe(true)
-    expect(includedIn(reporting(null, ['LatencyPercentiles']), 'LatencyPercentiles')).toBe(false)
-    expect(includedIn(reporting(null, ['QueueTime']), 'QueueTime')).toBe(false)
-    // A sum or a plain mean needs no weight.
-    expect(includedIn(reporting(null, ['KvCache']), 'KvCache')).toBe(true)
-    expect(includedIn(reporting(null, ['Throughput']), 'Throughput')).toBe(true)
+  const requestWeighted: MetricGroup[] = [
+    'TtftMean', 'TtftPercentiles', 'E2eMean', 'E2ePercentiles',
+    'ItlMean', 'ItlPercentiles', 'TpotMean', 'TpotPercentiles', 'QueueTime',
+  ]
+
+  it.each(requestWeighted)('requires %s to come with request counts', (group) => {
+    expect(includedIn(reporting(null, [group]), group)).toBe(false)
+    expect(includedIn(reporting(null, [group, 'RequestTotal']), group)).toBe(true)
+    // Active requests are not request counts.
+    expect(includedIn(reporting(null, [group, 'ActiveRequests']), group)).toBe(false)
   })
+
+  it.each(['Throughput', 'KvCache', 'BatchSize', 'ActiveRequests'] as MetricGroup[])(
+    'needs no request counts for %s, a sum or a plain mean',
+    (group) => {
+      expect(includedIn(reporting(null, [group]), group)).toBe(true)
+    },
+  )
 
   it('leaves out an engine that is not running, or whose metrics are off', () => {
     expect(includedIn(engine('Stopped'), 'Throughput')).toBe(false)
@@ -550,7 +585,7 @@ describe('aggregateCoverage', () => {
     expect(coverage.running).toBe(2)
     expect(coverage.included.Throughput).toBe(2)
     expect(coverage.included.KvCache).toBe(2)
-    expect(coverage.included.Requests).toBe(1)
+    expect(coverage.included.ActiveRequests).toBe(1)
     expect(coverage.included.PrefixCache).toBe(1)
   })
 })

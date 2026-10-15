@@ -1,0 +1,17 @@
+/**
+ * The metric-group lists real engine types declare, shared by the specs that
+ * hand a panel or the aggregate an engine of that shape (ADR-0004). Not a spec
+ * itself: vitest only collects `*.test.*`.
+ */
+
+import { METRIC_GROUPS, type MetricGroup } from '@/types/metrics'
+
+/** What an SGLang engine reports (#129): everything but TPOT, batch size and
+ *  preemptions, which it has no counter for. */
+export const SGLANG_GROUPS: MetricGroup[] = METRIC_GROUPS.filter(
+  (group) => !['TpotMean', 'TpotPercentiles', 'BatchSize', 'Preemptions'].includes(group),
+)
+
+/** What a llama.cpp server reports (#131): throughput, the requests in flight,
+ *  and the mean inter-token latency. */
+export const LLAMA_CPP_GROUPS: MetricGroup[] = ['Throughput', 'ActiveRequests', 'ItlMean']

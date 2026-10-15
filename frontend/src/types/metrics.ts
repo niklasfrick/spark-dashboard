@@ -103,13 +103,22 @@ export type EngineStatus =
  */
 export const METRIC_GROUPS = [
   'Throughput',
-  'Requests',
-  'LatencyMeans',
-  'LatencyPercentiles',
+  'BatchSize',
+  'ActiveRequests',
+  'RequestTotal',
+  'Preemptions',
   'QueueTime',
   'KvCache',
   'PrefixCache',
   'SpeculativeDecoding',
+  'TtftMean',
+  'TtftPercentiles',
+  'E2eMean',
+  'E2ePercentiles',
+  'ItlMean',
+  'ItlPercentiles',
+  'TpotMean',
+  'TpotPercentiles',
 ] as const
 
 export type MetricGroup = (typeof METRIC_GROUPS)[number]

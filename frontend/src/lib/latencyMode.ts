@@ -8,7 +8,7 @@
  * exports breaks Vite fast refresh (`react-refresh/only-export-components`).
  */
 
-import type { LatencyPercentiles } from '@/types/metrics'
+import type { LatencyPercentiles, MetricGroup } from '@/types/metrics'
 
 export type LatencyMode = 'avg' | 'p50' | 'p95' | 'p99'
 
@@ -50,6 +50,31 @@ export interface ReportedLatencyStatistics {
   means: boolean
   /** The latency percentiles group. */
   percentiles: boolean
+}
+
+/**
+ * The two metric groups each latency dimension is reported in (ADR-0004): its
+ * mean, and its percentiles with the goodput and buckets derived from the same
+ * histogram.
+ */
+export const LATENCY_GROUPS = {
+  ttft: { mean: 'TtftMean', percentiles: 'TtftPercentiles' },
+  e2e: { mean: 'E2eMean', percentiles: 'E2ePercentiles' },
+  itl: { mean: 'ItlMean', percentiles: 'ItlPercentiles' },
+  tpot: { mean: 'TpotMean', percentiles: 'TpotPercentiles' },
+} as const satisfies Record<string, { mean: MetricGroup; percentiles: MetricGroup }>
+
+/** A latency dimension: time to first token, end to end, inter-token, per output token. */
+export type LatencyDimension = keyof typeof LATENCY_GROUPS
+
+/** Which statistics of one latency dimension an engine reports, given the
+ *  panel's `reports` predicate. */
+export function reportedLatencyStatistics(
+  dimension: LatencyDimension,
+  reports: (group: MetricGroup) => boolean,
+): ReportedLatencyStatistics {
+  const { mean, percentiles } = LATENCY_GROUPS[dimension]
+  return { means: reports(mean), percentiles: reports(percentiles) }
 }
 
 /**

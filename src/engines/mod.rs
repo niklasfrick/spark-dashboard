@@ -51,50 +51,94 @@ pub enum EngineStatus {
 
 /// A set of engine metrics an engine reports together or not at all
 /// (ADR-0004). Each engine states on the metrics contract which groups it
-/// reports; a panel whose group is not reported says so rather than showing
-/// a zero, which a `null` field cannot carry — `null` already means "warming
-/// up", "not emitted yet" and "feature not configured".
+/// reports; a tile whose group is not reported keeps its slot and says so
+/// rather than showing a zero, which a `null` field cannot carry — `null`
+/// already means "warming up", "not emitted yet" and "feature not
+/// configured".
+///
+/// The groups are cut where the panels cut tiles, so that each is
+/// all-or-nothing on every engine type (ADR-0004's amendment, #142). Every
+/// `EngineMetrics` field but `warming_up` belongs to exactly one group; the
+/// table is `EngineMetrics::reported_only`.
 ///
 /// The variant names are the wire format, mirrored by `METRIC_GROUPS` in
-/// `frontend/src/types/metrics.ts`. Adding or splitting a group is a
-/// metrics-contract change.
+/// `frontend/src/types/metrics.ts`, and the declaration order is the wire
+/// order: a `BTreeSet` of groups serializes in it. Adding or splitting a
+/// group is a metrics-contract change.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
 pub enum MetricGroup {
-    /// Prefill and decode token rates and the lifetime token counters behind
-    /// them, plus tokens per engine step (`avg_batch_size`).
+    /// Prompt and generation token rates and their running averages
+    /// (`prompt_tokens_per_sec`, `tokens_per_sec`, `avg_prompt_tokens_per_sec`,
+    /// `avg_tokens_per_sec`), and the lifetime token counters behind them
+    /// (`total_prompt_tokens`, `total_generation_tokens`).
     Throughput,
-    /// Running, queued and lifetime request counts, and the swap/preemption
-    /// counters.
-    Requests,
-    /// Mean TTFT, end-to-end latency, inter-token latency and time per output
-    /// token.
-    LatencyMeans,
-    /// p50/p95/p99 of those latencies and the histogram buckets SLO goodput
-    /// is computed from.
-    LatencyPercentiles,
-    /// Mean time a request waits in the queue before it is scheduled.
+    /// Tokens per engine step (`avg_batch_size`).
+    BatchSize,
+    /// Running and queued requests (`active_requests`, `queued_requests`).
+    ActiveRequests,
+    /// The lifetime request count (`total_requests`).
+    RequestTotal,
+    /// The preemption counter and swapped requests (`preemptions_total`,
+    /// `swapped_requests`).
+    Preemptions,
+    /// Mean time a request waits in the queue before it is scheduled
+    /// (`queue_time_ms`).
     QueueTime,
-    /// KV cache utilization.
+    /// KV cache utilization (`kv_cache_percent`, and its
+    /// `kv_cache_is_estimated` flag).
     KvCache,
-    /// Prefix cache hit rate and query volume.
+    /// Prefix cache hit rate and query volume (`prefix_cache_hit_rate`,
+    /// `prefix_cache_queries_total`).
     PrefixCache,
     /// Draft/accepted token counters and the acceptance figures derived from
-    /// them. Reported by an engine that *can* speculate; whether this one is
-    /// configured to is what the counters themselves say.
+    /// them (the six `spec_decode_*` fields). Reported by an engine that
+    /// *can* speculate; whether this one is configured to is what the
+    /// counters themselves say.
     SpeculativeDecoding,
+    /// Mean time to first token (`ttft_ms`), and the per-request prefill
+    /// throughput derived from the TTFT sum (`per_request_prompt_tps`).
+    TtftMean,
+    /// TTFT p50/p95/p99 (`ttft_percentiles`), the histogram buckets they are
+    /// read off (`ttft_buckets`) and the SLO goodput (`ttft_goodput_pct`).
+    TtftPercentiles,
+    /// Mean end-to-end request latency (`e2e_latency_ms`).
+    E2eMean,
+    /// End-to-end latency p50/p95/p99 (`e2e_percentiles`), the histogram
+    /// buckets (`e2e_buckets`) and the SLO goodput (`e2e_goodput_pct`).
+    E2ePercentiles,
+    /// Mean inter-token latency (`inter_token_latency_ms`).
+    ItlMean,
+    /// Inter-token latency p50/p95/p99 (`itl_percentiles`), the histogram
+    /// buckets (`itl_buckets`) and the SLO goodput (`itl_goodput_pct`).
+    ItlPercentiles,
+    /// Mean time per output token (`tpot_ms`), and the per-request decode
+    /// throughput derived from it (`per_request_tps`).
+    TpotMean,
+    /// TPOT p50/p95/p99 (`tpot_percentiles`), the histogram buckets
+    /// (`tpot_buckets`) and the SLO goodput (`tpot_goodput_pct`).
+    TpotPercentiles,
 }
 
 impl MetricGroup {
-    /// Every metric group, in wire order.
-    pub const ALL: [MetricGroup; 8] = [
+    /// Every metric group, in wire order — the declaration order above.
+    pub const ALL: [MetricGroup; 17] = [
         MetricGroup::Throughput,
-        MetricGroup::Requests,
-        MetricGroup::LatencyMeans,
-        MetricGroup::LatencyPercentiles,
+        MetricGroup::BatchSize,
+        MetricGroup::ActiveRequests,
+        MetricGroup::RequestTotal,
+        MetricGroup::Preemptions,
         MetricGroup::QueueTime,
         MetricGroup::KvCache,
         MetricGroup::PrefixCache,
         MetricGroup::SpeculativeDecoding,
+        MetricGroup::TtftMean,
+        MetricGroup::TtftPercentiles,
+        MetricGroup::E2eMean,
+        MetricGroup::E2ePercentiles,
+        MetricGroup::ItlMean,
+        MetricGroup::ItlPercentiles,
+        MetricGroup::TpotMean,
+        MetricGroup::TpotPercentiles,
     ];
 
     /// The set of every group — what an engine reporting everything declares.
@@ -275,6 +319,82 @@ pub struct EngineMetrics {
     pub warming_up: bool,
 }
 
+impl EngineMetrics {
+    /// These metrics with every field of a metric group outside `reported`
+    /// blanked: `None`, and `kv_cache_is_estimated` `false`. A field of a
+    /// group the engine does not report then never goes on the wire filled,
+    /// whatever the adapter put in it — the declaration decides, and a tile
+    /// reads "not reported" rather than a stray value.
+    ///
+    /// This is the field-to-group table of the metrics contract, mirrored by
+    /// `METRIC_FIELD_GROUP` in `frontend/src/lib/engineMetrics.ts`. It is a
+    /// struct literal without `..self` on purpose: a field added without a
+    /// group does not compile. `warming_up` is engine state, not a metric,
+    /// and passes through.
+    pub fn reported_only(self, reported: &BTreeSet<MetricGroup>) -> EngineMetrics {
+        use MetricGroup::*;
+        let keep = |group: MetricGroup| reported.contains(&group);
+        EngineMetrics {
+            tokens_per_sec: self.tokens_per_sec.filter(|_| keep(Throughput)),
+            avg_tokens_per_sec: self.avg_tokens_per_sec.filter(|_| keep(Throughput)),
+            prompt_tokens_per_sec: self.prompt_tokens_per_sec.filter(|_| keep(Throughput)),
+            avg_prompt_tokens_per_sec: self.avg_prompt_tokens_per_sec.filter(|_| keep(Throughput)),
+            total_prompt_tokens: self.total_prompt_tokens.filter(|_| keep(Throughput)),
+            total_generation_tokens: self.total_generation_tokens.filter(|_| keep(Throughput)),
+            avg_batch_size: self.avg_batch_size.filter(|_| keep(BatchSize)),
+            active_requests: self.active_requests.filter(|_| keep(ActiveRequests)),
+            queued_requests: self.queued_requests.filter(|_| keep(ActiveRequests)),
+            total_requests: self.total_requests.filter(|_| keep(RequestTotal)),
+            preemptions_total: self.preemptions_total.filter(|_| keep(Preemptions)),
+            swapped_requests: self.swapped_requests.filter(|_| keep(Preemptions)),
+            queue_time_ms: self.queue_time_ms.filter(|_| keep(QueueTime)),
+            kv_cache_percent: self.kv_cache_percent.filter(|_| keep(KvCache)),
+            kv_cache_is_estimated: self.kv_cache_is_estimated && keep(KvCache),
+            prefix_cache_hit_rate: self.prefix_cache_hit_rate.filter(|_| keep(PrefixCache)),
+            prefix_cache_queries_total: self
+                .prefix_cache_queries_total
+                .filter(|_| keep(PrefixCache)),
+            spec_decode_draft_tokens_total: self
+                .spec_decode_draft_tokens_total
+                .filter(|_| keep(SpeculativeDecoding)),
+            spec_decode_accepted_tokens_total: self
+                .spec_decode_accepted_tokens_total
+                .filter(|_| keep(SpeculativeDecoding)),
+            spec_decode_drafts_total: self
+                .spec_decode_drafts_total
+                .filter(|_| keep(SpeculativeDecoding)),
+            spec_decode_acceptance_rate: self
+                .spec_decode_acceptance_rate
+                .filter(|_| keep(SpeculativeDecoding)),
+            spec_decode_acceptance_rate_live: self
+                .spec_decode_acceptance_rate_live
+                .filter(|_| keep(SpeculativeDecoding)),
+            spec_decode_mean_acceptance_length: self
+                .spec_decode_mean_acceptance_length
+                .filter(|_| keep(SpeculativeDecoding)),
+            ttft_ms: self.ttft_ms.filter(|_| keep(TtftMean)),
+            per_request_prompt_tps: self.per_request_prompt_tps.filter(|_| keep(TtftMean)),
+            ttft_percentiles: self.ttft_percentiles.filter(|_| keep(TtftPercentiles)),
+            ttft_buckets: self.ttft_buckets.filter(|_| keep(TtftPercentiles)),
+            ttft_goodput_pct: self.ttft_goodput_pct.filter(|_| keep(TtftPercentiles)),
+            e2e_latency_ms: self.e2e_latency_ms.filter(|_| keep(E2eMean)),
+            e2e_percentiles: self.e2e_percentiles.filter(|_| keep(E2ePercentiles)),
+            e2e_buckets: self.e2e_buckets.filter(|_| keep(E2ePercentiles)),
+            e2e_goodput_pct: self.e2e_goodput_pct.filter(|_| keep(E2ePercentiles)),
+            inter_token_latency_ms: self.inter_token_latency_ms.filter(|_| keep(ItlMean)),
+            itl_percentiles: self.itl_percentiles.filter(|_| keep(ItlPercentiles)),
+            itl_buckets: self.itl_buckets.filter(|_| keep(ItlPercentiles)),
+            itl_goodput_pct: self.itl_goodput_pct.filter(|_| keep(ItlPercentiles)),
+            tpot_ms: self.tpot_ms.filter(|_| keep(TpotMean)),
+            per_request_tps: self.per_request_tps.filter(|_| keep(TpotMean)),
+            tpot_percentiles: self.tpot_percentiles.filter(|_| keep(TpotPercentiles)),
+            tpot_buckets: self.tpot_buckets.filter(|_| keep(TpotPercentiles)),
+            tpot_goodput_pct: self.tpot_goodput_pct.filter(|_| keep(TpotPercentiles)),
+            warming_up: self.warming_up,
+        }
+    }
+}
+
 /// A per-request inference metric record.
 /// Empty for now; future engine adapter integration will populate these.
 #[derive(Clone, Debug, serde::Serialize)]
@@ -343,7 +463,9 @@ pub trait EngineAdapter: Send + Sync {
     /// engine rather than per type — what an engine exposes can depend on its
     /// version and on how it was launched, and only the adapter sees the
     /// scrape. A group listed here whose fields are momentarily `None` is
-    /// "not yet"; a group left out is "not reported", and its panels say so.
+    /// "not yet"; a group left out is "not reported", and its tiles say so.
+    /// The snapshot blanks a left-out group's fields whatever `get_metrics`
+    /// put in them (`EngineMetrics::reported_only`).
     fn metric_groups(&self) -> BTreeSet<MetricGroup>;
     /// When the engine is running but its metrics endpoint is switched off by
     /// a launch flag, the name of that flag — so the UI can say "metrics are
@@ -499,7 +621,9 @@ impl EngineState {
     }
 
     /// The snapshot this engine contributes to a poll tick. What it reports is
-    /// whatever its adapter declares — the snapshot never decides that itself.
+    /// whatever its adapter declares — the snapshot never decides that itself,
+    /// but it holds the metrics to it: a field of a metric group the adapter
+    /// does not declare goes on the wire empty (`EngineMetrics::reported_only`).
     fn snapshot(
         &self,
         status: EngineStatus,
@@ -517,13 +641,15 @@ impl EngineState {
             }
             _ => None,
         };
+        let metric_groups = self.adapter.metric_groups();
+        let metrics = metrics.map(|m| m.reported_only(&metric_groups));
         EngineSnapshot {
             engine_type: self.adapter.engine_type(),
             endpoint: self.adapter.endpoint().to_string(),
             status,
             model,
             model_metadata_error: self.model_metadata_error,
-            metric_groups: self.adapter.metric_groups(),
+            metric_groups,
             metrics_off,
             metrics,
             recent_requests: Vec::new(),
@@ -1163,13 +1289,22 @@ mod tests {
     fn wire_name(group: MetricGroup) -> &'static str {
         match group {
             MetricGroup::Throughput => "Throughput",
-            MetricGroup::Requests => "Requests",
-            MetricGroup::LatencyMeans => "LatencyMeans",
-            MetricGroup::LatencyPercentiles => "LatencyPercentiles",
+            MetricGroup::BatchSize => "BatchSize",
+            MetricGroup::ActiveRequests => "ActiveRequests",
+            MetricGroup::RequestTotal => "RequestTotal",
+            MetricGroup::Preemptions => "Preemptions",
             MetricGroup::QueueTime => "QueueTime",
             MetricGroup::KvCache => "KvCache",
             MetricGroup::PrefixCache => "PrefixCache",
             MetricGroup::SpeculativeDecoding => "SpeculativeDecoding",
+            MetricGroup::TtftMean => "TtftMean",
+            MetricGroup::TtftPercentiles => "TtftPercentiles",
+            MetricGroup::E2eMean => "E2eMean",
+            MetricGroup::E2ePercentiles => "E2ePercentiles",
+            MetricGroup::ItlMean => "ItlMean",
+            MetricGroup::ItlPercentiles => "ItlPercentiles",
+            MetricGroup::TpotMean => "TpotMean",
+            MetricGroup::TpotPercentiles => "TpotPercentiles",
         }
     }
 
@@ -1181,16 +1316,221 @@ mod tests {
                 serde_json::json!(wire_name(group)),
             );
         }
+        // The seventeen, in the wire order `METRIC_GROUPS` mirrors.
+        assert_eq!(
+            serde_json::to_value(MetricGroup::ALL).unwrap(),
+            serde_json::json!([
+                "Throughput",
+                "BatchSize",
+                "ActiveRequests",
+                "RequestTotal",
+                "Preemptions",
+                "QueueTime",
+                "KvCache",
+                "PrefixCache",
+                "SpeculativeDecoding",
+                "TtftMean",
+                "TtftPercentiles",
+                "E2eMean",
+                "E2ePercentiles",
+                "ItlMean",
+                "ItlPercentiles",
+                "TpotMean",
+                "TpotPercentiles",
+            ]),
+        );
         assert_eq!(
             MetricGroup::all().len(),
             MetricGroup::ALL.len(),
             "ALL names each group exactly once",
         );
+        // A set travels in declaration order, so `ALL` must list the groups
+        // in that order too, or the two copies of the wire order disagree.
+        assert_eq!(
+            MetricGroup::ALL.to_vec(),
+            MetricGroup::all().into_iter().collect::<Vec<_>>(),
+            "ALL is in declaration order",
+        );
+    }
+
+    /// The fields of each group as they travel on the wire, written out from
+    /// the table in #142 rather than read back from `reported_only`, so the
+    /// test pins the table instead of restating it. Exhaustive on purpose: a
+    /// new group does not compile here until it is given its fields.
+    fn fields_of(group: MetricGroup) -> &'static [&'static str] {
+        match group {
+            MetricGroup::Throughput => &[
+                "tokens_per_sec",
+                "avg_tokens_per_sec",
+                "prompt_tokens_per_sec",
+                "avg_prompt_tokens_per_sec",
+                "total_prompt_tokens",
+                "total_generation_tokens",
+            ],
+            MetricGroup::BatchSize => &["avg_batch_size"],
+            MetricGroup::ActiveRequests => &["active_requests", "queued_requests"],
+            MetricGroup::RequestTotal => &["total_requests"],
+            MetricGroup::Preemptions => &["preemptions_total", "swapped_requests"],
+            MetricGroup::QueueTime => &["queue_time_ms"],
+            MetricGroup::KvCache => &["kv_cache_percent", "kv_cache_is_estimated"],
+            MetricGroup::PrefixCache => &["prefix_cache_hit_rate", "prefix_cache_queries_total"],
+            MetricGroup::SpeculativeDecoding => &[
+                "spec_decode_draft_tokens_total",
+                "spec_decode_accepted_tokens_total",
+                "spec_decode_drafts_total",
+                "spec_decode_acceptance_rate",
+                "spec_decode_acceptance_rate_live",
+                "spec_decode_mean_acceptance_length",
+            ],
+            MetricGroup::TtftMean => &["ttft_ms", "per_request_prompt_tps"],
+            MetricGroup::TtftPercentiles => {
+                &["ttft_percentiles", "ttft_buckets", "ttft_goodput_pct"]
+            }
+            MetricGroup::E2eMean => &["e2e_latency_ms"],
+            MetricGroup::E2ePercentiles => &["e2e_percentiles", "e2e_buckets", "e2e_goodput_pct"],
+            MetricGroup::ItlMean => &["inter_token_latency_ms"],
+            MetricGroup::ItlPercentiles => &["itl_percentiles", "itl_buckets", "itl_goodput_pct"],
+            MetricGroup::TpotMean => &["tpot_ms", "per_request_tps"],
+            MetricGroup::TpotPercentiles => {
+                &["tpot_percentiles", "tpot_buckets", "tpot_goodput_pct"]
+            }
+        }
+    }
+
+    /// Metrics with every field filled — each `Option` holds a value and each
+    /// flag is `true` — so a field that survives `reported_only` differs from
+    /// its default and one that is blanked does not.
+    fn full_metrics() -> EngineMetrics {
+        let percentiles = || {
+            Some(LatencyPercentiles {
+                p50_ms: Some(10.0),
+                p95_ms: Some(20.0),
+                p99_ms: Some(30.0),
+            })
+        };
+        let buckets = || {
+            Some(vec![HistogramBucket {
+                le_seconds: 0.1,
+                cumulative_count: 4.0,
+            }])
+        };
+        EngineMetrics {
+            tokens_per_sec: Some(30.0),
+            avg_tokens_per_sec: Some(25.0),
+            per_request_tps: Some(40.0),
+            ttft_ms: Some(120.0),
+            active_requests: Some(3),
+            queued_requests: Some(1),
+            kv_cache_percent: Some(42.0),
+            kv_cache_is_estimated: true,
+            total_requests: Some(100),
+            e2e_latency_ms: Some(900.0),
+            prompt_tokens_per_sec: Some(300.0),
+            avg_prompt_tokens_per_sec: Some(280.0),
+            per_request_prompt_tps: Some(500.0),
+            swapped_requests: Some(2),
+            prefix_cache_hit_rate: Some(60.0),
+            queue_time_ms: Some(5.0),
+            inter_token_latency_ms: Some(9.0),
+            preemptions_total: Some(7),
+            total_prompt_tokens: Some(10_000),
+            total_generation_tokens: Some(2_000),
+            prefix_cache_queries_total: Some(8_000),
+            avg_batch_size: Some(12.0),
+            ttft_percentiles: percentiles(),
+            itl_percentiles: percentiles(),
+            e2e_percentiles: percentiles(),
+            ttft_goodput_pct: Some(99.0),
+            itl_goodput_pct: Some(98.0),
+            e2e_goodput_pct: Some(97.0),
+            ttft_buckets: buckets(),
+            itl_buckets: buckets(),
+            e2e_buckets: buckets(),
+            tpot_ms: Some(8.0),
+            tpot_percentiles: percentiles(),
+            tpot_goodput_pct: Some(96.0),
+            tpot_buckets: buckets(),
+            spec_decode_draft_tokens_total: Some(50),
+            spec_decode_accepted_tokens_total: Some(30),
+            spec_decode_drafts_total: Some(20),
+            spec_decode_acceptance_rate: Some(60.0),
+            spec_decode_acceptance_rate_live: Some(55.0),
+            spec_decode_mean_acceptance_length: Some(1.5),
+            warming_up: true,
+        }
+    }
+
+    fn metrics_json(metrics: &EngineMetrics) -> serde_json::Value {
+        serde_json::to_value(metrics).unwrap()
+    }
+
+    /// The wire names of the metric fields `metrics` still fills — those
+    /// that differ from `EngineMetrics::default()` — leaving out
+    /// `warming_up`, which is engine state rather than a metric.
+    fn filled_fields(metrics: &EngineMetrics) -> BTreeSet<String> {
+        let blank = metrics_json(&EngineMetrics::default());
+        let json = metrics_json(metrics);
+        json.as_object()
+            .unwrap()
+            .iter()
+            .filter(|(key, value)| key.as_str() != "warming_up" && blank[key.as_str()] != **value)
+            .map(|(key, _)| key.clone())
+            .collect()
+    }
+
+    #[test]
+    fn every_metric_field_belongs_to_exactly_one_group() {
+        let every_field: BTreeSet<String> = metrics_json(&full_metrics())
+            .as_object()
+            .unwrap()
+            .keys()
+            .filter(|key| key.as_str() != "warming_up")
+            .cloned()
+            .collect();
+        assert_eq!(
+            filled_fields(&full_metrics()),
+            every_field,
+            "the fixture fills every field"
+        );
+
+        // Each group keeps exactly its own fields…
+        for group in MetricGroup::ALL {
+            let masked = full_metrics().reported_only(&BTreeSet::from([group]));
+            let expected: BTreeSet<String> =
+                fields_of(group).iter().map(|f| f.to_string()).collect();
+            assert_eq!(filled_fields(&masked), expected, "{group:?}");
+            assert!(masked.warming_up, "{group:?} keeps the warmup flag");
+        }
+
+        // …and the groups between them name every field, each exactly once:
+        // a field added without a group fails here.
+        let named: Vec<&str> = MetricGroup::ALL
+            .into_iter()
+            .flat_map(|group| fields_of(group).iter().copied())
+            .collect();
+        let union: BTreeSet<String> = named.iter().map(|f| f.to_string()).collect();
+        assert_eq!(union.len(), named.len(), "no field is in two groups");
+        assert_eq!(union, every_field, "every field is in a group");
+
+        // Every group reported changes nothing; none reported blanks every
+        // metric, the estimated flag included, and keeps the warmup flag.
+        assert_eq!(
+            metrics_json(&full_metrics().reported_only(&MetricGroup::all())),
+            metrics_json(&full_metrics()),
+        );
+        let nothing = full_metrics().reported_only(&BTreeSet::new());
+        assert_eq!(
+            metrics_json(&nothing),
+            metrics_json(&EngineMetrics {
+                warming_up: true,
+                ..EngineMetrics::default()
+            }),
+        );
     }
 
     #[test]
     fn a_snapshot_carries_the_groups_its_adapter_declares() {
-        let partial = BTreeSet::from([MetricGroup::LatencyMeans, MetricGroup::Throughput]);
+        let partial = BTreeSet::from([MetricGroup::ItlMean, MetricGroup::Throughput]);
         let snapshot = state_reporting(partial.clone()).snapshot(EngineStatus::Running, None, None);
 
         assert_eq!(snapshot.metric_groups, partial);
@@ -1199,8 +1539,27 @@ mod tests {
         let json = serde_json::to_value(&snapshot).unwrap();
         assert_eq!(
             json["metric_groups"],
-            serde_json::json!(["Throughput", "LatencyMeans"])
+            serde_json::json!(["Throughput", "ItlMean"])
         );
+    }
+
+    #[test]
+    fn a_snapshot_blanks_fields_of_groups_its_adapter_does_not_declare() {
+        // Whatever the adapter put in a field, a group it does not declare
+        // goes on the wire empty — the tile reads "not reported", never a
+        // stray value beside a declaration that says otherwise.
+        let snapshot = state_reporting(BTreeSet::from([MetricGroup::Throughput])).snapshot(
+            EngineStatus::Running,
+            None,
+            Some(full_metrics()),
+        );
+        let metrics = &serde_json_value(&snapshot)["metrics"];
+
+        assert_eq!(metrics["tokens_per_sec"], serde_json::json!(30.0));
+        assert_eq!(metrics["tpot_ms"], serde_json::Value::Null);
+        assert_eq!(metrics["total_requests"], serde_json::Value::Null);
+        assert_eq!(metrics["kv_cache_is_estimated"], serde_json::json!(false));
+        assert_eq!(metrics["warming_up"], serde_json::json!(true));
     }
 
     #[test]

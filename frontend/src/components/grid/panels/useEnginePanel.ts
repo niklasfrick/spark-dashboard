@@ -67,8 +67,9 @@ interface EngineReadings {
   series: (name: EngineSeriesName) => DataPoint[]
   /**
    * Whether the target reports a metric group. A panel showing several groups
-   * asks this to omit the parts that are not reported — never a zero or a dash
-   * in their place; a panel whose groups are all unreported never gets here.
+   * asks this per tile: a tile whose group is not reported keeps its slot and
+   * reads "not reported" — never a zero or a dash — and its chart line is not
+   * drawn. A panel whose groups are all unreported never gets here.
    */
   reports: (group: MetricGroup) => boolean
 }

@@ -5,7 +5,10 @@ import {
   pickLatencyValue,
   latencyModeLabel,
   shownLatencyStatistic,
+  reportedLatencyStatistics,
+  LATENCY_GROUPS,
 } from '@/lib/latencyMode'
+import type { MetricGroup } from '@/types/metrics'
 import { computeTrend, percentileSubline, type ChartDataPoint } from '@/lib/engineStats'
 import { fmtVal, fmtInt } from '@/lib/format'
 
@@ -77,6 +80,49 @@ describe('shownLatencyStatistic', () => {
   it('shows nothing on an engine reporting neither', () => {
     expect(shownLatencyStatistic('avg', neither)).toBeNull()
     expect(shownLatencyStatistic('p95', neither)).toBeNull()
+  })
+})
+
+describe('LATENCY_GROUPS', () => {
+  it('names the four latency dimensions', () => {
+    expect(Object.keys(LATENCY_GROUPS)).toEqual(['ttft', 'e2e', 'itl', 'tpot'])
+  })
+
+  it('gives each dimension its own mean group and its own percentiles group', () => {
+    expect(LATENCY_GROUPS).toEqual({
+      ttft: { mean: 'TtftMean', percentiles: 'TtftPercentiles' },
+      e2e: { mean: 'E2eMean', percentiles: 'E2ePercentiles' },
+      itl: { mean: 'ItlMean', percentiles: 'ItlPercentiles' },
+      tpot: { mean: 'TpotMean', percentiles: 'TpotPercentiles' },
+    })
+    const all = Object.values(LATENCY_GROUPS).flatMap(g => [g.mean, g.percentiles])
+    expect(new Set(all).size).toBe(8)
+  })
+})
+
+describe('reportedLatencyStatistics', () => {
+  const only = (...groups: MetricGroup[]) => (group: MetricGroup) => groups.includes(group)
+
+  it('reads TPOT from the TPOT mean and percentiles groups', () => {
+    expect(reportedLatencyStatistics('tpot', only('TpotMean'))).toEqual({
+      means: true,
+      percentiles: false,
+    })
+    expect(reportedLatencyStatistics('tpot', only('TpotPercentiles'))).toEqual({
+      means: false,
+      percentiles: true,
+    })
+  })
+
+  it('does not read another dimension’s groups', () => {
+    expect(reportedLatencyStatistics('tpot', only('TtftMean', 'ItlPercentiles'))).toEqual({
+      means: false,
+      percentiles: false,
+    })
+    expect(reportedLatencyStatistics('ttft', only('TtftMean', 'TtftPercentiles'))).toEqual({
+      means: true,
+      percentiles: true,
+    })
   })
 })
 
