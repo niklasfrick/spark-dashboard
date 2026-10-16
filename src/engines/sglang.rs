@@ -1065,6 +1065,52 @@ sglang:time_to_first_token_seconds_bucket{le=\"+Inf\",role=\"decode\"} 4
         assert!(third.ttft_ms.is_some_and(|ms| ms > 0.0));
     }
 
+    /// `total_generation_tokens` is read off the warmup-adjusted scrape, as
+    /// on vLLM: the engine's lifetime count while warming, then the tokens
+    /// generated since the warmup baseline — the window every other
+    /// post-warmup figure covers.
+    #[tokio::test]
+    async fn generation_tokens_count_from_the_warmup_baseline() {
+        use super::super::test_server::TestServer;
+        use std::sync::atomic::AtomicUsize;
+
+        // (requests served, generation tokens) at each scrape.
+        const SCRAPES: [(u64, u64); 3] = [(5, 1_000), (6, 1_100), (7, 1_350)];
+        let polls = AtomicUsize::new(0);
+        let server = TestServer::start(move |r| {
+            if r.path != "/metrics" {
+                return (404, String::new());
+            }
+            let (requests, tokens) = SCRAPES[polls.fetch_add(1, Ordering::SeqCst)];
+            (200, growing_scrape(requests, tokens))
+        })
+        .await;
+        let adapter = SglangAdapter::new(reqwest::Client::new(), server.url.clone(), None, None);
+        // Skip one request, whatever `SPARK_WARMUP_SKIP_REQUESTS` says.
+        *adapter.warmup.lock().await = WarmupTracker::new(1, WARMUP_TRIGGER_KEY);
+
+        // Attached at 5 requests: still warming, so the lifetime count.
+        let first = adapter.get_metrics().await.expect("metrics");
+        assert!(first.warming_up);
+        assert_eq!(first.total_generation_tokens, Some(1_000));
+
+        // One more request ends warmup. This scrape is the baseline, so the
+        // count restarts from it.
+        let second = adapter.get_metrics().await.expect("metrics");
+        assert!(!second.warming_up);
+        assert_eq!(second.total_generation_tokens, Some(0));
+
+        // Steady state: the tokens generated since the baseline.
+        let third = adapter.get_metrics().await.expect("metrics");
+        assert!(!third.warming_up);
+        assert_eq!(third.total_generation_tokens, Some(1_350 - 1_100));
+        assert_ne!(
+            third.total_generation_tokens,
+            Some(1_350),
+            "not the engine's lifetime count"
+        );
+    }
+
     /// SGLang's model identity goes through the resolver vLLM uses, so an
     /// API-key launch the dashboard holds no key for is reported the same
     /// way: the command-line name as a fallback, `AuthRequired` beside it,
