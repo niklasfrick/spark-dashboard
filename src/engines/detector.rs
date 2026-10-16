@@ -76,17 +76,28 @@ pub async fn detect_engines(
     verified
 }
 
-/// Merge Docker results into the process-scan candidates. Key by
-/// (engine_type, endpoint) so multiple instances of the same engine on
-/// different ports are preserved as distinct entries. When a Docker candidate
-/// matches an existing process-scan entry by exact endpoint, upgrade its
-/// deployment_mode to Docker (Docker detection is authoritative for container
-/// metadata) and union the PID sets — `docker top` and the host process scan
-/// may each see processes the other missed.
+/// Merge Docker results into the process-scan candidates.
+///
+/// First, every container claims its own processes
+/// (`absorb_container_processes`): a process that belongs to a container is
+/// never a native engine of its own, the container is the engine.
+///
+/// Then key by (engine_type, endpoint) so multiple instances of the same
+/// engine on different ports are preserved as distinct entries. When a
+/// Docker candidate matches an existing process-scan entry by exact
+/// endpoint, upgrade its deployment_mode to Docker (Docker detection is
+/// authoritative for container metadata) and union the PID sets — `docker
+/// top` and the host process scan may each see processes the other missed.
+/// This is also what still joins a container whose processes could not be
+/// listed to the host scan's view of it.
 fn merge_docker_candidates(
     candidates: &mut Vec<DetectedEngine>,
-    docker_candidates: Vec<DetectedEngine>,
+    mut docker_candidates: Vec<DetectedEngine>,
 ) {
+    for container in &mut docker_candidates {
+        absorb_container_processes(candidates, container);
+    }
+
     let mut seen: HashSet<(EngineType, String)> = candidates
         .iter()
         .map(|c| (c.engine_type.clone(), c.endpoint.clone()))
@@ -123,6 +134,46 @@ fn merge_docker_candidates(
             candidates.push(dc);
         }
     }
+}
+
+/// Take a container's processes out of the host-scan candidates: whatever
+/// engine type and endpoint the host scan made of them, they are the
+/// container's engine.
+///
+/// The host scan sees a container's processes like any other's — on the
+/// host network and in `ps` alike — and reads an endpoint off their command
+/// line, which need not be the string the Docker scan builds for the same
+/// server: `--host 127.0.0.1 --port 8000` where the Docker scan says
+/// `localhost:8000`, or the port inside the container where Docker publishes
+/// another. Matched on the endpoint alone, one containerized engine was two,
+/// a native one beside the container's. The container's `docker top` PIDs
+/// (host-namespace, as the host scan's are) say which processes are its.
+///
+/// A candidate made only of the container's processes is absorbed, not
+/// kept beside it: its PIDs are the container's already, so GPU association
+/// loses none, and the model it read off the command line fills in where
+/// the container's own command showed none (only for the same engine type;
+/// the Docker scan's view of the container stands). A candidate that keeps
+/// some processes stays native with them: a native server the host scan
+/// grouped with a container's on one endpoint. A container whose processes
+/// could not be listed claims none, and is joined by endpoint as before.
+fn absorb_container_processes(
+    candidates: &mut Vec<DetectedEngine>,
+    container: &mut DetectedEngine,
+) {
+    candidates.retain_mut(|c| {
+        if !c.pids.iter().any(|pid| container.pids.contains(pid)) {
+            return true;
+        }
+        c.pids.retain(|pid| !container.pids.contains(pid));
+        if !c.pids.is_empty() {
+            return true;
+        }
+        if container.served_model.is_none() && c.engine_type == container.engine_type {
+            container.served_model = c.served_model.take();
+        }
+        false
+    });
 }
 
 /// Which engine's server an argument names, if any. The launch forms:
@@ -282,6 +333,38 @@ fn docker_endpoint(port: Option<&str>, default_port: u16) -> (String, bool) {
 // ---------------------------------------------------------------------------
 // Layer 1: Process scan
 // ---------------------------------------------------------------------------
+
+/// Refresh the host process table the process scan reads: every process's
+/// command line, and (always read, from `stat`) its parent — processes
+/// only, not their threads.
+///
+/// The scan judges a process by its command line alone, and sysinfo's plain
+/// `refresh_processes` reads memory, CPU, disk and executable figures but no
+/// `cmdline` — which left every process looking like it ran nothing, so no
+/// native engine was ever detected. The command line is re-read on every
+/// refresh rather than once: a process can `exec` into a server under the
+/// same PID (`sh -c "exec vllm serve ..."`), and SGLang's children rewrite
+/// theirs with `setproctitle` after they start.
+///
+/// Threads are left out explicitly: sysinfo lists every thread as a process
+/// of its own unless told not to — `ProcessRefreshKind::nothing()` keeps
+/// `tasks` on, as `refresh_processes` does. A thread shares its process's
+/// command line, so the scan would read a server once per thread and count
+/// every thread ID among the engine's PIDs, which nothing else names: NVML
+/// attributes GPU memory to processes, and `docker top` lists processes. A
+/// containerized server's threads then stayed behind when the container
+/// claimed its processes, and the host scan's view of the same server
+/// lived on as a second, native engine.
+pub fn refresh_process_table(sys: &mut sysinfo::System) {
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, UpdateKind};
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::nothing()
+            .without_tasks()
+            .with_cmd(UpdateKind::Always),
+    );
+}
 
 fn detect_by_process(sys: &sysinfo::System) -> Vec<DetectedEngine> {
     // Every process is judged by its command line alone — not by its name:
@@ -997,6 +1080,64 @@ mod tests {
         assert_eq!(asked[0].authorization.as_deref(), Some("Bearer k"));
     }
 
+    /// The scan reads nothing but command lines, so the refresh that feeds
+    /// it has to read them — the plain `refresh_processes` does not.
+    #[test]
+    fn the_process_table_carries_command_lines() {
+        let mut sys = sysinfo::System::new();
+        refresh_process_table(&mut sys);
+        let me = sys
+            .process(sysinfo::Pid::from_u32(std::process::id()))
+            .expect("the test process is listed");
+        assert!(!me.cmd().is_empty(), "no command line read");
+    }
+
+    /// sysinfo lists every thread as a process of its own unless told not
+    /// to. The scan must not see them: a thread shares its process's
+    /// command line and would be counted among the engine's PIDs, which
+    /// neither NVML nor `docker top` ever names — so a containerized
+    /// server's threads stayed behind when the container claimed its
+    /// processes, and the host scan's view of it lived on as a second,
+    /// native engine. Linux only: that is where sysinfo lists threads and
+    /// where `/proc/self/task` says which they are.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_processs_threads_are_not_processes_in_the_table() {
+        // One thread of this process that is certainly alive throughout.
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel::<()>();
+        let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
+        let worker = std::thread::spawn(move || {
+            ready_tx.send(()).expect("the test is waiting");
+            let _ = stop_rx.recv();
+        });
+        ready_rx.recv().expect("the worker started");
+
+        let me = std::process::id();
+        let threads: Vec<u32> = std::fs::read_dir("/proc/self/task")
+            .expect("/proc/self/task is readable")
+            .filter_map(|entry| entry.ok()?.file_name().to_str()?.parse().ok())
+            .filter(|&tid| tid != me)
+            .collect();
+        assert!(!threads.is_empty(), "the test process has no other thread");
+
+        let mut sys = sysinfo::System::new();
+        refresh_process_table(&mut sys);
+
+        let listed: Vec<u32> = threads
+            .iter()
+            .copied()
+            .filter(|&tid| sys.process(sysinfo::Pid::from_u32(tid)).is_some())
+            .collect();
+        assert!(listed.is_empty(), "threads listed as processes: {listed:?}");
+        assert!(
+            sys.process(sysinfo::Pid::from_u32(me)).is_some(),
+            "the test process itself is listed"
+        );
+
+        stop_tx.send(()).expect("the worker is waiting");
+        worker.join().expect("the worker exits");
+    }
+
     #[test]
     fn parses_positional_serve_arg() {
         let args = to_args(&["vllm", "serve", "unsloth/Llama-3.2-1B-Instruct"]);
@@ -1409,6 +1550,123 @@ mod tests {
             Some("Qwen/Qwen2.5-0.5B-Instruct"),
         );
         assert_eq!(parse_sglang_model_from_command_str("sleep infinity"), None);
+    }
+
+    /// A host-networked vLLM container, `vllm serve ... --host 127.0.0.1
+    /// --port 8000`, as it runs on the Spark. The host scan reads its
+    /// endpoint off the command line, `127.0.0.1:8000`, and the Docker scan
+    /// says `localhost:8000`: one server under two names, which made two
+    /// engines once the host scan could read command lines. The container's
+    /// processes are its engine's whatever endpoint the host scan read: one
+    /// engine, the container's, carrying the PID for GPU association and
+    /// the model the host scan read where the container's command showed
+    /// none.
+    #[test]
+    fn a_containers_processes_are_its_engine_whatever_endpoint_the_host_read() {
+        let serve = argv("vllm serve Qwen/Qwen3-8B --host 127.0.0.1 --port 8000");
+        let mut candidates = engines_from_processes([(500, serve.as_slice())]);
+        assert_eq!(candidates[0].endpoint, "http://127.0.0.1:8000");
+        let container = DetectedEngine {
+            container_id: Some("c0ffee".into()),
+            ..candidate(
+                "http://localhost:8000",
+                DeploymentMode::Docker,
+                &[480, 500, 501],
+            )
+        };
+        merge_docker_candidates(&mut candidates, vec![container]);
+
+        assert_eq!(candidates.len(), 1, "one engine");
+        let engine = &candidates[0];
+        assert_eq!(engine.endpoint, "http://localhost:8000");
+        assert_eq!(engine.deployment_mode, DeploymentMode::Docker);
+        assert_eq!(engine.container_id.as_deref(), Some("c0ffee"));
+        assert!(engine.pids.contains(&500), "{:?}", engine.pids);
+        assert_eq!(engine.served_model.as_deref(), Some("Qwen/Qwen3-8B"));
+    }
+
+    /// The container says what engine its processes are, as the Docker scan
+    /// always has: one the host scan took for another engine type is no
+    /// native engine either, and lends the container no model.
+    #[test]
+    fn a_containers_process_is_no_native_engine_of_any_type() {
+        let serve = argv("python3 -m sglang.launch_server --model-path m --port 30000");
+        let mut candidates = engines_from_processes([(500, serve.as_slice())]);
+        merge_docker_candidates(
+            &mut candidates,
+            vec![candidate(
+                "http://localhost:8000",
+                DeploymentMode::Docker,
+                &[480, 500],
+            )],
+        );
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].engine_type, EngineType::Vllm);
+        assert_eq!(candidates[0].deployment_mode, DeploymentMode::Docker);
+        assert_eq!(candidates[0].served_model, None);
+    }
+
+    /// Only a container's own processes leave the host scan. A native server
+    /// stays native beside a container, and keeps its processes where the
+    /// host scan put a container's on its endpoint too: `vllm serve --port
+    /// 8000` natively, and a bridge container's `vllm serve --port 8000`
+    /// published on 8001 (`-p 8001:8000`), which the host scan reads as
+    /// port 8000.
+    #[test]
+    fn a_process_in_no_container_stays_native() {
+        let native = argv("vllm serve m --port 8000");
+        let contained = argv("vllm serve m --port 8000");
+        let mut candidates =
+            engines_from_processes([(100, native.as_slice()), (401, contained.as_slice())]);
+        assert_eq!(candidates.len(), 1, "one endpoint to the host scan");
+        merge_docker_candidates(
+            &mut candidates,
+            vec![candidate(
+                "http://localhost:8001",
+                DeploymentMode::Docker,
+                &[400, 401],
+            )],
+        );
+        let found: Vec<_> = candidates
+            .iter()
+            .map(|c| {
+                (
+                    c.endpoint.as_str(),
+                    c.deployment_mode.clone(),
+                    c.pids.clone(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            found,
+            vec![
+                ("http://localhost:8000", DeploymentMode::Native, vec![100]),
+                (
+                    "http://localhost:8001",
+                    DeploymentMode::Docker,
+                    vec![400, 401]
+                ),
+            ]
+        );
+    }
+
+    /// A container whose processes could not be listed (`docker top`
+    /// failed) has no PIDs to claim a host-scan candidate by. An equal
+    /// endpoint still makes the two one engine, the container's.
+    #[test]
+    fn a_container_whose_processes_are_unknown_merges_by_endpoint() {
+        let serve = argv("vllm serve m --port 8000");
+        let mut candidates = engines_from_processes([(500, serve.as_slice())]);
+        let container = DetectedEngine {
+            container_id: Some("c0ffee".into()),
+            ..candidate("http://localhost:8000", DeploymentMode::Docker, &[])
+        };
+        merge_docker_candidates(&mut candidates, vec![container]);
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].deployment_mode, DeploymentMode::Docker);
+        assert_eq!(candidates[0].container_id.as_deref(), Some("c0ffee"));
+        assert_eq!(candidates[0].pids, vec![500]);
     }
 
     #[test]

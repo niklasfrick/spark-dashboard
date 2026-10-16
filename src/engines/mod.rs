@@ -853,7 +853,7 @@ pub async fn engine_collector_loop(
         tokio::select! {
             _ = detection_interval.tick() => {
                 // Refresh process list for scanning
-                sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
+                detector::refresh_process_table(&mut sys);
 
                 let detected = detector::detect_engines(&sys, &client, &api_keys).await;
 
