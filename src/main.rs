@@ -113,7 +113,12 @@ struct RunArgs {
     #[arg(long, env = "SPARK_DASHBOARD_SIMULATE_GPUS", default_value_t = 0)]
     simulate_gpus: u32,
 
-    /// Manually specify engine type: vllm or sglang (use with --engine-url)
+    /// Manually specify engine type: vllm, sglang or ollama (use with
+    /// --engine-url).
+    ///
+    /// Ollama has no metric panels: it exposes no server-side metrics, so the
+    /// dashboard shows only whether its server is up and which models it has
+    /// loaded, and every metric panel bound to it says "not reported".
     #[arg(
         long,
         value_name = "TYPE",
@@ -185,6 +190,31 @@ fn main() -> ExitCode {
     }
 }
 
+/// The engines configured by hand: each `--engine` paired by position with
+/// its `--engine-url`. An unknown type is logged and left out.
+fn engine_overrides(args: &RunArgs, api_keys: &ApiKeyResolver) -> Vec<EngineOverride> {
+    args.engine
+        .iter()
+        .zip(args.engine_url.iter())
+        .filter_map(|(engine_str, url)| {
+            let engine_type = match engine_str.to_lowercase().as_str() {
+                "vllm" => EngineType::Vllm,
+                "sglang" => EngineType::Sglang,
+                "ollama" => EngineType::Ollama,
+                unknown => {
+                    tracing::warn!("Unknown engine type '{}', ignoring override", unknown);
+                    return None;
+                }
+            };
+            Some(EngineOverride {
+                engine_type,
+                endpoint: url.clone(),
+                api_key: api_keys.resolve(url),
+            })
+        })
+        .collect()
+}
+
 fn run_server(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -208,26 +238,7 @@ async fn run_server_inner(args: RunArgs) -> Result<(), Box<dyn std::error::Error
         args.provider_api_key.clone(),
     );
 
-    let overrides: Vec<EngineOverride> = args
-        .engine
-        .iter()
-        .zip(args.engine_url.iter())
-        .filter_map(|(engine_str, url)| {
-            let engine_type = match engine_str.to_lowercase().as_str() {
-                "vllm" => EngineType::Vllm,
-                "sglang" => EngineType::Sglang,
-                unknown => {
-                    tracing::warn!("Unknown engine type '{}', ignoring override", unknown);
-                    return None;
-                }
-            };
-            Some(EngineOverride {
-                engine_type,
-                endpoint: url.clone(),
-                api_key: api_keys.resolve(url),
-            })
-        })
-        .collect();
+    let overrides = engine_overrides(&args, &api_keys);
 
     if !overrides.is_empty() {
         tracing::info!("Manual engine overrides: {:?}", overrides);
@@ -386,6 +397,31 @@ mod tests {
                 );
                 assert_eq!(args.engine_api_key, vec!["key-a", "key-b"]);
             },
+        );
+    }
+
+    /// Each engine type is configured by its CLI name, in any case; an
+    /// unknown one is left out rather than guessed.
+    #[test]
+    fn engine_flags_name_each_engine_type() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let args = parse(&[
+            "--engine",
+            "vllm,SGLang,ollama,llamafile",
+            "--engine-url",
+            "http://127.0.0.1:8000,http://127.0.0.1:30000,http://127.0.0.1:11434,http://127.0.0.1:8080",
+        ]);
+        let overrides: Vec<_> = engine_overrides(&args, &ApiKeyResolver::default())
+            .into_iter()
+            .map(|o| (o.engine_type, o.endpoint))
+            .collect();
+        assert_eq!(
+            overrides,
+            [
+                (EngineType::Vllm, "http://127.0.0.1:8000".to_string()),
+                (EngineType::Sglang, "http://127.0.0.1:30000".to_string()),
+                (EngineType::Ollama, "http://127.0.0.1:11434".to_string()),
+            ]
         );
     }
 

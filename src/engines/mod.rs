@@ -2,6 +2,7 @@ mod common;
 pub mod detector;
 pub mod histogram;
 mod model_info;
+pub mod ollama;
 pub mod prometheus;
 pub mod sglang;
 #[cfg(test)]
@@ -23,6 +24,7 @@ use tokio::sync::RwLock;
 pub enum EngineType {
     Vllm,
     Sglang,
+    Ollama,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
@@ -36,6 +38,7 @@ impl std::fmt::Display for EngineType {
         match self {
             EngineType::Vllm => write!(f, "vLLM"),
             EngineType::Sglang => write!(f, "SGLang"),
+            EngineType::Ollama => write!(f, "Ollama"),
         }
     }
 }
@@ -182,6 +185,31 @@ pub struct ModelInfo {
     pub tensor_type: Option<String>,
     pub model_type: Option<String>,
     pub pipeline_tag: Option<String>,
+}
+
+/// One model an engine has loaded right now: an entry of the list an engine
+/// type that serves several models at once (Ollama) carries in place of a
+/// single `model`. The field names are the wire format, mirrored by
+/// `LoadedModel` in `frontend/src/types/metrics.ts`.
+#[derive(Clone, Debug, serde::Serialize, PartialEq)]
+pub struct LoadedModel {
+    /// The model's name as the engine lists it, e.g. `tinyllama:latest`.
+    pub name: String,
+    /// The parameter count as the engine words it (`"1B"`); `None` when it
+    /// gives none.
+    pub parameter_size: Option<String>,
+    /// The quantization level (`"Q4_0"`); `None` when the engine gives none.
+    pub quantization: Option<String>,
+    /// Memory the loaded model occupies, in bytes.
+    pub size_bytes: u64,
+    /// The part of `size_bytes` held in GPU memory.
+    pub vram_bytes: u64,
+    /// The context window the model was loaded with, in tokens; `None` when
+    /// the engine does not say.
+    pub context_length: Option<u32>,
+    /// When the engine unloads the model if it stays idle, RFC 3339 exactly as
+    /// the engine wrote it; `None` when it gives no time.
+    pub expires_at: Option<String>,
 }
 
 /// Tail-latency percentiles in milliseconds, derived from a Prometheus
@@ -414,6 +442,13 @@ pub struct EngineSnapshot {
     /// Why `model` is missing or only a command-line fallback. `None` when
     /// metadata resolved normally (or has not been attempted yet).
     pub model_metadata_error: Option<ModelMetadataError>,
+    /// The models the engine has loaded now, sorted by name, for an engine
+    /// type that serves several at once and names no single one — `model` is
+    /// then always `None`, and an empty list is an engine with nothing
+    /// loaded, which is still running. `None` for a single-model engine type
+    /// (vLLM, SGLang), whose model is `model`. Always serialized, `null`
+    /// included, as the adapter's `loaded_models` decides.
+    pub loaded_models: Option<Vec<LoadedModel>>,
     /// The metric groups this engine reports, as its adapter declares them.
     /// Always serialized — an empty set is an engine that reports nothing,
     /// which is not the same as a snapshot from a backend that predates the
@@ -483,6 +518,19 @@ pub trait EngineAdapter: Send + Sync {
     fn metrics_off(&self) -> bool {
         false
     }
+    /// The models the engine has loaded now, as last read, for an engine type
+    /// that serves several models at once and names none on its own: the
+    /// list it carries in place of a single `model`. `None` (the default) is
+    /// a single-model engine type. Read on every snapshot assembly; the
+    /// adapter answers from its last read, without making a request.
+    fn loaded_models(&self) -> Option<Vec<LoadedModel>> {
+        None
+    }
+    /// Re-read what `loaded_models` answers from the engine. Called on every
+    /// poll tick the engine passes its health check. A read that fails or
+    /// times out keeps the last list: a slow answer must not empty an
+    /// engine's models for a tick. Nothing to do for a single-model type.
+    async fn refresh_loaded_models(&self) {}
     async fn health_check(&self) -> EngineStatus;
     async fn get_model_info(&self) -> ModelResolution;
     async fn get_metrics(&self) -> Option<EngineMetrics>;
@@ -642,13 +690,20 @@ impl EngineState {
             _ => None,
         };
         let metric_groups = self.adapter.metric_groups();
-        let metrics = metrics.map(|m| m.reported_only(&metric_groups));
+        // An engine that reports no group has no metrics to carry at all —
+        // not an all-blank set whose `warming_up` flag could still say it is
+        // warming up. Its tiles read "not reported", whatever the adapter
+        // handed in.
+        let metrics = metrics
+            .filter(|_| !metric_groups.is_empty())
+            .map(|m| m.reported_only(&metric_groups));
         EngineSnapshot {
             engine_type: self.adapter.engine_type(),
             endpoint: self.adapter.endpoint().to_string(),
             status,
             model,
             model_metadata_error: self.model_metadata_error,
+            loaded_models: self.adapter.loaded_models(),
             metric_groups,
             metrics_off,
             metrics,
@@ -658,6 +713,43 @@ impl EngineState {
             pids: self.pids.clone(),
             container_id: self.container_id.clone(),
         }
+    }
+
+    /// One poll tick of this engine: probe its health, refresh what it says
+    /// about its model(s) and metrics, and assemble its snapshot.
+    async fn poll(&mut self) -> EngineSnapshot {
+        let health = self.adapter.health_check().await;
+        let success = matches!(health, EngineStatus::Running | EngineStatus::Loading);
+        self.record_probe_result(success);
+
+        // Use the health-check returned status for the snapshot
+        // (may be more specific, e.g. Loading vs Running)
+        let status = if success { health } else { self.status.clone() };
+
+        // Model identity is static for a running engine, so only re-resolve
+        // /v1/models on first success, after a restart, or on the 10-minute
+        // safety net. During a transient blip keep the last-known model
+        // visible.
+        if success && self.should_fetch_model() {
+            let fetched = self.adapter.get_model_info().await;
+            self.cache_model(fetched);
+        }
+        let model = self.cached_model.clone();
+
+        let metrics = if success {
+            self.adapter.get_metrics().await
+        } else {
+            None
+        };
+
+        // What an engine serving several models has loaded changes from one
+        // tick to the next, so it is re-read on every tick the engine answers;
+        // through a blip the last list stands, as the last model does above.
+        if success {
+            self.adapter.refresh_loaded_models().await;
+        }
+
+        self.snapshot(status, model, metrics)
     }
 
     /// Returns true when the engine has been in Stopped state for longer than
@@ -769,6 +861,9 @@ pub fn create_adapter(
         EngineType::Sglang => Box::new(sglang::SglangAdapter::new(
             client, endpoint, model_hint, api_key,
         )),
+        // Ollama names no model on its command line; what it has loaded comes
+        // from its own API.
+        EngineType::Ollama => Box::new(ollama::OllamaAdapter::new(client, endpoint, api_key)),
     }
 }
 
@@ -913,35 +1008,7 @@ pub async fn engine_collector_loop(
 
                 for key in &keys {
                     if let Some(state) = engine_map.get_mut(key) {
-                        let health = state.adapter.health_check().await;
-                        let success = matches!(health, EngineStatus::Running | EngineStatus::Loading);
-                        state.record_probe_result(success);
-
-                        // Use the health-check returned status for the snapshot
-                        // (may be more specific, e.g. Loading vs Running)
-                        let status = if success { health } else { state.status.clone() };
-
-                        // Model identity is static for a running engine, so
-                        // only re-resolve /v1/models on first success, after a
-                        // restart, or on the 10-minute safety net. During a
-                        // transient blip keep the last-known model visible.
-                        let model = if success {
-                            if state.should_fetch_model() {
-                                let fetched = state.adapter.get_model_info().await;
-                                state.cache_model(fetched);
-                            }
-                            state.cached_model.clone()
-                        } else {
-                            state.cached_model.clone()
-                        };
-
-                        let metrics = if success {
-                            state.adapter.get_metrics().await
-                        } else {
-                            None
-                        };
-
-                        snapshots.push(state.snapshot(status, model, metrics));
+                        snapshots.push(state.poll().await);
                     }
                 }
 
@@ -1586,6 +1653,82 @@ mod tests {
 
     fn serde_json_value(snapshot: &EngineSnapshot) -> serde_json::Value {
         serde_json::to_value(snapshot).unwrap()
+    }
+
+    /// A single-model engine type carries `loaded_models` as `null` — the
+    /// field is there, so the frontend can tell "uses `model`" from a backend
+    /// that predates the field — and its snapshot is otherwise the shape it
+    /// always was. Through the real adapters, so a type that grows a list
+    /// shows up here.
+    #[test]
+    fn single_model_engines_carry_a_null_model_list_and_nothing_else_new() {
+        let client = reqwest::Client::new();
+        let adapters: [Box<dyn EngineAdapter>; 2] = [
+            Box::new(vllm::VllmAdapter::new(
+                client.clone(),
+                "http://127.0.0.1:8000".into(),
+                None,
+                None,
+            )),
+            Box::new(sglang::SglangAdapter::new(
+                client,
+                "http://127.0.0.1:30000".into(),
+                None,
+                None,
+            )),
+        ];
+        for adapter in adapters {
+            let engine_type = adapter.engine_type();
+            let state = EngineState::new(adapter, DeploymentMode::Native);
+            let json = serde_json_value(&state.snapshot(EngineStatus::Running, None, None));
+            let keys: Vec<&str> = json
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .collect();
+            assert_eq!(
+                keys,
+                [
+                    "deployment_mode",
+                    "endpoint",
+                    "engine_type",
+                    "gpu_indexes",
+                    "loaded_models",
+                    "metric_groups",
+                    "metrics",
+                    "metrics_off",
+                    "model",
+                    "model_metadata_error",
+                    "recent_requests",
+                    "status",
+                ],
+                "{engine_type}"
+            );
+            assert_eq!(
+                json["loaded_models"],
+                serde_json::Value::Null,
+                "{engine_type}"
+            );
+        }
+    }
+
+    /// An engine that reports no metric group carries no metrics: whatever
+    /// its adapter handed in — even a set still flagged as warming up — the
+    /// wire says nothing that could read as "warming up" or "no data yet",
+    /// and every metric tile reads "not reported".
+    #[test]
+    fn an_engine_reporting_no_group_carries_no_metrics() {
+        let warming = EngineMetrics {
+            warming_up: true,
+            ..full_metrics()
+        };
+        let snapshot =
+            state_reporting(BTreeSet::new()).snapshot(EngineStatus::Running, None, Some(warming));
+        let json = serde_json_value(&snapshot);
+        assert_eq!(json["metric_groups"], serde_json::json!([]));
+        assert_eq!(json["metrics"], serde_json::Value::Null);
+        assert_eq!(json["metrics_off"], serde_json::Value::Null);
     }
 
     #[test]

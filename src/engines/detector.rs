@@ -38,6 +38,7 @@ fn default_port(engine_type: &EngineType) -> u16 {
     match engine_type {
         EngineType::Vllm => VLLM_DEFAULT_PORT,
         EngineType::Sglang => SGLANG_DEFAULT_PORT,
+        EngineType::Ollama => super::ollama::DEFAULT_PORT,
     }
 }
 
@@ -237,6 +238,8 @@ fn parse_model_for(engine_type: &EngineType, cmd: &str) -> Option<String> {
     match engine_type {
         EngineType::Vllm => parse_model_from_command_str(cmd),
         EngineType::Sglang => parse_sglang_model_from_command_str(cmd),
+        // Ollama loads models on demand; none is named at launch.
+        EngineType::Ollama => None,
     }
 }
 
@@ -422,6 +425,7 @@ fn engines_from_processes<'a>(
         let served_model = match engine_type {
             EngineType::Vllm => parse_model_from_args(cmd),
             EngineType::Sglang => parse_sglang_model_from_args(cmd),
+            EngineType::Ollama => None,
         };
         match seen_endpoints.get(&(engine_type.clone(), endpoint.clone())) {
             Some(&slot) => detected[slot].pids.push(pid),
@@ -957,6 +961,9 @@ async fn probe_engine(http: &EngineHttp, engine_type: &EngineType) -> bool {
                 _ => false,
             }
         }
+        // By `/api/version` and `/api/ps`, the two routes only Ollama serves
+        // — SGLang answers Ollama-compatible routes too (`ollama::identify`).
+        EngineType::Ollama => super::ollama::identify(http).await,
     }
 }
 
@@ -1064,6 +1071,25 @@ mod tests {
             );
             assert!(probe_engine(&http, &EngineType::Vllm).await);
         }
+    }
+
+    /// An Ollama server is neither vLLM nor SGLang: it serves no `/health`,
+    /// `/ready` or `/model_info` — whatever process or container pointed a
+    /// candidate of either type at it.
+    #[tokio::test]
+    async fn an_ollama_server_is_not_identified_as_vllm_or_sglang() {
+        use super::super::test_server::TestServer;
+        let server = TestServer::start(|r| match r.path.as_str() {
+            "/" => (200, include_str!("fixtures/ollama_root.txt").into()),
+            "/api/version" => (200, include_str!("fixtures/ollama_version.json").into()),
+            "/api/ps" => (200, include_str!("fixtures/ollama_ps_loaded.json").into()),
+            _ => (404, "404 page not found".into()),
+        })
+        .await;
+        let http = EngineHttp::new(reqwest::Client::new(), server.url.clone(), None);
+        assert!(!probe_engine(&http, &EngineType::Vllm).await);
+        assert!(!probe_engine(&http, &EngineType::Sglang).await);
+        assert!(probe_engine(&http, &EngineType::Ollama).await);
     }
 
     /// The vLLM probe carries the key too, like every request its adapter

@@ -3,6 +3,7 @@
 //! reply, so an adapter's real request path runs without a real engine.
 
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// What a test server was asked: the request path and, when one was sent,
@@ -13,7 +14,7 @@ pub struct Request {
     pub authorization: Option<String>,
 }
 
-type Handler = dyn Fn(&Request) -> (u16, String) + Send + Sync;
+type Handler = dyn Fn(&Request) -> (u16, String, Duration) + Send + Sync;
 
 pub struct TestServer {
     /// `http://127.0.0.1:<port>` — what an adapter takes as its endpoint.
@@ -25,6 +26,18 @@ impl TestServer {
     /// Serve `handler`'s `(status, body)` for every request, on a free port.
     pub async fn start(
         handler: impl Fn(&Request) -> (u16, String) + Send + Sync + 'static,
+    ) -> Self {
+        Self::start_delayed(move |request| {
+            let (status, body) = handler(request);
+            (status, body, Duration::ZERO)
+        })
+        .await
+    }
+
+    /// Like [`start`](Self::start), but each reply waits for the duration the
+    /// handler gives before it is sent — a server that holds a route up.
+    pub async fn start_delayed(
+        handler: impl Fn(&Request) -> (u16, String, Duration) + Send + Sync + 'static,
     ) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -46,7 +59,8 @@ impl TestServer {
                         return;
                     };
                     recorded.lock().unwrap().push(request.clone());
-                    let (status, body) = handler(&request);
+                    let (status, body, delay) = handler(&request);
+                    tokio::time::sleep(delay).await;
                     let response = format!(
                         "HTTP/1.1 {status} X\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
                         body.len()
