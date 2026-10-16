@@ -1,14 +1,18 @@
-import { engineProviderLogo } from '@/lib/providerLogo'
+import { engineProviderLogo, getNamespacedProviderLogo } from '@/lib/providerLogo'
 import {
   NO_MODEL_LOADED,
   engineDisplayName,
   engineIconPath,
   engineModelLabel,
+  formatContextLength,
   formatEndpoint,
   formatGpuIndexes,
+  formatLoadedModelSize,
+  formatUnloadTime,
   modelMetadataWarning,
+  shortModelName,
 } from '@/lib/format'
-import type { EngineSnapshot } from '@/types/metrics'
+import type { EngineSnapshot, LoadedModel } from '@/types/metrics'
 import { DeploymentChip, EngineChip, ProviderMark } from './engineIdentity'
 import { EnginePanelNotice, PanelNotice } from './PanelNotice'
 import { usePanelDevice } from '../panelDevice'
@@ -119,7 +123,50 @@ function EngineIdentity({ engine }: { engine: EngineSnapshot }) {
         {model?.model_type && <EngineChip label={model.model_type} />}
         {model?.pipeline_tag && <EngineChip label={model.pipeline_tag} />}
       </div>
+
+      {/* An engine holding a list of models (Ollama) itemizes it under the
+          chips. With none loaded there is nothing to list: the headline
+          already says so, and the engine above it is still running. */}
+      {loaded && loaded.length > 0 && <LoadedModelList models={loaded} />}
     </div>
+  )
+}
+
+/**
+ * The models an engine that loads them on demand holds right now, one row each,
+ * with what the engine says about each: its size in parameters, its
+ * quantization, its context window and the memory it occupies; hovering a row
+ * says when the engine will unload it. Drawn from the snapshot alone, so a
+ * model loaded or unloaded shows on the next tick.
+ *
+ * Each row carries its own provider mark where the model's name spells one out
+ * — the engine as a whole can hold several providers' models, which is why the
+ * headline above wears a mark only for exactly one.
+ */
+function LoadedModelList({ models }: { models: readonly LoadedModel[] }) {
+  return (
+    <ul aria-label="Loaded models" className="basis-full min-w-0 flex flex-col gap-1">
+      {models.map((model) => {
+        const logo = getNamespacedProviderLogo(model.name)
+        const contextLength = formatContextLength(model.context_length)
+        return (
+          <li
+            key={model.name}
+            title={formatUnloadTime(model.expires_at) ?? undefined}
+            className="min-w-0 flex items-center gap-1.5 flex-wrap"
+          >
+            {logo && <ProviderMark logo={logo} />}
+            <span className="min-w-0 truncate text-xs font-medium text-zinc-200" title={model.name}>
+              {shortModelName(model.name)}
+            </span>
+            {model.parameter_size && <EngineChip label={model.parameter_size} />}
+            {model.quantization && <EngineChip label={model.quantization} />}
+            {contextLength && <EngineChip label={contextLength} />}
+            <EngineChip label={formatLoadedModelSize(model)} />
+          </li>
+        )
+      })}
+    </ul>
   )
 }
 

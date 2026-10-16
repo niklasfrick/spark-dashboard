@@ -399,6 +399,32 @@ export function formatLoadedModelSize(model: Pick<LoadedModel, 'size_bytes' | 'v
 }
 
 /**
+ * A loaded model's context window as the chip beside its size: tokens in
+ * binary thousands, the way context windows are named (2048 -> "2K ctx",
+ * 131072 -> "128K ctx"), one decimal when not a whole number. Null -> null, so
+ * the caller omits the chip.
+ */
+export function formatContextLength(tokens: number | null): string | null {
+  if (tokens === null || !Number.isFinite(tokens) || tokens <= 0) return null
+  if (tokens < 1024) return `${Math.round(tokens)} ctx`
+  const thousands = (tokens / 1024).toFixed(1).replace(/\.0$/, '')
+  return `${thousands}K ctx`
+}
+
+/**
+ * When the engine will unload a model, for a tooltip: the absolute clock time
+ * in the viewer's locale and time zone, "Unloads at 10:54". Absolute rather
+ * than a countdown so it never ticks. Null, or a time that does not parse ->
+ * null, so the caller sets no tooltip.
+ */
+export function formatUnloadTime(expiresAt: string | null): string | null {
+  if (expiresAt === null) return null
+  const at = new Date(expiresAt)
+  if (Number.isNaN(at.getTime())) return null
+  return `Unloads at ${at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+}
+
+/**
  * Why the model name beside this warning may be wrong, in words an operator
  * can act on. Only the authentication rejection gets one: it is the failure
  * fixed on the dashboard's side (configure a provider API key), and telling

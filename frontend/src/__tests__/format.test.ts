@@ -4,6 +4,7 @@ import {
   formatAge,
   formatBytes,
   formatCompactTokens,
+  formatContextLength,
   formatAcceptanceLength,
   formatEndpoint,
   engineDescription,
@@ -11,6 +12,7 @@ import {
   engineIconPath,
   engineModelLabel,
   formatLoadedModelSize,
+  formatUnloadTime,
   metricGroupName,
   metricGroupsPhrase,
   modelMetadataWarning,
@@ -205,6 +207,42 @@ describe('formatLoadedModelSize', () => {
 
   it('adds the VRAM share of a model partly offloaded to the CPU', () => {
     expect(formatLoadedModelSize(HF_QWEN)).toBe('6.0 GB (4.0 GB VRAM)')
+  })
+})
+
+describe('formatContextLength', () => {
+  it('names a window in binary thousands of tokens', () => {
+    // The captured tinyllama's window.
+    expect(formatContextLength(TINYLLAMA.context_length)).toBe('2K ctx')
+    expect(formatContextLength(131072)).toBe('128K ctx')
+    expect(formatContextLength(40960)).toBe('40K ctx')
+  })
+
+  it('keeps one decimal for a window that is not a whole number of K', () => {
+    expect(formatContextLength(32000)).toBe('31.3K ctx')
+  })
+
+  it('counts a window under 1024 in tokens, and omits an unknown or empty one', () => {
+    expect(formatContextLength(512)).toBe('512 ctx')
+    expect(formatContextLength(null)).toBeNull()
+    expect(formatContextLength(0)).toBeNull()
+  })
+})
+
+describe('formatUnloadTime', () => {
+  it('reads the unload time as the viewer\'s local clock time', () => {
+    // The captured tinyllama's expiry; the expectation is derived from the same
+    // instant so it holds in any time zone and locale.
+    const clock = new Date('2026-10-16T10:54:20.322299928+02:00').toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+    expect(formatUnloadTime(TINYLLAMA.expires_at)).toBe(`Unloads at ${clock}`)
+  })
+
+  it('gives nothing for an absent or unreadable time', () => {
+    expect(formatUnloadTime(null)).toBeNull()
+    expect(formatUnloadTime('not a time')).toBeNull()
   })
 })
 

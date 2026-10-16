@@ -23,6 +23,7 @@ import {
   type EngineMetrics,
   type EngineSnapshot,
   type InferenceRequestData,
+  type LoadedModel,
   type MetricGroup,
   type MetricsSnapshot,
   type ModelInfo,
@@ -1916,5 +1917,311 @@ describe('an Ollama engine', () => {
 
     receive(makeSnapshot(3000, [makeEngine(ALPHA), ollamaEngine([HF_QWEN, TINYLLAMA])]))
     expect(within(region('All Engines')).getByText('Multi-model (1)')).toBeInTheDocument()
+  })
+})
+
+// The Engine panel lists what an Ollama engine holds now, one row per model, and
+// re-renders it from every snapshot (#132).
+describe('the Engine panel on an Ollama engine', () => {
+  function statusPanel(extra: Record<string, unknown> = {}): unknown {
+    return { id: 'who', type: 'engine-status', geometry: { x: 0, y: 0, w: 6, h: 4 }, ...extra }
+  }
+
+  /** The panel's rows of loaded models, in the order they are drawn. */
+  function loadedRows(panel: HTMLElement): HTMLElement[] {
+    const list = within(panel).getByRole('list', { name: 'Loaded models' })
+    return within(list).getAllByRole('listitem')
+  }
+
+  it('lists each loaded model with what Ollama says about it', async () => {
+    const fetchMock = serveConfiguration({ document: storedDocument([statusPanel()]) })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, [ollamaEngine([HF_QWEN, TINYLLAMA])]))
+
+    const status = region('Engine')
+    expect(within(status).getByText('Qwen3-8B-GGUF:Q4_K_M +1 more')).toBeInTheDocument()
+    expect(within(status).getByText('Serving')).toBeInTheDocument()
+
+    const [qwen, tinyllama] = loadedRows(status)
+    // In the backend's name order, each with its size, quantization and memory —
+    // the VRAM share only where the model is not wholly in VRAM.
+    for (const fact of ['Qwen3-8B-GGUF:Q4_K_M', '8.2B', 'Q4_K_M', '6.0 GB (4.0 GB VRAM)']) {
+      expect(within(qwen).getByText(fact), fact).toBeInTheDocument()
+    }
+    for (const fact of ['tinyllama:latest', '1B', 'Q4_0', '763.4 MB']) {
+      expect(within(tinyllama).getByText(fact), fact).toBeInTheDocument()
+    }
+
+    // A row is marked when its name spells out a provider; tinyllama's does not.
+    expect(within(qwen).getByRole('img', { name: 'Qwen' })).toHaveAttribute(
+      'src',
+      '/icons/providers/qwen.svg',
+    )
+    expect(within(tinyllama).queryByRole('img')).not.toBeInTheDocument()
+    // The engine as a whole holds two providers' models, so it wears no mark:
+    // the Qwen row's is the only one in the panel.
+    expect(within(status).getAllByRole('img')).toHaveLength(1)
+  })
+
+  it('reads the captured tinyllama as Ollama reported it, with no provider guessed', async () => {
+    const fetchMock = serveConfiguration({ document: storedDocument([statusPanel()]) })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, [ollamaEngine([TINYLLAMA])]))
+
+    const status = region('Engine')
+    const rows = loadedRows(status)
+    expect(rows).toHaveLength(1)
+    for (const fact of ['tinyllama:latest', '1B', 'Q4_0', '763.4 MB']) {
+      expect(within(rows[0]).getByText(fact), fact).toBeInTheDocument()
+    }
+    // "llama" is in the name and Meta is not the provider: no mark anywhere.
+    expect(within(status).queryByRole('img')).not.toBeInTheDocument()
+  })
+
+  it('shows each loaded model\'s context window, and when it unloads on hover', async () => {
+    const fetchMock = serveConfiguration({ document: storedDocument([statusPanel()]) })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, [ollamaEngine([HF_QWEN, TINYLLAMA])]))
+
+    const [qwen, tinyllama] = loadedRows(region('Engine'))
+    // The captured tinyllama: a 2048-token window, unloading at a set time.
+    expect(within(tinyllama).getByText('2K ctx')).toBeInTheDocument()
+    expect(tinyllama.getAttribute('title')).toMatch(/^Unloads at \S/)
+    // A model with no expiry says nothing on hover.
+    expect(within(qwen).getByText('4K ctx')).toBeInTheDocument()
+    expect(qwen).not.toHaveAttribute('title')
+  })
+
+  it('omits the context window of a model that does not report one', async () => {
+    const fetchMock = serveConfiguration({ document: storedDocument([statusPanel()]) })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(
+      makeSnapshot(1000, [ollamaEngine([{ ...TINYLLAMA, context_length: null, expires_at: null }])]),
+    )
+
+    const [row] = loadedRows(region('Engine'))
+    expect(within(row).queryByText(/ctx$/)).not.toBeInTheDocument()
+    expect(row).not.toHaveAttribute('title')
+  })
+
+  it('says an idle engine has no model loaded, and shows it running', async () => {
+    const fetchMock = serveConfiguration({ document: storedDocument([statusPanel()]) })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, [ollamaEngine([])]))
+
+    const status = region('Engine')
+    expect(within(status).getByText('No model loaded')).toBeInTheDocument()
+    expect(within(status).getByText('Serving')).toBeInTheDocument()
+    expect(within(status).queryByRole('list', { name: 'Loaded models' })).not.toBeInTheDocument()
+    // Still the engine, with everything else it says about itself.
+    expect(within(status).getByText('Ollama')).toBeInTheDocument()
+    expect(within(status).getByText('Direct')).toBeInTheDocument()
+  })
+
+  it('follows models as they load and unload, pinned or named by the page source', async () => {
+    // One Ollama server is one engine, identified by its endpoint: a panel
+    // pinned to it and a page source naming it keep pointing at it while its
+    // models change — beside a vLLM engine the page would otherwise default to.
+    const fetchMock = serveConfiguration({
+      document: JSON.stringify({
+        version: DASHBOARD_SCHEMA_VERSION,
+        pages: [
+          {
+            id: 'engines',
+            name: 'Engines',
+            source: { kind: 'engine', endpoint: OLLAMA_ENDPOINT },
+            panels: [
+              statusPanel({
+                id: 'pinned',
+                title: 'Pinned',
+                binding: { kind: 'engine', endpoint: OLLAMA_ENDPOINT },
+              }),
+              statusPanel({
+                id: 'following',
+                title: 'Following',
+                geometry: { x: 6, y: 0, w: 6, h: 4 },
+              }),
+            ],
+          },
+        ],
+      }),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+
+    /** The names a panel's rows show, in order; none while nothing is loaded. */
+    const names = (title: string) => {
+      const list = within(region(title)).queryByRole('list', { name: 'Loaded models' })
+      if (!list) return []
+      return within(list)
+        .getAllByRole('listitem')
+        .map((row) => within(row).getByTitle(/.+/).textContent)
+    }
+
+    receive(makeSnapshot(1000, [makeEngine(ALPHA), ollamaEngine([])]))
+    for (const title of ['Pinned', 'Following']) {
+      expect(within(region(title)).getByText('No model loaded'), title).toBeInTheDocument()
+      expect(names(title), title).toEqual([])
+    }
+
+    receive(makeSnapshot(3000, [makeEngine(ALPHA), ollamaEngine([TINYLLAMA])]))
+    for (const title of ['Pinned', 'Following']) {
+      expect(names(title), title).toEqual(['tinyllama:latest'])
+    }
+
+    receive(makeSnapshot(5000, [makeEngine(ALPHA), ollamaEngine([HF_QWEN, TINYLLAMA])]))
+    for (const title of ['Pinned', 'Following']) {
+      expect(
+        within(region(title)).getByText('Qwen3-8B-GGUF:Q4_K_M +1 more'),
+        title,
+      ).toBeInTheDocument()
+      expect(names(title), title).toEqual(['Qwen3-8B-GGUF:Q4_K_M', 'tinyllama:latest'])
+    }
+
+    receive(makeSnapshot(7000, [makeEngine(ALPHA), ollamaEngine([])]))
+    for (const title of ['Pinned', 'Following']) {
+      expect(within(region(title)).getByText('No model loaded'), title).toBeInTheDocument()
+      expect(names(title), title).toEqual([])
+      // Never repointed, and never the vLLM engine's identity in its place.
+      expect(within(region(title)).queryByText(/No engine at/), title).not.toBeInTheDocument()
+      expect(within(region(title)).queryByText('Qwen3-8B'), title).not.toBeInTheDocument()
+    }
+  })
+})
+
+// Ollama exposes no server-side metrics: it declares no metric group, so every
+// metric panel bound to it says so — not "no metrics yet", not "no model", and
+// not metrics off, since no launch flag would turn any on (#132).
+describe('metric panels bound to an Ollama engine', () => {
+  const NOT_REPORTED: Partial<Record<PanelType, string>> = {
+    'engine-prefill-throughput': 'Ollama localhost:11434 does not report throughput or TTFT mean.',
+    'engine-decode-throughput': 'Ollama localhost:11434 does not report throughput or TPOT mean.',
+    'engine-latency':
+      'Ollama localhost:11434 does not report latency means, latency percentiles or queue time.',
+    'engine-slo-goodput': 'Ollama localhost:11434 does not report latency percentiles.',
+    'engine-requests': 'Ollama localhost:11434 does not report requests or preemptions.',
+    'engine-cache': 'Ollama localhost:11434 does not report KV cache or prefix cache.',
+    'engine-spec-decode': 'Ollama localhost:11434 does not report speculative decoding.',
+  }
+
+  /** Every panel type that shows an engine's metrics, two to a row. */
+  const metricPanels = PANEL_TYPE_IDS.filter((type) => panelMetricGroups(type).length > 0).map(
+    (type, i) => ({
+      id: type,
+      type,
+      geometry: { x: (i % 2) * 6, y: Math.floor(i / 2) * 2, w: 6, h: 2 },
+    }),
+  )
+
+  const NOTHING_LOADED: LoadedModel[] = []
+
+  it.each([
+    ['nothing loaded', NOTHING_LOADED],
+    ['a model loaded', [TINYLLAMA]],
+  ])('says every metric panel is not reported, with %s', async (_, loaded) => {
+    expect(metricPanels.map((p) => p.type).sort()).toEqual(Object.keys(NOT_REPORTED).sort())
+
+    const fetchMock = serveConfiguration({ document: storedDocument(metricPanels) })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, [ollamaEngine(loaded)]))
+
+    for (const { type } of metricPanels) {
+      const panel = region(defaultPanelTitle(type))
+      expect(within(panel).getByText(NOT_REPORTED[type]!), type).toBeInTheDocument()
+      // Not a moment in the engine's life that passes, and not a flag to set.
+      expect(within(panel).queryByText(/has no metrics yet/), type).not.toBeInTheDocument()
+      expect(within(panel).queryByText(/has no model loaded/), type).not.toBeInTheDocument()
+      expect(within(panel).queryByText(/metrics off/), type).not.toBeInTheDocument()
+      expect(within(panel).queryByText('--'), type).not.toBeInTheDocument()
+      expect(within(panel).queryByTestId('chart'), type).not.toBeInTheDocument()
+    }
+  })
+
+  it('keeps saying so as its models change', async () => {
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        {
+          id: 'decode',
+          type: 'engine-decode-throughput',
+          binding: { kind: 'engine', endpoint: OLLAMA_ENDPOINT },
+          geometry: { x: 0, y: 0, w: 6, h: 4 },
+        },
+        {
+          id: 'latency',
+          type: 'engine-latency',
+          binding: { kind: 'engine', endpoint: OLLAMA_ENDPOINT },
+          geometry: { x: 6, y: 0, w: 6, h: 4 },
+        },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+
+    const states: Array<[number, LoadedModel[]]> = [
+      [1000, [TINYLLAMA]],
+      [3000, [HF_QWEN, TINYLLAMA]],
+      [5000, []],
+    ]
+    for (const [ts, loaded] of states) {
+      receive(makeSnapshot(ts, [makeEngine(ALPHA), ollamaEngine(loaded)]))
+      expect(
+        within(region('Decode Throughput')).getByText(NOT_REPORTED['engine-decode-throughput']!),
+      ).toBeInTheDocument()
+      expect(
+        within(region('Latency')).getByText(NOT_REPORTED['engine-latency']!),
+      ).toBeInTheDocument()
+    }
+  })
+
+  it('says no running engine reports them on a page of all models over Ollama alone', async () => {
+    const fetchMock = serveConfiguration({
+      document: JSON.stringify({
+        version: DASHBOARD_SCHEMA_VERSION,
+        pages: [
+          {
+            id: 'engines',
+            name: 'Engines',
+            source: { kind: 'all' },
+            panels: [
+              {
+                id: 'decode',
+                type: 'engine-decode-throughput',
+                geometry: { x: 0, y: 0, w: 6, h: 4 },
+              },
+              { id: 'latency', type: 'engine-latency', geometry: { x: 6, y: 0, w: 6, h: 4 } },
+            ],
+          },
+        ],
+      }),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, [ollamaEngine([TINYLLAMA])]))
+
+    expect(
+      within(region('Decode Throughput')).getByText(
+        'No running engine reports throughput or TPOT mean.',
+      ),
+    ).toBeInTheDocument()
+    expect(
+      within(region('Latency')).getByText(
+        'No running engine reports latency means, latency percentiles or queue time.',
+      ),
+    ).toBeInTheDocument()
   })
 })
