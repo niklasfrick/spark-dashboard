@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.16.0](https://github.com/niklasfrick/spark-dashboard/compare/spark-dashboard-v0.15.0...spark-dashboard-v0.16.0) (2026-10-16)
+
+
+### Features
+
+* **engines:** declare metric groups at the tile grain ([6fd615c](https://github.com/niklasfrick/spark-dashboard/commit/6fd615ce028d9162a440b257c1f335b0bc498671))
+* **engines:** detect Ollama servers and containers without configuration ([f057946](https://github.com/niklasfrick/spark-dashboard/commit/f057946d6c3caba25fbc5e5ca2dca5da6be834d5)), closes [#132](https://github.com/niklasfrick/spark-dashboard/issues/132)
+* **engines:** monitor SGLang engines, detected and reported per type ([e1997cb](https://github.com/niklasfrick/spark-dashboard/commit/e1997cbbe478df4dfba0869d229606313b755f67))
+* **engines:** report an Ollama server and the models it has loaded ([aec8fb7](https://github.com/niklasfrick/spark-dashboard/commit/aec8fb7b191f8d8f7341b9694bc38af28dea9c96)), closes [#132](https://github.com/niklasfrick/spark-dashboard/issues/132)
+* **frontend:** list an Ollama engine's loaded models in the Engine panel ([6d45c87](https://github.com/niklasfrick/spark-dashboard/commit/6d45c87c0629960a2628b09b066ca40dd4bf8689)), closes [#132](https://github.com/niklasfrick/spark-dashboard/issues/132)
+* **frontend:** name an Ollama engine by the models it has loaded ([cbf451d](https://github.com/niklasfrick/spark-dashboard/commit/cbf451d4300ec3c60c427149bb71e1bcccf308fb)), closes [#132](https://github.com/niklasfrick/spark-dashboard/issues/132)
+
+
+### Bug Fixes
+
+* **engines:** build engine detection on macOS ([a580916](https://github.com/niklasfrick/spark-dashboard/commit/a580916225d1aedafa0604f99bb7dc2d79094e4a)), closes [#129](https://github.com/niklasfrick/spark-dashboard/issues/129)
+* **engines:** combine every label series a metric is split across ([29d0d70](https://github.com/niklasfrick/spark-dashboard/commit/29d0d70e7b634fc46437d0dc30a091e4d6e61f9d)), closes [#129](https://github.com/niklasfrick/spark-dashboard/issues/129)
+* **engines:** detect each process and container as one engine ([f9daa37](https://github.com/niklasfrick/spark-dashboard/commit/f9daa377c0bc2077aa1f07849a5298c3972f226e)), closes [#129](https://github.com/niklasfrick/spark-dashboard/issues/129)
+* **engines:** detect SGLang releases that predate /ready ([d1d4075](https://github.com/niklasfrick/spark-dashboard/commit/d1d4075040c1247ad92d084ed52b598b02994a81))
+* **engines:** end SGLang warmup on its own request counter ([e9c1aa1](https://github.com/niklasfrick/spark-dashboard/commit/e9c1aa1fed26cb135d0ba28d14ba91bb4fd272b7)), closes [#129](https://github.com/niklasfrick/spark-dashboard/issues/129)
+* **engines:** identify SGLang by its cheap routes, with the API key ([add7b6b](https://github.com/niklasfrick/spark-dashboard/commit/add7b6bd430fdf75251a4a6dfe68f3874b0d6793)), closes [#129](https://github.com/niklasfrick/spark-dashboard/issues/129)
+* **engines:** read command lines in the process scan ([d0b64e2](https://github.com/niklasfrick/spark-dashboard/commit/d0b64e2ede0254ee152eb5a578dcb011dc63a627))
+* **engines:** read SGLang scrapes through the shared parser ([bc726a1](https://github.com/niklasfrick/spark-dashboard/commit/bc726a1cbd8872c1a77b721b1d1e54bc3df7136c)), closes [#129](https://github.com/niklasfrick/spark-dashboard/issues/129)
+* **engines:** report SGLang's acceptance length without the bonus token ([d48e21d](https://github.com/niklasfrick/spark-dashboard/commit/d48e21ddcfb679c9de29a8a5c5d6f6233da35319)), closes [#129](https://github.com/niklasfrick/spark-dashboard/issues/129)
+* **engines:** say SGLang metrics are off only when the route is missing ([7670758](https://github.com/niklasfrick/spark-dashboard/commit/7670758439f7164cdeab619942e9689f709bc9f3)), closes [#129](https://github.com/niklasfrick/spark-dashboard/issues/129)
+* **engines:** SGLang declares no TPOT, batch size or preemption groups ([56c558e](https://github.com/niklasfrick/spark-dashboard/commit/56c558ebd3497e14a85aae8bea85926d8f9a04d5))
+* **engines:** tell an idle SGLang drafter from a server without one ([3ff09a3](https://github.com/niklasfrick/spark-dashboard/commit/3ff09a3e7d262dd75e3bab2df034b1d69c46ce3e)), closes [#129](https://github.com/niklasfrick/spark-dashboard/issues/129)
+* **frontend:** combine SGLang's acceptance figures into all models ([2eb63c4](https://github.com/niklasfrick/spark-dashboard/commit/2eb63c4a7116ec6ea15433adac0bb8cd17cb8127)), closes [#129](https://github.com/niklasfrick/spark-dashboard/issues/129)
+
 ## [0.15.0](https://github.com/niklasfrick/spark-dashboard/compare/spark-dashboard-v0.14.0...spark-dashboard-v0.15.0) (2026-10-15)
 
 
