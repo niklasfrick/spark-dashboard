@@ -23,7 +23,8 @@ import type { PanelContentProps } from '../panelRegistry'
  *
  * Aggregation semantics are per field and live in `lib/engineAggregate`:
  * throughput and counts sum, because concurrent workers compose additively;
- * latencies are weighted by request volume; cache percentages are simple means,
+ * ITL is weighted by generated tokens, other latencies by request volume;
+ * cache percentages are simple means,
  * since each engine has its own KV pool and summing them would be nonsense.
  */
 export function EnginesOverviewPanel({ panel }: PanelContentProps) {

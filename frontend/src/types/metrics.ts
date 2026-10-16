@@ -208,7 +208,8 @@ export interface EngineMetrics {
   preemptions_total: number | null
   /** Cumulative prompt (prefill) tokens processed since engine start. */
   total_prompt_tokens: number | null
-  /** Cumulative generation (decode) tokens produced since engine start. */
+  /** Generated tokens since the warmup baseline (raw lifetime while warming).
+   * llama.cpp takes its baseline on the first scrape. */
   total_generation_tokens: number | null
   /** Cumulative count of prefix-cache token queries since engine start. */
   prefix_cache_queries_total: number | null

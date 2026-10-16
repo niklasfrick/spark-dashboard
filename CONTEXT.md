@@ -144,13 +144,17 @@ _Avoid_: page filter, default engine (it may also be the aggregate), page bindin
 
 **All models**:
 The combined view across every running engine: throughput and counters sum,
-latencies are request-weighted means (`lib/engineAggregate`). A following panel
+inter-token latency is weighted by generated tokens, and other latencies by
+requests (`lib/engineAggregate`). A following panel
 rendering it says so — a combined figure wearing no name would read as one
 engine's. It spans engines, however many models each holds, and combines only
 the engines that report the metric — saying so when that is not all of them. An
 engine whose metrics are off is left out the same way, and a request-weighted
-latency leaves out an engine that reports no request count. When no running
-engine reports a figure's group the panel says so, never a zero; the history
+latency leaves out an engine that reports no request count. Inter-token latency
+instead requires throughput, with generated tokens counted since each engine's
+warmup baseline (llama.cpp takes that baseline on its first scrape). This applies
+to ITL means, percentiles and goodput; combined percentiles remain approximations.
+When no running engine reports a figure's group the panel says so, never a zero; the history
 charted for all models follows the same rule.
 Per-engine things (logs, engine identity, a pin) never aggregate.
 _Avoid_: global view, all engines (the panel type "All Engines" is the overview

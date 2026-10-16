@@ -16,29 +16,34 @@ import {
   type ProviderLogo,
 } from './providerLogo'
 
+/** ITL is a per-token figure, including its percentiles and goodput. */
+const TOKEN_WEIGHTED_GROUPS: ReadonlySet<MetricGroup> = new Set(['ItlMean', 'ItlPercentiles'])
+
 /**
- * The metric groups whose combined figures are request-weighted means: the
- * eight latency groups (mean and percentiles of TTFT, end-to-end, inter-token
- * and per-output-token latency) and queue time. An engine has to report
- * request counts to carry a weight, so one that reports such a group without
+ * TTFT, end-to-end and per-output-token latency, and queue time, combine as
+ * request-weighted means. An engine has to report request counts to carry a
+ * weight, so one that reports such a group without
  * the RequestTotal group cannot enter its mean.
  */
 export const REQUEST_WEIGHTED_GROUPS: ReadonlySet<MetricGroup> = new Set<MetricGroup>([
-  ...Object.values(LATENCY_GROUPS).flatMap(({ mean, percentiles }) => [mean, percentiles]),
+  ...Object.values(LATENCY_GROUPS)
+    .flatMap(({ mean, percentiles }) => [mean, percentiles])
+    .filter((group) => !TOKEN_WEIGHTED_GROUPS.has(group)),
   'QueueTime',
 ])
 
 /**
  * Whether an engine enters the combined all-models figures of `group`: it is
  * running, its metrics are on, it declares the group — and, for a
- * request-weighted group, it declares the RequestTotal group too. Decided by
- * declaration, never by value, so a host running only vLLM combines exactly as
- * it did before engines declared their groups.
+ * request-weighted group, it declares RequestTotal too. ITL groups instead
+ * require Throughput for their generated-token weight. Decided by declaration,
+ * never by value.
  */
 export function includedIn(engine: EngineSnapshot, group: MetricGroup): boolean {
   return (
     contributesGroup(engine, group) &&
-    (!REQUEST_WEIGHTED_GROUPS.has(group) || contributesGroup(engine, 'RequestTotal'))
+    (!REQUEST_WEIGHTED_GROUPS.has(group) || contributesGroup(engine, 'RequestTotal')) &&
+    (!TOKEN_WEIGHTED_GROUPS.has(group) || contributesGroup(engine, 'Throughput'))
   )
 }
 
@@ -82,8 +87,8 @@ export function panelCoverage(
  * Aggregated metrics across multiple engines for the "Global" dashboard tab.
  *
  * Semantics are per-field: throughput/counts sum (concurrent workers compose
- * additively), latencies are request-weighted means, and cache percentages
- * are simple means (each engine has its own KV pool, so summing is nonsensical).
+ * additively), ITL is token-weighted, other latencies are request-weighted, and
+ * cache percentages are simple means (each engine has its own KV pool).
  *
  * Each figure combines only the engines included in its metric group
  * (`includedIn`): an engine that does not report a group, or whose metrics are
@@ -123,7 +128,7 @@ export interface AggregateSnapshot {
   spec_decode_acceptance_rate_live: number | null
   spec_decode_mean_acceptance_length: number | null
 
-  // Weighted mean by total_requests (simple mean fallback)
+  // Weighted means: ITL by generated tokens, the rest by requests (simple mean fallback).
   ttft_ms: number | null
   e2e_latency_ms: number | null
   queue_time_ms: number | null
@@ -150,7 +155,7 @@ export interface AggregateSnapshot {
   e2e_percentiles: LatencyPercentiles | null
   tpot_percentiles: LatencyPercentiles | null
 
-  // Goodput (% meeting SLO), weighted mean by total_requests.
+  // Goodput (% meeting SLO): ITL weighted by generated tokens, the rest by requests.
   ttft_goodput_pct: number | null
   itl_goodput_pct: number | null
   e2e_goodput_pct: number | null
@@ -359,13 +364,13 @@ export function aggregateEngines(engines: readonly EngineSnapshot[]): AggregateS
   const get = <K extends keyof EngineMetrics>(key: K): Array<EngineMetrics[K] | null> =>
     running.map((e) => (includedIn(e, metricGroupOf(key)) ? (e.metrics?.[key] ?? null) : null))
 
-  // Null for an engine that does not report requests, so it carries no weight;
-  // its latencies are masked above, so the simple-mean fallback below only ever
-  // runs over engines that do report requests.
+  // A weight and its figure require the corresponding declared groups;
+  // zero/null weights still permit the simple-mean fallback for included engines.
   const weights = get('total_requests')
-  const weightedBy = (key: NumericEngineMetric) =>
+  const tokenWeights = get('total_generation_tokens')
+  const weightedBy = (key: NumericEngineMetric, fieldWeights = weights) =>
     weightedMeanOrNull(
-      get(key).map((value, i) => ({ value, weight: weights[i] })),
+      get(key).map((value, i) => ({ value, weight: fieldWeights[i] })),
     )
 
   // Speculative decoding. The engines that count drafted and accepted tokens
@@ -445,7 +450,7 @@ export function aggregateEngines(engines: readonly EngineSnapshot[]): AggregateS
     ttft_ms: weightedBy('ttft_ms'),
     e2e_latency_ms: weightedBy('e2e_latency_ms'),
     queue_time_ms: weightedBy('queue_time_ms'),
-    inter_token_latency_ms: weightedBy('inter_token_latency_ms'),
+    inter_token_latency_ms: weightedBy('inter_token_latency_ms', tokenWeights),
     tpot_ms: weightedBy('tpot_ms'),
     per_request_tps: weightedBy('per_request_tps'),
     per_request_prompt_tps: weightedBy('per_request_prompt_tps'),
@@ -458,13 +463,13 @@ export function aggregateEngines(engines: readonly EngineSnapshot[]): AggregateS
 
     // Tail latency — weighted mean per quantile.
     ttft_percentiles: aggregatePercentiles(get('ttft_percentiles'), weights),
-    itl_percentiles: aggregatePercentiles(get('itl_percentiles'), weights),
+    itl_percentiles: aggregatePercentiles(get('itl_percentiles'), tokenWeights),
     e2e_percentiles: aggregatePercentiles(get('e2e_percentiles'), weights),
     tpot_percentiles: aggregatePercentiles(get('tpot_percentiles'), weights),
 
-    // Goodput — weighted mean by total_requests, same caveat as percentiles.
+    // Goodput follows its latency family's weight, with the same percentile caveat.
     ttft_goodput_pct: weightedBy('ttft_goodput_pct'),
-    itl_goodput_pct: weightedBy('itl_goodput_pct'),
+    itl_goodput_pct: weightedBy('itl_goodput_pct', tokenWeights),
     e2e_goodput_pct: weightedBy('e2e_goodput_pct'),
     tpot_goodput_pct: weightedBy('tpot_goodput_pct'),
   }

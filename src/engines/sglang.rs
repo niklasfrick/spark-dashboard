@@ -1264,4 +1264,44 @@ sglang:spec_accept_rate{tp_rank=\"0\"} 0.0
             .count();
         assert_eq!(lookups, 1);
     }
+    #[tokio::test]
+    async fn generated_token_totals_use_the_completed_warmup_baseline() {
+        use super::super::test_server::TestServer;
+        use std::sync::{Arc, Mutex as StdMutex};
+
+        let counters = Arc::new(StdMutex::new((10, 1_000)));
+        let served = counters.clone();
+        let server = TestServer::start(move |_| {
+            let (requests, tokens) = *served.lock().unwrap();
+            (
+                200,
+                format!(
+                    "# TYPE sglang:generation_tokens_total counter\n\
+                 sglang:generation_tokens_total {tokens}\n\
+                 # TYPE sglang:time_to_first_token_seconds histogram\n\
+                 sglang:time_to_first_token_seconds_bucket{{le=\"+Inf\"}} {requests}\n\
+                 sglang:time_to_first_token_seconds_sum {requests}\n\
+                 sglang:time_to_first_token_seconds_count {requests}\n"
+                ),
+            )
+        })
+        .await;
+        let adapter = SglangAdapter::new(reqwest::Client::new(), server.url.clone(), None, None);
+        *adapter.warmup.lock().await = WarmupTracker::new(1, WARMUP_TRIGGER_KEY);
+
+        let warming = adapter.get_metrics().await.expect("warming metrics");
+        assert!(warming.warming_up);
+        assert_eq!(warming.total_generation_tokens, Some(1_000));
+
+        *counters.lock().unwrap() = (11, 1_100);
+        let baseline = adapter.get_metrics().await.expect("baseline metrics");
+        assert!(!baseline.warming_up);
+        assert_eq!(baseline.total_generation_tokens, Some(0));
+
+        *counters.lock().unwrap() = (13, 1_160);
+        let steady = adapter.get_metrics().await.expect("steady metrics");
+        assert!(!steady.warming_up);
+        assert_eq!(steady.total_generation_tokens, Some(60));
+        assert_eq!(steady.total_requests, Some(13));
+    }
 }

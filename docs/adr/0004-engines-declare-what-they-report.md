@@ -1,7 +1,8 @@
 # Engines declare what they report on the metrics contract
 
 **Status:** accepted (2026-10); amended (2026-10, #142): see [The grain is the
-tile](#amendment-the-grain-is-the-tile-142)
+tile](#amendment-the-grain-is-the-tile-142); amended (2026-10, #151): see
+[ITL is weighted by tokens](#amendment-itl-is-weighted-by-tokens-151).
 
 Engine types other than vLLM report different subsets of what the engine panels
 show: SGLang nearly everything, llama.cpp throughput and means but no
@@ -97,3 +98,23 @@ engines that report its group.
     reported only when two groups both are.
   - It assumes an engine reports the same statistics for every latency it has,
     and nothing guarantees that.
+
+## Amendment: ITL is weighted by tokens (#151)
+
+**All models weights the ITL family by generated tokens.** `ItlMean` and
+`ItlPercentiles` (including ITL goodput) require `Throughput` to enter their
+combination, rather than `RequestTotal`. A per-token latency needs a token
+weight, and llama.cpp reports both that latency and the tokens but no requests.
+Keeping request weights would exclude a real measurement. TTFT, end-to-end,
+TPOT and queue time keep their request weights and `RequestTotal` requirement.
+
+The weight is generated tokens since each engine's warmup baseline. vLLM and
+SGLang already report that delta once warmup completes; llama.cpp now uses its
+first-scrape baseline for the count as well as its mean. Before warmup completes,
+the count may still be lifetime, but ITL is blank. Per-poll token rates are
+unchanged. No metric group or serialized field is renamed.
+
+This changes combined ITL on vLLM-only hosts too. Percentiles remain weighted
+averages per quantile, not a merged distribution. All-zero/null weights retain
+the simple-mean fallback, and inclusion remains declaration-based. Different
+coverage between ITL and the other latencies uses the existing per-group caption.

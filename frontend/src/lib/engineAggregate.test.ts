@@ -7,6 +7,7 @@ import {
   includedIn,
   panelCoverage,
 } from './engineAggregate'
+import { coverageNote } from './format'
 import { SGLANG_GROUPS } from '@/test/engineGroups'
 import { HF_QWEN, TINYLLAMA, ollamaEngine } from '@/test/ollama'
 import {
@@ -289,15 +290,15 @@ describe('aggregateEngines', () => {
     expect(snap.ttft_ms).toBeCloseTo(460, 5)
   })
 
-  it('weighted mean applies to inter-token latency', () => {
+  it('weights vLLM-only ITL by tokens rather than requests', () => {
     // Engine A: ITL 20ms, 10 requests; Engine B: ITL 80ms, 40 requests
-    // Weighted mean = (20*10 + 80*40) / 50 = 68
+    // Equal token volumes give (20 + 80) / 2 = 50, despite unequal request counts.
     const engines = [
       engine('Running', fullMetrics({ inter_token_latency_ms: 20, total_requests: 10 })),
       engine('Running', fullMetrics({ inter_token_latency_ms: 80, total_requests: 40 })),
     ]
     const snap = aggregateEngines(engines)
-    expect(snap.inter_token_latency_ms).toBeCloseTo(68, 5)
+    expect(snap.inter_token_latency_ms).toBeCloseTo(50, 5)
   })
 
   it('weighted mean falls back to simple mean when all weights are zero', () => {
@@ -564,7 +565,7 @@ describe('aggregateEngines over engines that report different metric groups', ()
 describe('includedIn', () => {
   const requestWeighted: MetricGroup[] = [
     'TtftMean', 'TtftPercentiles', 'E2eMean', 'E2ePercentiles',
-    'ItlMean', 'ItlPercentiles', 'TpotMean', 'TpotPercentiles', 'QueueTime',
+    'TpotMean', 'TpotPercentiles', 'QueueTime',
   ]
 
   it.each(requestWeighted)('requires %s to come with request counts', (group) => {
@@ -812,4 +813,64 @@ describe('groupRunningByProvider with an Ollama engine', () => {
       ['meta', 1],
     ])
   })
+})
+
+describe('token-weighted ITL', () => {
+  const percentiles = (value: number) => ({ p50_ms: value, p95_ms: value * 2, p99_ms: value * 3 })
+
+  it('includes llama.cpp alone and counts it separately in mixed latency coverage', () => {
+    const llama = reporting(fullMetrics({ inter_token_latency_ms: 6, total_requests: null }),
+      ['Throughput', 'ItlMean'])
+    const alone = aggregateEngines([llama])
+    expect(alone.inter_token_latency_ms).toBe(6)
+    expect(alone.coverage.included.ItlMean).toBe(1)
+
+    const mixed = aggregateEngines([engine('Running'), llama])
+    expect(coverageNote(panelCoverage(mixed.coverage, ['ItlMean', 'TtftMean', 'QueueTime'])))
+      .toBe('ITL mean 2 of 2, TTFT mean 1 of 2, queue time 1 of 2 engines')
+  })
+
+  it('weights the mean, each percentile and goodput by generated tokens', () => {
+    const a = engine('Running', fullMetrics({
+      inter_token_latency_ms: 20, itl_percentiles: percentiles(20), itl_goodput_pct: 10,
+      total_generation_tokens: 10, total_requests: 90,
+    }))
+    const b = reporting(fullMetrics({
+      inter_token_latency_ms: 80, itl_percentiles: percentiles(80), itl_goodput_pct: 90,
+      total_generation_tokens: 30, total_requests: null,
+    }), ['Throughput', 'ItlMean', 'ItlPercentiles'])
+    const snap = aggregateEngines([a, b])
+    expect(snap.inter_token_latency_ms).toBe(65)
+    expect(snap.itl_percentiles).toEqual(percentiles(65))
+    expect(snap.itl_goodput_pct).toBe(70)
+    expect(snap.coverage.included.ItlPercentiles).toBe(2)
+  })
+
+  it.each([0, null])('keeps the simple-mean fallback for %s token weights', (weight) => {
+    const engines = [20, 80].map((value, i) => engine('Running', fullMetrics({
+      inter_token_latency_ms: value, itl_percentiles: percentiles(value), itl_goodput_pct: value,
+      total_generation_tokens: weight, total_requests: i === 0 ? 10 : 90,
+    })))
+    const snap = aggregateEngines(engines)
+    expect(snap.inter_token_latency_ms).toBe(50)
+    expect(snap.itl_percentiles).toEqual(percentiles(50))
+    expect(snap.itl_goodput_pct).toBe(50)
+  })
+
+  it.each(['ItlMean', 'ItlPercentiles'] as MetricGroup[])(
+    'requires %s to declare throughput, regardless of its values', (group) => {
+      expect(includedIn(reporting(null, [group, 'Throughput']), group)).toBe(true)
+      expect(includedIn(reporting(fullMetrics(), [group, 'RequestTotal']), group)).toBe(false)
+    },
+  )
+
+  it.each(['ttft_ms', 'e2e_latency_ms', 'tpot_ms', 'queue_time_ms'] as const)(
+    'keeps %s weighted by requests', (key) => {
+      const snap = aggregateEngines([
+        engine('Running', fullMetrics({ [key]: 20, total_requests: 10, total_generation_tokens: 90 })),
+        engine('Running', fullMetrics({ [key]: 80, total_requests: 90, total_generation_tokens: 10 })),
+      ])
+      expect(snap[key]).toBe(74)
+    },
+  )
 })
