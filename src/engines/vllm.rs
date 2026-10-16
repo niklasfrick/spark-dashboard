@@ -1,4 +1,7 @@
-use super::common::{warmup_skip_from_env, CounterRate, EngineHttp};
+use super::common::{
+    spec_acceptance_rate, spec_live_acceptance_rate, spec_mean_acceptance_length,
+    warmup_skip_from_env, CounterRate, EngineHttp,
+};
 use super::histogram::{goodput_pct, mean_ms, percentiles_ms, wire_buckets};
 use super::model_info::ModelResolver;
 use super::prometheus::parse_prometheus_text;
@@ -289,23 +292,10 @@ impl EngineAdapter for VllmAdapter {
         // snapshot and silently inflate or negate the live rate.
         let spec_decode_acceptance_rate_live = {
             let mut prev_lock = self.prev_spec_decode.lock().await;
-            match (spec_accepted, spec_draft) {
-                (Some(acc), Some(draft)) => {
-                    let live = prev_lock.as_ref().and_then(|&(prev_acc, prev_draft)| {
-                        if acc >= prev_acc && draft >= prev_draft {
-                            spec_acceptance_rate(Some(acc - prev_acc), Some(draft - prev_draft))
-                        } else {
-                            None
-                        }
-                    });
-                    *prev_lock = Some((acc, draft));
-                    live
-                }
-                _ => {
-                    *prev_lock = None;
-                    None
-                }
-            }
+            let now = spec_accepted.zip(spec_draft);
+            let live = spec_live_acceptance_rate(*prev_lock, now);
+            *prev_lock = now;
+            live
         };
 
         // Average batch size (tokens per iteration step)
@@ -430,30 +420,6 @@ impl EngineAdapter for VllmAdapter {
             spec_decode_mean_acceptance_length,
             warming_up,
         })
-    }
-}
-
-/// Token acceptance rate (TAR) as a percentage: `accepted / draft * 100`.
-///
-/// Returns `None` unless both counts are present, `draft > 0`, and `accepted`
-/// is non-negative, so the tile stays blank until at least one token has been
-/// drafted and never surfaces a negative rate from a malformed/reset counter.
-/// Used for both the lifetime TAR (absolute counters) and the live TAR
-/// (per-poll deltas).
-fn spec_acceptance_rate(accepted: Option<f64>, draft: Option<f64>) -> Option<f64> {
-    match (accepted, draft) {
-        (Some(a), Some(d)) if d > 0.0 && a >= 0.0 => Some((a / d) * 100.0),
-        _ => None,
-    }
-}
-
-/// Mean acceptance length: accepted tokens per draft attempt (`accepted / drafts`).
-///
-/// Returns `None` unless both counts are present and `drafts > 0`.
-fn spec_mean_acceptance_length(accepted: Option<f64>, drafts: Option<f64>) -> Option<f64> {
-    match (accepted, drafts) {
-        (Some(a), Some(n)) if n > 0.0 => Some(a / n),
-        _ => None,
     }
 }
 
@@ -781,28 +747,6 @@ vllm:prefix_cache_hits_total 123456.0
             .copied()
             .map(|v| v as u64);
         assert_eq!(queries, Some(654_321));
-    }
-
-    #[test]
-    fn spec_acceptance_rate_computes_percentage_and_guards_zero() {
-        assert_eq!(spec_acceptance_rate(Some(75.0), Some(100.0)), Some(75.0));
-        // Zero or missing draft tokens => blank, no divide-by-zero.
-        assert_eq!(spec_acceptance_rate(Some(10.0), Some(0.0)), None);
-        assert_eq!(spec_acceptance_rate(Some(10.0), None), None);
-        assert_eq!(spec_acceptance_rate(None, Some(10.0)), None);
-        // A negative numerator (e.g. a counter-reset delta) must not surface a
-        // negative rate.
-        assert_eq!(spec_acceptance_rate(Some(-5.0), Some(100.0)), None);
-    }
-
-    #[test]
-    fn spec_mean_acceptance_length_divides_accepted_by_drafts() {
-        assert_eq!(
-            spec_mean_acceptance_length(Some(300.0), Some(100.0)),
-            Some(3.0)
-        );
-        assert_eq!(spec_mean_acceptance_length(Some(5.0), Some(0.0)), None);
-        assert_eq!(spec_mean_acceptance_length(None, Some(2.0)), None);
     }
 
     /// vLLM's prometheus_client appends `_total` to the speculative-decoding

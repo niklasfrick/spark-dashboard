@@ -62,13 +62,16 @@ impl ParsedMetrics {
 /// series, as a plain name-keyed map would, reports a fraction of the engine
 /// that depends on exposition order.
 pub fn parse_prometheus_text(body: &str) -> Option<ParsedMetrics> {
-    // Normalize colons in metric name prefixes to underscores. vLLM and SGLang
-    // use colons (e.g. "vllm:kv_cache_usage_perc", "sglang:num_running_reqs")
-    // which are reserved for Prometheus recording rules and get silently
-    // dropped by prometheus-parse. Replace in both metric lines and
-    // # TYPE/# HELP lines so the parser can match samples to their type
-    // declarations.
-    let normalized = body.replace("vllm:", "vllm_").replace("sglang:", "sglang_");
+    // Normalize colons in metric name prefixes to underscores. vLLM, SGLang
+    // and llama.cpp use colons (e.g. "vllm:kv_cache_usage_perc",
+    // "sglang:num_running_reqs", "llamacpp:tokens_predicted_total") which are
+    // reserved for Prometheus recording rules and get silently dropped by
+    // prometheus-parse. Replace in both metric lines and # TYPE/# HELP lines
+    // so the parser can match samples to their type declarations.
+    let normalized = body
+        .replace("vllm:", "vllm_")
+        .replace("sglang:", "sglang_")
+        .replace("llamacpp:", "llamacpp_");
 
     let reader = std::io::BufReader::new(normalized.as_bytes());
     let scrape = prometheus_parse::Scrape::parse(reader.lines()).ok()?;
@@ -224,6 +227,43 @@ vllm:time_to_first_token_seconds_count 100.0
         assert_eq!(buckets[2], (1.0, 90.0));
         assert!(buckets[3].0.is_infinite() && buckets[3].0 > 0.0);
         assert_eq!(buckets[3].1, 100.0);
+    }
+
+    /// llama-server prefixes every series `llamacpp:`, in samples and in
+    /// `# TYPE` lines alike. The colon is normalized like vLLM's and SGLang's,
+    /// so each sample keeps the type its declaration gives it — a counter
+    /// lands in `counters`, a gauge in `gauges` — and a labelled counter's
+    /// series sum.
+    #[test]
+    fn llamacpp_series_arrive_under_underscored_names_with_their_types() {
+        let body = "\
+# HELP llamacpp:tokens_predicted_total Number of generation tokens processed
+# TYPE llamacpp:tokens_predicted_total counter
+llamacpp:tokens_predicted_total 1803
+# HELP llamacpp:n_tokens_max Largest observed sequence length (prompt + generation)
+# TYPE llamacpp:n_tokens_max counter
+llamacpp:n_tokens_max 642
+# HELP llamacpp:requests_processing Number of requests processing
+# TYPE llamacpp:requests_processing gauge
+llamacpp:requests_processing 2
+# TYPE llamacpp:spec_decode_num_accepted_tokens_per_pos_total counter
+llamacpp:spec_decode_num_accepted_tokens_per_pos_total{position=\"0\"} 82
+llamacpp:spec_decode_num_accepted_tokens_per_pos_total{position=\"1\"} 80
+";
+        let parsed = parse_prometheus_text(body).expect("parse");
+        assert_eq!(
+            parsed.counters.get("llamacpp_tokens_predicted_total"),
+            Some(&1803.0)
+        );
+        assert_eq!(parsed.counters.get("llamacpp_n_tokens_max"), Some(&642.0));
+        assert_eq!(parsed.gauge_sum("llamacpp_requests_processing"), Some(2.0));
+        assert_eq!(
+            parsed
+                .counters
+                .get("llamacpp_spec_decode_num_accepted_tokens_per_pos_total"),
+            Some(&162.0)
+        );
+        assert!(parsed.gauges.keys().all(|name| !name.contains(':')));
     }
 
     #[test]

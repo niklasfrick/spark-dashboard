@@ -40,6 +40,7 @@ fn default_port(engine_type: &EngineType) -> u16 {
         EngineType::Vllm => VLLM_DEFAULT_PORT,
         EngineType::Sglang => SGLANG_DEFAULT_PORT,
         EngineType::Ollama => super::ollama::DEFAULT_PORT,
+        EngineType::LlamaCpp => super::llamacpp::default_ports(&DeploymentMode::Native)[0],
     }
 }
 
@@ -270,6 +271,7 @@ fn parse_model_for(engine_type: &EngineType, cmd: &str) -> Option<String> {
         EngineType::Sglang => parse_sglang_model_from_command_str(cmd),
         // Ollama loads models on demand; none is named at launch.
         EngineType::Ollama => None,
+        EngineType::LlamaCpp => None,
     }
 }
 
@@ -579,6 +581,7 @@ fn engines_from_processes(
             EngineType::Vllm => parse_model_from_args(cmd),
             EngineType::Sglang => parse_sglang_model_from_args(cmd),
             EngineType::Ollama => None,
+            EngineType::LlamaCpp => None,
         };
         match seen_endpoints.get(&(engine_type.clone(), endpoint.clone())) {
             Some(&slot) => detected[slot].pids.push(pid),
@@ -1209,6 +1212,9 @@ async fn probe_engine(http: &EngineHttp, engine_type: &EngineType) -> bool {
         // By `/api/version` and `/api/ps`, the two routes only Ollama serves
         // — SGLang answers Ollama-compatible routes too (`ollama::identify`).
         EngineType::Ollama => super::ollama::identify(http).await,
+        // By the `Server: llama.cpp` header every llama-server answer carries
+        // (`llamacpp::identify`).
+        EngineType::LlamaCpp => super::llamacpp::identify(http).await,
     }
 }
 

@@ -1,6 +1,7 @@
 //! Plumbing every HTTP engine adapter shares: how it reaches its engine, how
-//! many requests it treats as warmup, and how it turns token counters into
-//! rates.
+//! many requests it treats as warmup, how it turns token counters into
+//! rates, and the speculative-decoding acceptance figures it derives from
+//! drafted- and accepted-token counters (vLLM's, llama.cpp's).
 
 use super::EngineStatus;
 use std::time::{Duration, Instant};
@@ -131,9 +132,96 @@ impl CounterRate {
     }
 }
 
+/// Token acceptance rate (TAR) as a percentage: `accepted / draft * 100`.
+///
+/// Returns `None` unless both counts are present, `draft > 0`, and `accepted`
+/// is non-negative, so the tile stays blank until at least one token has been
+/// drafted and never surfaces a negative rate from a malformed/reset counter.
+/// Used for both the lifetime TAR (absolute counters) and the live TAR
+/// (per-poll deltas).
+pub(crate) fn spec_acceptance_rate(accepted: Option<f64>, draft: Option<f64>) -> Option<f64> {
+    match (accepted, draft) {
+        (Some(a), Some(d)) if d > 0.0 && a >= 0.0 => Some((a / d) * 100.0),
+        _ => None,
+    }
+}
+
+/// Mean acceptance length: accepted tokens per draft attempt (`accepted / drafts`).
+///
+/// Returns `None` unless both counts are present and `drafts > 0`.
+pub(crate) fn spec_mean_acceptance_length(
+    accepted: Option<f64>,
+    drafts: Option<f64>,
+) -> Option<f64> {
+    match (accepted, drafts) {
+        (Some(a), Some(n)) if n > 0.0 => Some(a / n),
+        _ => None,
+    }
+}
+
+/// The live (windowed) token acceptance rate between two readings of the
+/// `(accepted, draft)` counters: Δaccepted / Δdraft * 100. `None` on the
+/// first reading or when either is missing, when a counter went backwards —
+/// the engine restarted and reset its counters, and diffing against the
+/// stale reading would inflate or negate the rate — and when nothing was
+/// drafted in between. The caller keeps `now` as the next `prev`.
+pub(crate) fn spec_live_acceptance_rate(
+    prev: Option<(f64, f64)>,
+    now: Option<(f64, f64)>,
+) -> Option<f64> {
+    let ((prev_acc, prev_draft), (acc, draft)) = (prev?, now?);
+    if acc >= prev_acc && draft >= prev_draft {
+        spec_acceptance_rate(Some(acc - prev_acc), Some(draft - prev_draft))
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spec_acceptance_rate_computes_percentage_and_guards_zero() {
+        assert_eq!(spec_acceptance_rate(Some(75.0), Some(100.0)), Some(75.0));
+        // Zero or missing draft tokens => blank, no divide-by-zero.
+        assert_eq!(spec_acceptance_rate(Some(10.0), Some(0.0)), None);
+        assert_eq!(spec_acceptance_rate(Some(10.0), None), None);
+        assert_eq!(spec_acceptance_rate(None, Some(10.0)), None);
+        // A negative numerator (e.g. a counter-reset delta) must not surface a
+        // negative rate.
+        assert_eq!(spec_acceptance_rate(Some(-5.0), Some(100.0)), None);
+    }
+
+    #[test]
+    fn spec_mean_acceptance_length_divides_accepted_by_drafts() {
+        assert_eq!(
+            spec_mean_acceptance_length(Some(300.0), Some(100.0)),
+            Some(3.0)
+        );
+        assert_eq!(spec_mean_acceptance_length(Some(5.0), Some(0.0)), None);
+        assert_eq!(spec_mean_acceptance_length(None, Some(2.0)), None);
+    }
+
+    #[test]
+    fn the_live_acceptance_rate_is_the_one_between_two_readings() {
+        assert_eq!(
+            spec_live_acceptance_rate(Some((100.0, 200.0)), Some((190.0, 300.0))),
+            Some(90.0)
+        );
+        assert_eq!(spec_live_acceptance_rate(None, Some((190.0, 300.0))), None);
+        assert_eq!(spec_live_acceptance_rate(Some((100.0, 200.0)), None), None);
+        // Restarted: the counters went back.
+        assert_eq!(
+            spec_live_acceptance_rate(Some((100.0, 200.0)), Some((5.0, 10.0))),
+            None
+        );
+        // Nothing drafted in between.
+        assert_eq!(
+            spec_live_acceptance_rate(Some((100.0, 200.0)), Some((100.0, 200.0))),
+            None
+        );
+    }
 
     #[test]
     fn counter_rate_is_the_delta_over_elapsed_and_averages_nonzero_rates() {

@@ -112,15 +112,7 @@ impl ModelResolver {
         // throttles retries internally.
         let model = match self.fetch_hf_model_info(http.endpoint(), &name).await {
             Some(enriched) => enriched,
-            None => ModelInfo {
-                name,
-                parameter_size: None,
-                quantization: None,
-                precision: None,
-                tensor_type: None,
-                model_type: None,
-                pipeline_tag: None,
-            },
+            None => ModelInfo::named(name),
         };
 
         ModelResolution {
@@ -143,7 +135,7 @@ impl ModelResolver {
 }
 
 /// Format a raw parameter count into a compact human-readable string.
-fn format_param_size(count: u64) -> String {
+pub(crate) fn format_param_size(count: u64) -> String {
     if count >= 1_000_000_000 {
         format!("{:.1}B params", count as f64 / 1_000_000_000.0)
     } else if count >= 1_000_000 {
@@ -407,8 +399,9 @@ enum ModelsEndpointReply {
 /// Classify a non-success `/v1/models` status. 401/403 mean the dashboard
 /// lacks the engine's API key — the one failure an operator fixes on the
 /// dashboard's side (configure a provider API key), so it gets its own
-/// reason; everything else is generic unavailability.
-fn classify_models_error_status(status: u16) -> ModelMetadataError {
+/// reason; everything else is generic unavailability. Shared by every
+/// adapter that reads a model list, whatever the route is called.
+pub(crate) fn classify_models_error_status(status: u16) -> ModelMetadataError {
     match status {
         401 | 403 => ModelMetadataError::AuthRequired,
         _ => ModelMetadataError::Unavailable,

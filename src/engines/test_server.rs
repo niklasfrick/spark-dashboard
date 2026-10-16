@@ -14,7 +14,10 @@ pub struct Request {
     pub authorization: Option<String>,
 }
 
-type Handler = dyn Fn(&Request) -> (u16, String, Duration) + Send + Sync;
+/// A reply's extra response headers, as `(name, value)` pairs.
+pub type Headers = Vec<(&'static str, String)>;
+
+type Handler = dyn Fn(&Request) -> (u16, String, Headers, Duration) + Send + Sync;
 
 pub struct TestServer {
     /// `http://127.0.0.1:<port>` — what an adapter takes as its endpoint.
@@ -39,6 +42,28 @@ impl TestServer {
     pub async fn start_delayed(
         handler: impl Fn(&Request) -> (u16, String, Duration) + Send + Sync + 'static,
     ) -> Self {
+        Self::serve(move |request| {
+            let (status, body, delay) = handler(request);
+            (status, body, Headers::new(), delay)
+        })
+        .await
+    }
+
+    /// Like [`start`](Self::start), but each reply also carries the response
+    /// headers the handler gives — a server that names itself (`Server:`).
+    pub async fn start_with_headers(
+        handler: impl Fn(&Request) -> (u16, String, Headers) + Send + Sync + 'static,
+    ) -> Self {
+        Self::serve(move |request| {
+            let (status, body, headers) = handler(request);
+            (status, body, headers, Duration::ZERO)
+        })
+        .await
+    }
+
+    async fn serve(
+        handler: impl Fn(&Request) -> (u16, String, Headers, Duration) + Send + Sync + 'static,
+    ) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind a free port");
@@ -59,10 +84,14 @@ impl TestServer {
                         return;
                     };
                     recorded.lock().unwrap().push(request.clone());
-                    let (status, body, delay) = handler(&request);
+                    let (status, body, headers, delay) = handler(&request);
                     tokio::time::sleep(delay).await;
+                    let headers: String = headers
+                        .iter()
+                        .map(|(name, value)| format!("{name}: {value}\r\n"))
+                        .collect();
                     let response = format!(
-                        "HTTP/1.1 {status} X\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                        "HTTP/1.1 {status} X\r\n{headers}content-length: {}\r\nconnection: close\r\n\r\n{body}",
                         body.len()
                     );
                     let _ = sock.write_all(response.as_bytes()).await;

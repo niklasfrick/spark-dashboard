@@ -1,6 +1,7 @@
 mod common;
 pub mod detector;
 pub mod histogram;
+pub mod llamacpp;
 mod model_info;
 pub mod ollama;
 pub mod prometheus;
@@ -25,6 +26,8 @@ pub enum EngineType {
     Vllm,
     Sglang,
     Ollama,
+    /// llama.cpp's `llama-server`.
+    LlamaCpp,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
@@ -39,6 +42,7 @@ impl std::fmt::Display for EngineType {
             EngineType::Vllm => write!(f, "vLLM"),
             EngineType::Sglang => write!(f, "SGLang"),
             EngineType::Ollama => write!(f, "Ollama"),
+            EngineType::LlamaCpp => write!(f, "llama.cpp"),
         }
     }
 }
@@ -177,14 +181,6 @@ pub enum MetricsError {
     /// The metrics endpoint refused the dashboard's request (401/403) —
     /// the dashboard lacks the engine's API key. Not metrics off: the engine
     /// publishes them, and the fix is a provider API key, not a launch flag.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no adapter reports a refused metrics endpoint until llama.cpp's does \
-                      (#131); drop this once one constructs the variant"
-        )
-    )]
     AuthRequired,
 }
 
@@ -198,7 +194,7 @@ pub struct ModelResolution {
     pub metadata_error: Option<ModelMetadataError>,
 }
 
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Clone, Debug, serde::Serialize, PartialEq)]
 pub struct ModelInfo {
     pub name: String,
     pub parameter_size: Option<String>,
@@ -207,6 +203,22 @@ pub struct ModelInfo {
     pub tensor_type: Option<String>,
     pub model_type: Option<String>,
     pub pipeline_tag: Option<String>,
+}
+
+impl ModelInfo {
+    /// A model known by its name alone, every other field empty: a
+    /// command-line name, or an engine's own that nothing enriched.
+    pub fn named(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            parameter_size: None,
+            quantization: None,
+            precision: None,
+            tensor_type: None,
+            model_type: None,
+            pipeline_tag: None,
+        }
+    }
 }
 
 /// One model an engine has loaded right now: an entry of the list an engine
@@ -773,8 +785,10 @@ impl EngineState {
         // Model identity is static for a running engine, so only re-resolve
         // /v1/models on first success, after a restart, or on the 10-minute
         // safety net. During a transient blip keep the last-known model
-        // visible.
-        if success && self.should_fetch_model() {
+        // visible. An engine still loading its model (llama.cpp answers 503
+        // "Loading model" on every route) is asked once it runs, rather than
+        // recorded as unavailable for the retry cooldown.
+        if status == EngineStatus::Running && self.should_fetch_model() {
             let fetched = self.adapter.get_model_info().await;
             self.cache_model(fetched);
         }
@@ -908,6 +922,9 @@ pub fn create_adapter(
         // Ollama names no model on its command line; what it has loaded comes
         // from its own API.
         EngineType::Ollama => Box::new(ollama::OllamaAdapter::new(client, endpoint, api_key)),
+        EngineType::LlamaCpp => Box::new(llamacpp::LlamaCppAdapter::new(
+            client, endpoint, model_hint, api_key,
+        )),
     }
 }
 
@@ -1312,6 +1329,75 @@ mod tests {
         s.record_probe_result(true);
         assert!(s.cached_model.is_some());
         assert!(!s.should_fetch_model());
+    }
+
+    /// An adapter whose health the test sets tick by tick, counting how often
+    /// `poll` asks it for its model. Asked while it loads, it answers as a
+    /// loading engine does — no model, unavailable — and with its model once
+    /// it runs.
+    struct ScriptedAdapter {
+        health: Arc<std::sync::Mutex<EngineStatus>>,
+        model_asks: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl EngineAdapter for ScriptedAdapter {
+        fn engine_type(&self) -> EngineType {
+            EngineType::Vllm
+        }
+        fn endpoint(&self) -> &str {
+            "http://scripted:8000"
+        }
+        fn metric_groups(&self) -> BTreeSet<MetricGroup> {
+            MetricGroup::all()
+        }
+        async fn health_check(&self) -> EngineStatus {
+            self.health.lock().unwrap().clone()
+        }
+        async fn get_model_info(&self) -> ModelResolution {
+            self.model_asks
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            match *self.health.lock().unwrap() {
+                EngineStatus::Running => resolved("a/b"),
+                _ => errored(None, ModelMetadataError::Unavailable),
+            }
+        }
+        async fn get_metrics(&self) -> Option<EngineMetrics> {
+            None
+        }
+    }
+
+    /// The model fetch waits for Running, whichever adapter is behind it: an
+    /// engine reporting Loading is healthy, but not asked for its model — the
+    /// answer would be "unavailable", held for the retry cooldown — and the
+    /// first tick it reports Running, it is.
+    #[tokio::test]
+    async fn an_engine_still_loading_is_asked_for_its_model_once_it_runs() {
+        let health = Arc::new(std::sync::Mutex::new(EngineStatus::Loading));
+        let model_asks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let asks = || model_asks.load(std::sync::atomic::Ordering::SeqCst);
+        let mut s = EngineState::new(
+            Box::new(ScriptedAdapter {
+                health: health.clone(),
+                model_asks: model_asks.clone(),
+            }),
+            DeploymentMode::Native,
+        );
+
+        for _ in 0..2 {
+            let snapshot = s.poll().await;
+            assert_eq!(snapshot.status, EngineStatus::Loading);
+            assert!(snapshot.model.is_none());
+            assert_eq!(snapshot.model_metadata_error, None);
+        }
+        assert_eq!(asks(), 0, "not asked while it loads");
+
+        *health.lock().unwrap() = EngineStatus::Running;
+        let snapshot = s.poll().await;
+        assert_eq!(snapshot.status, EngineStatus::Running);
+        assert_eq!(snapshot.model.map(|m| m.name).as_deref(), Some("a/b"));
+        assert_eq!(snapshot.model_metadata_error, None);
+        assert_eq!(asks(), 1, "asked the first tick it runs");
     }
 
     #[test]
@@ -1759,12 +1845,12 @@ mod tests {
     /// field is there, so the frontend can tell "uses `model`" from a backend
     /// that predates the field — and its snapshot is otherwise the shape it
     /// always was, but for the `metrics_error` every engine carries (`null`
-    /// for these: neither adapter reports one). Through the real adapters, so
-    /// a type that grows a list shows up here.
+    /// for these: none has had its metrics refused). Through the real
+    /// adapters, so a type that grows a list shows up here.
     #[test]
     fn single_model_engines_carry_a_null_model_list_and_nothing_else_new() {
         let client = reqwest::Client::new();
-        let adapters: [Box<dyn EngineAdapter>; 2] = [
+        let adapters: [Box<dyn EngineAdapter>; 3] = [
             Box::new(vllm::VllmAdapter::new(
                 client.clone(),
                 "http://127.0.0.1:8000".into(),
@@ -1772,8 +1858,14 @@ mod tests {
                 None,
             )),
             Box::new(sglang::SglangAdapter::new(
-                client,
+                client.clone(),
                 "http://127.0.0.1:30000".into(),
+                None,
+                None,
+            )),
+            Box::new(llamacpp::LlamaCppAdapter::new(
+                client,
+                "http://127.0.0.1:9931".into(),
                 None,
                 None,
             )),
