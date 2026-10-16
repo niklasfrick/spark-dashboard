@@ -4,8 +4,8 @@ Real-time hardware and LLM inference monitoring for Linux systems with NVIDIA
 GPUs. Developed and tested on the NVIDIA DGX Spark, but works on any Linux
 host with NVIDIA drivers — discrete-GPU workstations, DGX boxes, cloud VMs.
 A Rust backend collects GPU, CPU, memory, disk, and network metrics alongside
-vLLM and SGLang engine statistics (plus status and loaded models for Ollama)
-and streams them over WebSocket to a React frontend.
+vLLM, SGLang and llama.cpp engine statistics (plus status and loaded models for
+Ollama) and streams them over WebSocket to a React frontend.
 
 ![Stack](https://img.shields.io/badge/Rust-Axum-orange) ![Stack](https://img.shields.io/badge/React_19-TypeScript-blue) ![Stack](https://img.shields.io/badge/Tailwind_CSS_4-06B6D4) ![Stack](https://img.shields.io/badge/Vite_8-646CFF) ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -80,7 +80,7 @@ for details on what each script does.
   (e.g. DGX Spark GB10, GH200)
 - Disk and network I/O throughput
 
-**LLM Engine Monitoring** (vLLM and SGLang via Prometheus metrics)
+**LLM Engine Monitoring** (vLLM, SGLang and llama.cpp via Prometheus metrics)
 - Tokens per second (generation + prompt)
 - Time to first token, inter-token latency, end-to-end latency, queue time
 - Active/queued requests, batch size
@@ -290,7 +290,7 @@ spark-dashboard service status
       --state-dir <DIR>       Directory for saved state [default: /var/lib/spark-dashboard] [env: SPARK_DASHBOARD_STATE_DIR]
       --gpu-index <IDX>       Optional NVML GPU index to monitor [env: SPARK_DASHBOARD_GPU_INDEX]
       --simulate-gpus <N>     Append N fictive GPUs with simulated data (dev aid) [env: SPARK_DASHBOARD_SIMULATE_GPUS]
-      --engine <TYPE>         Manual engine type: vllm, sglang or ollama [env: SPARK_DASHBOARD_ENGINE]
+      --engine <TYPE>         Manual engine type: vllm, sglang, llamacpp or ollama [env: SPARK_DASHBOARD_ENGINE]
       --engine-url <URL>      Manual engine endpoint (requires --engine) [env: SPARK_DASHBOARD_ENGINE_URL]
       --engine-api-key <KEY>  API key for an endpoint, paired by index with --engine-url [env: SPARK_DASHBOARD_ENGINE_API_KEY]
       --provider-api-key <KEY> Fallback API key for any endpoint [env: SPARK_DASHBOARD_PROVIDER_API_KEY]
@@ -299,9 +299,9 @@ spark-dashboard service status
 
 On multi-GPU hosts, Spark Dashboard monitors all available NVIDIA GPUs by
 default. Use `--gpu-index` to focus on one device. Engines are auto-detected via
-process scan and Docker API (vLLM, SGLang and Ollama, on their respective default
-ports 8000, 30000 and 11434). Use `--engine` and `--engine-url` to override when
-auto-detection doesn't work. For a host-systemd installation, put the same
+process scan and Docker API (vLLM, SGLang, llama.cpp and Ollama, on their
+default ports 8000, 30000, 9931 — 8080 before llama.cpp v0.7.0 — and 11434).
+Use `--engine` and `--engine-url` to override when auto-detection doesn't work. For a host-systemd installation, put the same
 values in `/etc/spark-dashboard/config.env` as `SPARK_DASHBOARD_ENGINE` and
 `SPARK_DASHBOARD_ENGINE_URL`; comma-separated engine and URL values are paired
 by position.
@@ -312,6 +312,29 @@ every metric panel names the flag instead of guessing. SGLang reports the
 metric groups its version exposes — acceptance rate and length for speculative
 decoding are gauges there, so vLLM's draft/accepted token counters stay "not
 reported" on an SGLang engine.
+
+llama.cpp (`llama-server`) is detected with no configuration: a host process or
+a container running `llama-server` is found and confirmed as llama.cpp by its
+own API. It listens on its `--port` or `LLAMA_ARG_PORT`, otherwise on its
+default: 9931 from llama.cpp v0.7.0, 8080 on earlier releases and in the
+official Docker image; when the dashboard can't read which, it tries both. A
+container is reached on the host network or on the host port that publishes its
+listening port; one that publishes nothing is out of reach from the host. To
+point at one by hand, pass `--engine llamacpp` (`llama.cpp` and `llama-cpp` are
+accepted too) with `--engine-url`. It reports throughput, running and queued
+requests, mean inter-token latency and speculative decoding; everything else
+(time to first token, end-to-end latency, queue time, KV and prefix cache,
+percentiles) reads "not reported" rather than a stand-in value. Like SGLang, it
+publishes metrics only when started with `--metrics`; without it every metric
+panel says metrics are off and names the flag. If the server was started with
+`--api-key`, its metrics endpoint needs the dashboard's key too: pass it with
+`--engine-api-key`, or with `--provider-api-key` (`SPARK_DASHBOARD_PROVIDER_API_KEY`)
+for an auto-detected server; otherwise the panels say authentication is
+required. The model processes behind Ollama, and the
+children of a llama.cpp router, never show up as engines of their own; a router
+(started with no model) shows as running with nothing reported. The dashboard's
+polling does not keep a server from sleeping under `--sleep-idle-seconds`: it
+reads `/slots` only while requests are running.
 
 Ollama has no metric panels, and unlike SGLang no flag changes that: it exposes
 no server-side metrics at all. The dashboard still shows the engine's status,
