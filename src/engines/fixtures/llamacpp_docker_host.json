@@ -1,0 +1,53 @@
+{
+  "Name": "/llamacpp-cap-host",
+  "Config": {
+    "Image": "ghcr.io/ggml-org/llama.cpp:server-cuda13-b11669",
+    "Cmd": [
+      "-m",
+      "/models/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+      "--port",
+      "18091",
+      "--metrics",
+      "-c",
+      "2048",
+      "-ngl",
+      "99"
+    ],
+    "Entrypoint": [
+      "/app/llama-server"
+    ],
+    "Env": [
+      "PATH=/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      "NVARCH=sbsa",
+      "NVIDIA_REQUIRE_CUDA=cuda>=13.4 brand=unknown,driver>=535,driver<536 brand=grid,driver>=535,driver<536 brand=tesla,driver>=535,driver<536 brand=nvidia,driver>=535,driver<536 brand=quadro,driver>=535,driver<536 brand=quadrortx,driver>=535,driver<536 brand=nvidiartx,driver>=535,driver<536 brand=vapps,driver>=535,driver<536 brand=vpc,driver>=535,driver<536 brand=vcs,driver>=535,driver<536 brand=vws,driver>=535,driver<536 brand=cloudgaming,driver>=535,driver<536 brand=unknown,driver>=570,driver<571 brand=grid,driver>=570,driver<571 brand=tesla,driver>=570,driver<571 brand=nvidia,driver>=570,driver<571 brand=quadro,driver>=570,driver<571 brand=quadrortx,driver>=570,driver<571 brand=nvidiartx,driver>=570,driver<571 brand=vapps,driver>=570,driver<571 brand=vpc,driver>=570,driver<571 brand=vcs,driver>=570,driver<571 brand=vws,driver>=570,driver<571 brand=cloudgaming,driver>=570,driver<571 brand=unknown,driver>=580,driver<581 brand=grid,driver>=580,driver<581 brand=tesla,driver>=580,driver<581 brand=nvidia,driver>=580,driver<581 brand=quadro,driver>=580,driver<581 brand=quadrortx,driver>=580,driver<581 brand=nvidiartx,driver>=580,driver<581 brand=vapps,driver>=580,driver<581 brand=vpc,driver>=580,driver<581 brand=vcs,driver>=580,driver<581 brand=vws,driver>=580,driver<581 brand=cloudgaming,driver>=580,driver<581 brand=unknown,driver>=590,driver<591 brand=grid,driver>=590,driver<591 brand=tesla,driver>=590,driver<591 brand=nvidia,driver>=590,driver<591 brand=quadro,driver>=590,driver<591 brand=quadrortx,driver>=590,driver<591 brand=nvidiartx,driver>=590,driver<591 brand=vapps,driver>=590,driver<591 brand=vpc,driver>=590,driver<591 brand=vcs,driver>=590,driver<591 brand=vws,driver>=590,driver<591 brand=cloudgaming,driver>=590,driver<591 brand=unknown,driver>=595,driver<596 brand=grid,driver>=595,driver<596 brand=tesla,driver>=595,driver<596 brand=nvidia,driver>=595,driver<596 brand=quadro,driver>=595,driver<596 brand=quadrortx,driver>=595,driver<596 brand=nvidiartx,driver>=595,driver<596 brand=vapps,driver>=595,driver<596 brand=vpc,driver>=595,driver<596 brand=vcs,driver>=595,driver<596 brand=vws,driver>=595,driver<596 brand=cloudgaming,driver>=595,driver<596 brand=unknown,driver>=610,driver<611 brand=grid,driver>=610,driver<611 brand=tesla,driver>=610,driver<611 brand=nvidia,driver>=610,driver<611 brand=quadro,driver>=610,driver<611 brand=quadrortx,driver>=610,driver<611 brand=nvidiartx,driver>=610,driver<611 brand=vapps,driver>=610,driver<611 brand=vpc,driver>=610,driver<611 brand=vcs,driver>=610,driver<611 brand=vws,driver>=610,driver<611 brand=cloudgaming,driver>=610,driver<611",
+      "NV_CUDA_CUDART_VERSION=13.4.49-1",
+      "CUDA_VERSION=13.4.1",
+      "LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/cuda/lib64",
+      "NVIDIA_VISIBLE_DEVICES=all",
+      "NVIDIA_DRIVER_CAPABILITIES=compute,utility",
+      "NV_CUDA_LIB_VERSION=13.4.1-1",
+      "NV_NVTX_VERSION=13.4.49-1",
+      "NV_LIBNPP_VERSION=13.2.0.35-1",
+      "NV_LIBNPP_PACKAGE=libnpp-13-4=13.2.0.35-1",
+      "NV_LIBCUSPARSE_VERSION=12.8.6.49-1",
+      "NV_LIBCUBLAS_PACKAGE_NAME=libcublas-13-4",
+      "NV_LIBCUBLAS_VERSION=13.7.0.27-1",
+      "NV_LIBCUBLAS_PACKAGE=libcublas-13-4=13.7.0.27-1",
+      "NV_LIBNCCL_PACKAGE_NAME=libnccl2",
+      "NV_LIBNCCL_PACKAGE_VERSION=2.31.2-1",
+      "NCCL_VERSION=2.31.2-1",
+      "NV_LIBNCCL_PACKAGE=libnccl2=2.31.2-1+cuda13.4",
+      "NVIDIA_PRODUCT_NAME=CUDA",
+      "LLAMA_ARG_HOST=0.0.0.0",
+      "LLAMA_ARG_PORT=8080"
+    ],
+    "ExposedPorts": null
+  },
+  "HostConfig": {
+    "PortBindings": {},
+    "NetworkMode": "host"
+  },
+  "NetworkSettings": {
+    "Ports": {}
+  }
+}
