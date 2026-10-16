@@ -1,4 +1,5 @@
 use super::common::EngineHttp;
+use super::llamacpp;
 use super::ollama::OllamaHost;
 use super::{ApiKeyResolver, DeploymentMode, EngineType};
 use std::collections::{HashMap, HashSet};
@@ -25,6 +26,12 @@ pub struct DetectedEngine {
     /// the same container the dashboard is showing metrics for, rather than
     /// re-scanning and potentially picking a different one.
     pub container_id: Option<String>,
+    /// Where else to probe, in order, when `endpoint` does not answer as
+    /// this engine type: a llama-server whose launch names no port is on
+    /// one of llama.cpp's default ports (`llamacpp::default_ports`), and
+    /// only the probe can tell which. Empty for every other candidate, and
+    /// once verified — `endpoint` is then the one that answered.
+    pub fallback_endpoints: Vec<String>,
 }
 
 /// The port vLLM serves on when it is not told otherwise. Used wherever a
@@ -34,13 +41,16 @@ const VLLM_DEFAULT_PORT: u16 = 8000;
 /// SGLang's default HTTP port (`--port` unset), same role as above.
 const SGLANG_DEFAULT_PORT: u16 = 30000;
 
-/// The port an engine type serves on when it is not told otherwise.
+/// The port an engine type serves on when it is not told otherwise. A
+/// llama-server has two, by release, which its candidates carry whole
+/// (`llamacpp::default_ports`); this is only the first a native one is
+/// tried on.
 fn default_port(engine_type: &EngineType) -> u16 {
     match engine_type {
         EngineType::Vllm => VLLM_DEFAULT_PORT,
         EngineType::Sglang => SGLANG_DEFAULT_PORT,
         EngineType::Ollama => super::ollama::DEFAULT_PORT,
-        EngineType::LlamaCpp => super::llamacpp::default_ports(&DeploymentMode::Native)[0],
+        EngineType::LlamaCpp => llamacpp::default_ports(&DeploymentMode::Native)[0],
     }
 }
 
@@ -64,18 +74,45 @@ pub async fn detect_engines(
     merge_docker_candidates(&mut candidates, docker_candidates);
 
     // Layer 3: API health probe -- verify each candidate is actually reachable
+    verify_candidates(candidates, client, api_keys).await
+}
+
+/// The candidates whose API answers as their engine type, each on the first
+/// of its endpoints that does (`endpoint`, then `fallback_endpoints`).
+///
+/// Two candidates verified on one endpoint are one server, and become one
+/// engine (`join_on_endpoint`) on the container's view of it — its model
+/// too, where it names one. The host scan's guess at a llama-server's
+/// default port and a container whose processes could not be listed can
+/// meet there, though they had no endpoint in common before the probe.
+async fn verify_candidates(
+    candidates: Vec<DetectedEngine>,
+    client: &reqwest::Client,
+    api_keys: &ApiKeyResolver,
+) -> Vec<DetectedEngine> {
     let mut verified = Vec::new();
-    for candidate in candidates {
-        let http = EngineHttp::new(
-            client.clone(),
-            candidate.endpoint.clone(),
-            api_keys.resolve(&candidate.endpoint),
-        );
-        if probe_engine(&http, &candidate.engine_type).await {
-            verified.push(candidate);
+    for mut candidate in candidates {
+        let fallbacks = std::mem::take(&mut candidate.fallback_endpoints);
+        for endpoint in std::iter::once(candidate.endpoint.clone()).chain(fallbacks) {
+            let http = EngineHttp::new(
+                client.clone(),
+                endpoint.clone(),
+                api_keys.resolve(&endpoint),
+            );
+            if probe_engine(&http, &candidate.engine_type).await {
+                if endpoint != candidate.endpoint {
+                    tracing::debug!(
+                        "{} candidate is not on {}; it answers on {endpoint}",
+                        candidate.engine_type,
+                        candidate.endpoint,
+                    );
+                }
+                candidate.endpoint = endpoint;
+                join_on_endpoint(&mut verified, candidate);
+                break;
+            }
         }
     }
-
     verified
 }
 
@@ -86,13 +123,10 @@ pub async fn detect_engines(
 /// never a native engine of its own, the container is the engine.
 ///
 /// Then key by (engine_type, endpoint) so multiple instances of the same
-/// engine on different ports are preserved as distinct entries. When a
-/// Docker candidate matches an existing process-scan entry by exact
-/// endpoint, upgrade its deployment_mode to Docker (Docker detection is
-/// authoritative for container metadata) and union the PID sets — `docker
-/// top` and the host process scan may each see processes the other missed.
-/// This is also what still joins a container whose processes could not be
-/// listed to the host scan's view of it.
+/// engine on different ports are preserved as distinct entries: a Docker
+/// candidate on an endpoint the process scan has too joins that entry
+/// (`join_on_endpoint`). This is also what still joins a container whose
+/// processes could not be listed to the host scan's view of it.
 fn merge_docker_candidates(
     candidates: &mut Vec<DetectedEngine>,
     mut docker_candidates: Vec<DetectedEngine>,
@@ -100,41 +134,53 @@ fn merge_docker_candidates(
     for container in &mut docker_candidates {
         absorb_container_processes(candidates, container);
     }
-
-    let mut seen: HashSet<(EngineType, String)> = candidates
-        .iter()
-        .map(|c| (c.engine_type.clone(), c.endpoint.clone()))
-        .collect();
-
     for dc in docker_candidates {
-        let key = (dc.engine_type.clone(), dc.endpoint.clone());
-        if seen.contains(&key) {
-            if let Some(existing) = candidates
-                .iter_mut()
-                .find(|c| c.engine_type == dc.engine_type && c.endpoint == dc.endpoint)
-            {
-                existing.deployment_mode = dc.deployment_mode;
-                // Prefer a non-None served_model hint: Docker discovery often
-                // sees the `--model` arg the operator launched with, while
-                // native process scanning may not (e.g. when vLLM is launched
-                // inside a container with host networking).
-                if existing.served_model.is_none() && dc.served_model.is_some() {
-                    existing.served_model = dc.served_model.clone();
-                }
-                for pid in &dc.pids {
-                    if !existing.pids.contains(pid) {
-                        existing.pids.push(*pid);
-                    }
-                }
-                existing.pids.sort_unstable();
-                // Docker discovery is authoritative for container identity.
-                if existing.container_id.is_none() && dc.container_id.is_some() {
-                    existing.container_id = dc.container_id.clone();
-                }
-            }
-        } else {
-            seen.insert(key);
-            candidates.push(dc);
+        join_on_endpoint(candidates, dc);
+    }
+}
+
+/// Add `candidate`, or fold it into the candidate of its engine type already
+/// on its endpoint: one server is one engine.
+///
+/// The PID sets are united — `docker top` and the host process scan may each
+/// see processes the other missed — and a container's view wins: Docker
+/// detection is authoritative for the deployment mode and container
+/// identity, and for the served model when it names one. The host scan
+/// reads a containerized server's command line but not its environment (it
+/// runs as root), so a llama.cpp container that names its model by
+/// `LLAMA_ARG_ALIAS` is, to the host scan, only its `-m` path. Otherwise a
+/// served-model hint fills in where there was none: Docker discovery often
+/// sees the `--model` arg the operator launched with, while native process
+/// scanning may not (e.g. when vLLM is launched inside a container with host
+/// networking).
+fn join_on_endpoint(candidates: &mut Vec<DetectedEngine>, candidate: DetectedEngine) {
+    let Some(existing) = candidates
+        .iter_mut()
+        .find(|c| c.engine_type == candidate.engine_type && c.endpoint == candidate.endpoint)
+    else {
+        candidates.push(candidate);
+        return;
+    };
+    let container_names_model =
+        candidate.deployment_mode == DeploymentMode::Docker && candidate.served_model.is_some();
+    if container_names_model || existing.served_model.is_none() {
+        existing.served_model = candidate.served_model;
+    }
+    if candidate.deployment_mode == DeploymentMode::Docker {
+        existing.deployment_mode = DeploymentMode::Docker;
+    }
+    for pid in candidate.pids {
+        if !existing.pids.contains(&pid) {
+            existing.pids.push(pid);
+        }
+    }
+    existing.pids.sort_unstable();
+    if existing.container_id.is_none() {
+        existing.container_id = candidate.container_id;
+    }
+    for endpoint in candidate.fallback_endpoints {
+        if endpoint != existing.endpoint && !existing.fallback_endpoints.contains(&endpoint) {
+            existing.fallback_endpoints.push(endpoint);
         }
     }
 }
@@ -227,17 +273,37 @@ fn is_ollama_server(args: &[&str]) -> bool {
     matches!(program, Some("ollama" | "ollama.exe")) && args.get(1) == Some(&"serve")
 }
 
+/// Whether a command line runs llama.cpp's server: the program `llama-server`
+/// by any path (the official images' `/app/llama-server`, a release
+/// tarball's, Ollama's own child from v0.35). Only the program counts —
+/// nothing runs llama-server as a module or a subcommand — so a process that
+/// names it among its arguments (`journalctl -u llama-server`, `tmux new -s
+/// llama-server`) is not one. That matters more than for vLLM or SGLang: a
+/// llama-server's descendants are its own (`engines_from_processes`), and a
+/// tmux session named after it would otherwise hide every server started
+/// inside it. Docker Desktop's renamed `com.docker.llama-server` serves its
+/// model runner on a Unix socket and is not one either.
+fn is_llama_server(args: &[&str]) -> bool {
+    let program = args
+        .first()
+        .map(|arg| arg.rsplit(&['/', '\\'][..]).next().unwrap_or(arg));
+    matches!(program, Some("llama-server" | "llama-server.exe"))
+}
+
 /// Which engine a command line runs, if any. Ollama's server is told by its
-/// program and subcommand together (`is_ollama_server`); otherwise the first
-/// argument that names an engine's server decides. The program comes before
-/// its arguments, so a path or flag value that happens to name the other
-/// engine — `python3 -m sglang.launch_server --download-dir /data/vllm` —
-/// cannot turn the process into that engine too. A process is at most one
-/// engine.
+/// program and subcommand together (`is_ollama_server`), llama.cpp's by its
+/// program (`is_llama_server`); otherwise the first argument that names an
+/// engine's server decides. The program comes before its arguments, so a
+/// path or flag value that happens to name the other engine — `python3 -m
+/// sglang.launch_server --download-dir /data/vllm` — cannot turn the process
+/// into that engine too. A process is at most one engine.
 fn engine_of_command<'a>(args: impl IntoIterator<Item = &'a str>) -> Option<EngineType> {
     let args: Vec<&str> = args.into_iter().collect();
     if is_ollama_server(&args) {
         return Some(EngineType::Ollama);
+    }
+    if is_llama_server(&args) {
+        return Some(EngineType::LlamaCpp);
     }
     args.into_iter().find_map(server_named_by)
 }
@@ -271,7 +337,11 @@ fn parse_model_for(engine_type: &EngineType, cmd: &str) -> Option<String> {
         EngineType::Sglang => parse_sglang_model_from_command_str(cmd),
         // Ollama loads models on demand; none is named at launch.
         EngineType::Ollama => None,
-        EngineType::LlamaCpp => None,
+        // The command line alone: the Docker scan reads a llama.cpp
+        // container with its environment too (`llamacpp_launch`).
+        EngineType::LlamaCpp => {
+            llamacpp_launch(&cmd.split_whitespace().collect::<Vec<_>>(), |_| None).served_model()
+        }
     }
 }
 
@@ -292,29 +362,56 @@ struct ContainerClass {
 /// `ollama/ollama:rocm`, `registry.local:5000/ollama/ollama@sha256:…`.
 #[cfg(any(target_os = "linux", test))]
 fn is_ollama_image(image: &str) -> bool {
+    let repository = image_repository(image);
+    repository == "ollama/ollama" || repository.ends_with("/ollama/ollama")
+}
+
+/// An image reference without its tag and digest:
+/// `registry.local:5000/ollama/ollama:0.40.5@sha256:…` is
+/// `registry.local:5000/ollama/ollama`.
+#[cfg(any(target_os = "linux", test))]
+fn image_repository(image: &str) -> &str {
     let name = image.split('@').next().unwrap_or(image);
     // A tag is a `:` after the last `/`; one before it is a registry port.
-    let repository = match name.rfind(':') {
+    match name.rfind(':') {
         Some(colon) if !name[colon..].contains('/') => &name[..colon],
         _ => name,
-    };
-    repository == "ollama/ollama" || repository.ends_with("/ollama/ollama")
+    }
+}
+
+/// How llama.cpp is spelled where people name things after it.
+#[cfg(any(target_os = "linux", test))]
+const LLAMACPP_SPELLINGS: [&str; 3] = ["llama.cpp", "llama-cpp", "llamacpp"];
+
+/// Whether an image is a llama.cpp build: its repository — not its tag —
+/// names llama.cpp, as the official `ghcr.io/ggml-org/llama.cpp` does, in
+/// any of its spellings. Neither Ollama's image, which runs llama.cpp inside
+/// but serves Ollama's API, nor `docker/model-runner`, which serves its
+/// bundled llama-server on a Unix socket, names it.
+#[cfg(any(target_os = "linux", test))]
+fn is_llamacpp_image(image: &str) -> bool {
+    let repository = image_repository(image);
+    LLAMACPP_SPELLINGS
+        .iter()
+        .any(|spelling| repository.contains(spelling))
 }
 
 /// Rank the signals by how much they say:
 ///   1. the **image** is what was pulled to run here — Ollama's own image is
-///      Ollama, and an image that names exactly one of vLLM and SGLang is
-///      that engine. An `lmsysorg/sglang` image whose command mentions vLLM
-///      (an env var, a model path) is SGLang.
+///      Ollama, one whose repository names llama.cpp is llama.cpp, and an
+///      image that names exactly one of vLLM and SGLang is that engine. An
+///      `lmsysorg/sglang` image whose command mentions vLLM (an env var, a
+///      model path) is SGLang.
 ///   2. the **command** is what the entrypoint runs — its launch form, read
-///      like a host process's (`ollama serve` by any path, or the first
-///      argument naming a server), so
+///      like a host process's (`ollama serve` or `llama-server` by any path,
+///      or the first argument naming a server), so
 ///      `python3 -m sglang.launch_server --model-path /models/x-vllm-awq`
 ///      is SGLang. Failing a launch form, a command that mentions exactly
 ///      one engine anywhere (a shell wrapper's quoted `"vllm serve ..."`)
 ///      still names it.
 ///   3. the **name** is what somebody typed — a weak signal the container's
-///      processes must confirm.
+///      processes must confirm. "llama" alone is no llama.cpp name: it is in
+///      "ollama".
 ///
 /// What stays tied — both engines named and no launch form to decide — goes
 /// to vLLM: no one builds a "vllm-sglang" image on purpose, and the
@@ -335,6 +432,9 @@ fn classify_container(names: &[String], image: &str, command: &str) -> Option<Co
 
     if is_ollama_image(image) {
         return class(EngineType::Ollama, true);
+    }
+    if is_llamacpp_image(image) {
+        return class(EngineType::LlamaCpp, true);
     }
     match mentions(image) {
         (true, false) => return class(EngineType::Vllm, true),
@@ -361,6 +461,12 @@ fn classify_container(names: &[String], image: &str, command: &str) -> Option<Co
         class(EngineType::Sglang, false)
     } else if named("ollama") {
         class(EngineType::Ollama, false)
+    } else if LLAMACPP_SPELLINGS
+        .iter()
+        .chain(&["llama-server"])
+        .any(|spelling| named(spelling))
+    {
+        class(EngineType::LlamaCpp, false)
     } else {
         None
     }
@@ -451,6 +557,300 @@ fn ollama_container_endpoint(
     }
 }
 
+/// A setting of a llama-server's launch that detection reads
+/// (`llamacpp_launch`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum LlamaCppSetting {
+    Host,
+    Port,
+    Alias,
+    HfRepo,
+    DockerRepo,
+    Model,
+}
+
+impl LlamaCppSetting {
+    const ALL: [Self; 6] = [
+        Self::Host,
+        Self::Port,
+        Self::Alias,
+        Self::HfRepo,
+        Self::DockerRepo,
+        Self::Model,
+    ];
+
+    /// The launch flags that set it.
+    fn flags(self) -> &'static [&'static str] {
+        match self {
+            Self::Host => &["--host"],
+            Self::Port => &["--port"],
+            Self::Alias => &["-a", "--alias"],
+            Self::HfRepo => &["-hf", "-hfr", "--hf-repo"],
+            Self::DockerRepo => &["-dr", "--docker-repo"],
+            Self::Model => &["-m", "--model"],
+        }
+    }
+
+    /// The environment variable that sets it when no flag does.
+    fn env_var(self) -> &'static str {
+        match self {
+            Self::Host => "LLAMA_ARG_HOST",
+            Self::Port => "LLAMA_ARG_PORT",
+            Self::Alias => "LLAMA_ARG_ALIAS",
+            Self::HfRepo => "LLAMA_ARG_HF_REPO",
+            Self::DockerRepo => "LLAMA_ARG_DOCKER_REPO",
+            Self::Model => "LLAMA_ARG_MODEL",
+        }
+    }
+}
+
+/// What a llama-server's launch says about where it listens and which model
+/// it serves (`llamacpp_launch`).
+#[derive(Debug, Default, PartialEq)]
+struct LlamaCppLaunch {
+    /// `--host`: an address, a comma-separated list of them, or Unix socket
+    /// paths (`….sock`).
+    host: Option<String>,
+    /// `--port`, when it is a port number.
+    port: Option<u16>,
+    /// `-a`/`--alias`: comma-separated names for the model.
+    alias: Option<String>,
+    /// `-hf`/`-hfr`/`--hf-repo`: `<user>/<model>[:quant]`.
+    hf_repo: Option<String>,
+    /// `-dr`/`--docker-repo`.
+    docker_repo: Option<String>,
+    /// `-m`/`--model`: the GGUF path.
+    model: Option<String>,
+}
+
+/// Read a llama-server's launch as llama-server reads it: each setting from
+/// its flag, else from its `LLAMA_ARG_*` variable (`env`), else left to
+/// llama-server's default — the official image's `LLAMA_ARG_PORT=8080` with
+/// `--port 18091` listens on 18091. A flag given twice counts its last
+/// value, and a long flag may be spelled with `_` for `-` (`--hf_repo`), as
+/// llama-server allows; `--flag=value` is read too. Arguments that are not
+/// these flags or their values are passed over, the program among them, so
+/// a wrapper's command line (`/app/tools.sh --server -m …`) reads the same.
+fn llamacpp_launch<S: AsRef<str>>(
+    args: &[S],
+    env: impl Fn(&str) -> Option<String>,
+) -> LlamaCppLaunch {
+    let mut flags: HashMap<LlamaCppSetting, String> = HashMap::new();
+    let mut args = args.iter().map(AsRef::as_ref);
+    while let Some(arg) = args.next() {
+        let (flag, inline) = match arg.split_once('=') {
+            Some((flag, value)) if flag.starts_with("--") => (flag, Some(value)),
+            _ => (arg, None),
+        };
+        let flag = if flag.starts_with("--") {
+            flag.replace('_', "-")
+        } else {
+            flag.to_string()
+        };
+        let Some(setting) = LlamaCppSetting::ALL
+            .into_iter()
+            .find(|setting| setting.flags().contains(&flag.as_str()))
+        else {
+            continue;
+        };
+        if let Some(value) = inline.or_else(|| args.next()) {
+            flags.insert(setting, value.to_string());
+        }
+    }
+    let read = |setting: LlamaCppSetting| {
+        flags
+            .get(&setting)
+            .cloned()
+            .or_else(|| env(setting.env_var()))
+            .filter(|value| !value.trim().is_empty())
+    };
+    LlamaCppLaunch {
+        host: read(LlamaCppSetting::Host),
+        port: read(LlamaCppSetting::Port).and_then(|port| port.trim().parse().ok()),
+        alias: read(LlamaCppSetting::Alias),
+        hf_repo: read(LlamaCppSetting::HfRepo),
+        docker_repo: read(LlamaCppSetting::DockerRepo),
+        model: read(LlamaCppSetting::Model),
+    }
+}
+
+impl LlamaCppLaunch {
+    /// The name llama-server serves its model under, which `/models`
+    /// reports: the alias that sorts first (it keeps its aliases in a sorted
+    /// set), else the Hugging Face repository, else the Docker one, else the
+    /// model path, as given. `None` for a router, which has no model of its
+    /// own.
+    fn served_model(&self) -> Option<String> {
+        let alias = self.alias.as_deref().and_then(|aliases| {
+            aliases
+                .split(',')
+                .map(str::trim)
+                .filter(|alias| !alias.is_empty())
+                .min()
+        });
+        alias
+            .or(self.hf_repo.as_deref())
+            .or(self.docker_repo.as_deref())
+            .or(self.model.as_deref())
+            .map(str::to_string)
+    }
+
+    /// Where it listens over TCP: the first TCP address of its `--host`,
+    /// and its `--port` — or, naming none, `default_ports`, to be tried in
+    /// order. `None` when the launch names no TCP port to reach: a server
+    /// bound only to Unix sockets (docker-model-runner's child, `--host
+    /// <path>.sock`), or to `--port 0`, a port picked when it binds.
+    fn listen(&self, default_ports: [u16; 2]) -> Option<LlamaCppListen<'_>> {
+        let host = match self.host.as_deref() {
+            None => None,
+            Some(hosts) => Some(hosts.split(',').map(str::trim).find(|h| is_tcp_host(h))?),
+        };
+        let (port, fallback_ports) = match self.port {
+            Some(0) => return None,
+            Some(port) => (port, Vec::new()),
+            None => {
+                let [first, others @ ..] = default_ports;
+                (first, others.to_vec())
+            }
+        };
+        Some(LlamaCppListen {
+            host,
+            port,
+            fallback_ports,
+        })
+    }
+}
+
+/// Whether a `--host` entry is a TCP address rather than a Unix socket path,
+/// which llama-server tells by the `.sock` ending; nothing with a `/` in it
+/// is an address either.
+fn is_tcp_host(host: &str) -> bool {
+    !host.is_empty() && !host.ends_with(".sock") && !host.contains('/')
+}
+
+/// Where a llama-server listens over TCP, as its launch says: on the port it
+/// names, or — naming none — on one of llama.cpp's defaults, so there is
+/// always a port to try first.
+#[derive(Debug, PartialEq)]
+struct LlamaCppListen<'a> {
+    /// The address; `None` for llama-server's own default, the loopback.
+    host: Option<&'a str>,
+    /// The port to try first: the one its launch names, else the likelier
+    /// of llama.cpp's defaults.
+    port: u16,
+    /// The ports to try after `port`, in order: the other defaults when its
+    /// launch names no port, else none.
+    fallback_ports: Vec<u16>,
+}
+
+impl LlamaCppListen<'_> {
+    /// Every port it may be on, in the order to try them, `port` first.
+    #[cfg(any(target_os = "linux", test))]
+    fn ports(&self) -> impl Iterator<Item = u16> + '_ {
+        std::iter::once(self.port).chain(self.fallback_ports.iter().copied())
+    }
+
+    /// The endpoint on its address to probe first, on `port`, and those to
+    /// fall back on, one for each of `fallback_ports` in order.
+    fn endpoints(&self) -> (String, Vec<String>) {
+        let on = |port| llamacpp_endpoint(self.host, port);
+        (
+            on(self.port),
+            self.fallback_ports.iter().copied().map(on).collect(),
+        )
+    }
+}
+
+/// The endpoint for a llama-server on `host`: one bound to every interface
+/// (`0.0.0.0`, `::`), or to the default, is probed on localhost, as the
+/// other engines' are; an IPv6 address goes in brackets.
+fn llamacpp_endpoint(host: Option<&str>, port: u16) -> String {
+    let host = host.unwrap_or_default().trim_matches(['[', ']']);
+    let host = match host.parse::<std::net::IpAddr>() {
+        Ok(ip) if ip.is_unspecified() => "localhost".to_string(),
+        Ok(std::net::IpAddr::V6(ip)) => format!("[{ip}]"),
+        Ok(ip) => ip.to_string(),
+        Err(_) if host.is_empty() => "localhost".to_string(),
+        Err(_) => host.to_string(),
+    };
+    format!("http://{host}:{port}")
+}
+
+/// The endpoints a containerized llama-server answers on from the host, in
+/// the order to probe them, given where it listens inside the container,
+/// its network mode and its published ports:
+///
+/// - on the host network it listens on the host's own interfaces, read
+///   like a native server's;
+/// - otherwise the host ports that publish the ports it may listen on, in
+///   their order, then any other published port: a port set where neither
+///   its command nor its environment shows it (a wrapper script's) can
+///   still be published, and the probe rejects what is not llama-server;
+/// - with nothing published there and a network mode the Docker API did not
+///   report, or one shared with another container, the listening ports are
+///   assumed reachable as on the host network;
+/// - on a bridge or other network with nothing published, none: the server
+///   is unreachable from the host, and assuming its port would point at
+///   whatever else is there — a native llama-server on 8080, say, whose
+///   engine would then take this container for its own.
+#[cfg(any(target_os = "linux", test))]
+fn llamacpp_container_endpoints(
+    listen: &LlamaCppListen<'_>,
+    network_mode: Option<&str>,
+    published: &[PublishedPort<'_>],
+) -> Vec<String> {
+    let listening = || {
+        let (endpoint, fallbacks) = listen.endpoints();
+        std::iter::once(endpoint).chain(fallbacks).collect()
+    };
+    if network_mode == Some("host") {
+        return listening();
+    }
+    let mut bindings: Vec<(u16, u16, Option<&str>)> = published
+        .iter()
+        .filter(|p| p.tcp)
+        .filter_map(|p| Some((p.container, p.host?, p.host_ip)))
+        .collect();
+    bindings.sort_by_key(|&(container, _, _)| {
+        listen
+            .ports()
+            .position(|port| port == container)
+            .unwrap_or(usize::MAX)
+    });
+    let mut endpoints: Vec<String> = Vec::new();
+    for (_, host_port, host_ip) in bindings {
+        let endpoint = llamacpp_endpoint(host_ip, host_port);
+        if !endpoints.contains(&endpoint) {
+            endpoints.push(endpoint);
+        }
+    }
+    if !endpoints.is_empty() {
+        return endpoints;
+    }
+    match network_mode {
+        None => listening(),
+        Some(mode) if mode.starts_with("container:") => listening(),
+        Some(_) => Vec::new(),
+    }
+}
+
+/// The command line a llama.cpp container's server was launched with: the
+/// container's own command when it runs llama-server (the official images'
+/// entrypoint is `/app/llama-server`), else the first llama-server among its
+/// processes — a wrapper entrypoint's child (`/app/tools.sh --server`).
+/// A router's children come after it, with the random ports it gave them.
+/// Failing both, the container's command, for whatever it shows.
+#[cfg(any(target_os = "linux", test))]
+fn llamacpp_container_command<'a>(command: &'a str, processes: &'a [String]) -> &'a str {
+    if runs_engine(command, &EngineType::LlamaCpp) {
+        return command;
+    }
+    processes
+        .iter()
+        .find(|process| runs_engine(process, &EngineType::LlamaCpp))
+        .map_or(command, String::as_str)
+}
+
 // ---------------------------------------------------------------------------
 // Layer 1: Process scan
 // ---------------------------------------------------------------------------
@@ -500,13 +900,7 @@ fn detect_by_process(sys: &sysinfo::System) -> Vec<DetectedEngine> {
         .map(|(pid, p)| (pid.as_u32(), p.parent().map(|pp| pp.as_u32()), p.cmd()))
         .collect();
     processes.sort_unstable_by_key(|&(pid, _, _)| pid);
-    engines_from_processes(&processes, |pid| {
-        let value = process_env_var(pid, "OLLAMA_HOST");
-        if value.is_err() {
-            note_unreadable_ollama_host(pid);
-        }
-        value
-    })
+    engines_from_processes(&processes, process_env_var)
 }
 
 /// One host process as the scan reads it: its PID, its parent's PID, and
@@ -523,65 +917,92 @@ type HostProcess<'a> = (u32, Option<u32>, &'a [OsString]);
 /// `vllm serve --port 8000/8001/8002` processes) surface each port as its
 /// own engine rather than collapsing to the first.
 ///
-/// An Ollama server's own processes are never engines: the runner it starts
-/// per loaded model — `ollama runner ...` up to v0.19 and for MLX models,
-/// `llama-server ...` from v0.35 — serves Ollama on a random loopback port,
-/// an interface Ollama does not promise. Every descendant of an
-/// `ollama serve` is left out before any matcher sees it, so an engine type
-/// that recognizes `llama-server` does not turn one into an engine. Its
-/// PIDs belong to the Ollama engine instead, with every other candidate's
-/// descendants: the GPU sees a server's children, not the server.
+/// A server's own processes are never engines, whatever matcher would claim
+/// them: every descendant of a server whose engine type runs servers of its
+/// own (`owns_its_descendants`) is left out before any matcher sees it.
+/// Their PIDs belong to that server's engine instead, with every other
+/// candidate's descendants: the GPU sees a server's children, not the
+/// server.
 ///
-/// `ollama_host_of` reads a process's `OLLAMA_HOST`, which decides where an
-/// Ollama server listens: unset, or an environment that cannot be read,
-/// leaves Ollama's default.
+/// `env_of` reads a variable of a process's environment, which decides
+/// where Ollama and llama.cpp servers listen and, for llama.cpp, the model:
+/// unset, or an environment that cannot be read, leaves the default.
 fn engines_from_processes(
     processes: &[HostProcess<'_>],
-    ollama_host_of: impl Fn(u32) -> std::io::Result<Option<String>>,
+    env_of: impl Fn(u32, &str) -> std::io::Result<Option<String>>,
 ) -> Vec<DetectedEngine> {
     let tree: Vec<(u32, Option<u32>)> = processes
         .iter()
         .map(|&(pid, parent, _)| (pid, parent))
         .collect();
-    let ollama_servers: Vec<u32> = processes
+    let engines: Vec<Option<EngineType>> = processes
         .iter()
-        .filter(|(_, _, cmd)| engine_of_process(cmd) == Some(EngineType::Ollama))
+        .map(|(_, _, cmd)| engine_of_process(cmd))
+        .collect();
+    let owners: HashSet<u32> = processes
+        .iter()
+        .zip(&engines)
+        .filter(|(_, engine)| engine.as_ref().is_some_and(owns_its_descendants))
+        .map(|(&(pid, _, _), _)| pid)
+        .collect();
+    let owners_children: Vec<u32> = processes
+        .iter()
+        .filter(|(_, parent, _)| parent.is_some_and(|parent| owners.contains(&parent)))
         .map(|&(pid, _, _)| pid)
         .collect();
-    let ollamas_own: HashSet<u32> = expand_pid_tree(&ollama_servers, &tree)
+    let owned: HashSet<u32> = expand_pid_tree(&owners_children, &tree)
         .into_iter()
-        .filter(|pid| !ollama_servers.contains(pid))
         .collect();
 
     let mut detected: Vec<DetectedEngine> = Vec::new();
     let mut seen_endpoints: HashMap<(EngineType, String), usize> = HashMap::new();
-    for &(pid, _, cmd) in processes {
-        if ollamas_own.contains(&pid) {
+    for (&(pid, _, cmd), engine_type) in processes.iter().zip(engines) {
+        if owned.contains(&pid) {
             continue;
         }
-        let Some(engine_type) = engine_of_process(cmd) else {
+        let Some(engine_type) = engine_type else {
             continue;
         };
-        let endpoint = match engine_type {
+        let (endpoint, fallback_endpoints, served_model) = match engine_type {
             EngineType::Ollama => {
-                let host = OllamaHost::from_env(ollama_host_of(pid).ok().flatten().as_deref());
+                let value = env_of(pid, "OLLAMA_HOST");
+                if value.is_err() {
+                    note_unreadable_ollama_host(pid);
+                }
+                let host = OllamaHost::from_env(value.ok().flatten().as_deref());
                 tracing::debug!(
                     "ollama serve (pid {pid}) binds {}; probing {}",
                     host.url(),
                     host.endpoint()
                 );
-                host.endpoint()
+                // Ollama loads models on demand; none is named at launch.
+                (host.endpoint(), Vec::new(), None)
             }
-            _ => {
+            EngineType::LlamaCpp => {
+                let args: Vec<_> = cmd.iter().map(|arg| arg.to_string_lossy()).collect();
+                let launch = llamacpp_launch(&args, |name| env_of(pid, name).ok().flatten());
+                let Some(listen) = launch.listen(llamacpp::default_ports(&DeploymentMode::Native))
+                else {
+                    tracing::debug!(
+                        "llama-server (pid {pid}) listens on no TCP port its launch names \
+                         (a Unix socket, or --port 0); not an endpoint"
+                    );
+                    continue;
+                };
+                let (endpoint, fallback_endpoints) = listen.endpoints();
+                (endpoint, fallback_endpoints, launch.served_model())
+            }
+            EngineType::Vllm | EngineType::Sglang => {
                 let default_endpoint = format!("http://localhost:{}", default_port(&engine_type));
-                parse_endpoint_from_args(cmd, &default_endpoint).unwrap_or(default_endpoint)
+                let endpoint =
+                    parse_endpoint_from_args(cmd, &default_endpoint).unwrap_or(default_endpoint);
+                let served_model = if engine_type == EngineType::Vllm {
+                    parse_model_from_args(cmd)
+                } else {
+                    parse_sglang_model_from_args(cmd)
+                };
+                (endpoint, Vec::new(), served_model)
             }
-        };
-        let served_model = match engine_type {
-            EngineType::Vllm => parse_model_from_args(cmd),
-            EngineType::Sglang => parse_sglang_model_from_args(cmd),
-            EngineType::Ollama => None,
-            EngineType::LlamaCpp => None,
         };
         match seen_endpoints.get(&(engine_type.clone(), endpoint.clone())) {
             Some(&slot) => detected[slot].pids.push(pid),
@@ -594,6 +1015,7 @@ fn engines_from_processes(
                     served_model,
                     pids: vec![pid],
                     container_id: None,
+                    fallback_endpoints,
                 });
             }
         }
@@ -611,6 +1033,22 @@ fn engines_from_processes(
     detected
 }
 
+/// Whether an engine type's server runs servers of its own, which are its
+/// and never engines themselves:
+///
+/// - Ollama starts a runner per loaded model — `ollama runner ...` up to
+///   v0.19 and for MLX models, `llama-server ...` from v0.35 — serving
+///   Ollama on a random loopback port, an interface Ollama does not promise.
+///   llama.cpp's engine type recognizes that `llama-server`, so it is left
+///   out by its ancestry.
+/// - A llama.cpp router (started with no model) spawns one child per model
+///   it loads: an ordinary-looking `llama-server --host 127.0.0.1 --port
+///   <random> --alias <id> --model <path>`, whose environment carries
+///   `LLAMA_SERVER_ROUTER_PORT`. The router is the engine.
+fn owns_its_descendants(engine_type: &EngineType) -> bool {
+    matches!(engine_type, EngineType::Ollama | EngineType::LlamaCpp)
+}
+
 /// `name` among `NAME=value` entries, as `/proc/<pid>/environ` and Docker's
 /// `Env` list them; `None` when it is not set.
 #[cfg(any(target_os = "linux", test))]
@@ -624,7 +1062,8 @@ fn env_var_in<'a>(entries: impl IntoIterator<Item = &'a [u8]>, name: &str) -> Op
 /// A variable of a host process's environment, from `/proc/<pid>/environ`:
 /// `Ok(None)` when it is not set, an error when the environment cannot be
 /// read — it belongs to the process's own user, and Ollama typically runs
-/// as `ollama` while the dashboard does not.
+/// as `ollama`, a container's llama-server as root, while the dashboard
+/// does not.
 #[cfg(target_os = "linux")]
 fn process_env_var(pid: u32, name: &str) -> std::io::Result<Option<String>> {
     let environ = std::fs::read(format!("/proc/{pid}/environ"))?;
@@ -1016,46 +1455,44 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
             continue;
         }
 
-        let (endpoint, served_model) = if engine_type == EngineType::Ollama {
+        // Where the host reaches the container: its published ports and its
+        // network mode. Ollama and llama.cpp read where they listen inside
+        // it from the container's environment (`docker inspect`'s
+        // Config.Env, the image's merged with the run's): its server runs as
+        // root, so the host cannot read that process's environment.
+        let published: Vec<PublishedPort<'_>> = container
+            .ports
+            .iter()
+            .flatten()
+            .map(|p| PublishedPort {
+                container: p.private_port,
+                host: p.public_port,
+                host_ip: p.ip.as_deref(),
+                tcp: !matches!(
+                    p.typ,
+                    Some(PortSummaryTypeEnum::UDP | PortSummaryTypeEnum::SCTP)
+                ),
+            })
+            .collect();
+        let network_mode = container
+            .host_config
+            .as_ref()
+            .and_then(|h| h.network_mode.as_deref());
+        let env = match engine_type {
+            EngineType::Ollama | EngineType::LlamaCpp => container_env(&docker, container_id).await,
+            EngineType::Vllm | EngineType::Sglang => Vec::new(),
+        };
+        let env_var = |name: &str| env_var_in(env.iter().map(|e| e.as_bytes()), name);
+
+        let (endpoint, fallback_endpoints, served_model) = if engine_type == EngineType::Ollama {
             // Ollama listens where the container's OLLAMA_HOST says — the
             // image sets 0.0.0.0:11434 — and names no model at launch. Its
             // process list holds each loaded model's runner, `--port` and
             // all, which is not where Ollama serves, so no port is read off
             // it.
-            let env = if container_id.is_empty() {
-                Vec::new()
-            } else {
-                match docker.inspect_container(container_id, None).await {
-                    Ok(info) => info.config.and_then(|c| c.env).unwrap_or_default(),
-                    Err(e) => {
-                        tracing::debug!("docker inspect failed for {}: {}", container_id, e);
-                        Vec::new()
-                    }
-                }
-            };
-            let listen = OllamaHost::from_env(
-                env_var_in(env.iter().map(|e| e.as_bytes()), "OLLAMA_HOST").as_deref(),
-            );
-            let published: Vec<PublishedPort<'_>> = container
-                .ports
-                .iter()
-                .flatten()
-                .map(|p| PublishedPort {
-                    container: p.private_port,
-                    host: p.public_port,
-                    host_ip: p.ip.as_deref(),
-                    tcp: !matches!(
-                        p.typ,
-                        Some(PortSummaryTypeEnum::UDP | PortSummaryTypeEnum::SCTP)
-                    ),
-                })
-                .collect();
-            let network_mode = container
-                .host_config
-                .as_ref()
-                .and_then(|h| h.network_mode.as_deref());
+            let listen = OllamaHost::from_env(env_var("OLLAMA_HOST").as_deref());
             match ollama_container_endpoint(&listen, network_mode, &published) {
-                Some(endpoint) => (endpoint, None),
+                Some(endpoint) => (endpoint, Vec::new(), None),
                 None => {
                     tracing::debug!(
                         "Ollama container (image={}) is not on the host network and publishes \
@@ -1067,6 +1504,41 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
                     continue;
                 }
             }
+        } else if engine_type == EngineType::LlamaCpp {
+            // llama-server listens where its command line says, else its
+            // LLAMA_ARG_* environment — the official images set
+            // LLAMA_ARG_PORT=8080 and LLAMA_ARG_HOST=0.0.0.0 — else on
+            // llama.cpp's own defaults for a container. A router's children
+            // in its process list carry the random ports it gave them, which
+            // is not where it serves.
+            let launch_command = llamacpp_container_command(
+                container.command.as_deref().unwrap_or_default(),
+                &commands,
+            );
+            let args: Vec<&str> = launch_command.split_whitespace().collect();
+            let launch = llamacpp_launch(&args, env_var);
+            let Some(listen) = launch.listen(llamacpp::default_ports(&DeploymentMode::Docker))
+            else {
+                tracing::debug!(
+                    "llama.cpp container (image={}) listens on no TCP port its launch names \
+                     (a Unix socket, or --port 0); skipping",
+                    container.image.as_deref().unwrap_or("?"),
+                );
+                continue;
+            };
+            let mut endpoints =
+                llamacpp_container_endpoints(&listen, network_mode, &published).into_iter();
+            let Some(endpoint) = endpoints.next() else {
+                tracing::debug!(
+                    "llama.cpp container (image={}) is not on the host network and publishes \
+                     no port for {:?}; unreachable from the host. Publish the port, or \
+                     configure it with --engine llamacpp --engine-url <url>.",
+                    container.image.as_deref().unwrap_or("?"),
+                    listen.ports().collect::<Vec<_>>(),
+                );
+                continue;
+            };
+            (endpoint, endpoints.collect(), launch.served_model())
         } else {
             // The port from the container's port mappings (-p / port
             // forwarding), else its own command string, else its process
@@ -1101,12 +1573,13 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
             if guessed {
                 tracing::debug!("Docker engine on {endpoint}: no port found, assuming the default");
             }
-            (endpoint, served_model)
+            (endpoint, Vec::new(), served_model)
         };
         tracing::debug!(
-            "Docker engine candidate: image={}, endpoint={}, model={:?}",
+            "Docker engine candidate: image={}, endpoint={}, then {:?}, model={:?}",
             container.image.as_deref().unwrap_or("?"),
             endpoint,
+            fallback_endpoints,
             served_model,
         );
         detected.push(DetectedEngine {
@@ -1116,10 +1589,28 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
             served_model,
             pids,
             container_id: container.id.clone(),
+            fallback_endpoints,
         });
     }
 
     detected
+}
+
+/// A container's environment as `docker inspect` reports it (Config.Env:
+/// the image's variables merged with the run's), or none when it cannot be
+/// inspected.
+#[cfg(target_os = "linux")]
+async fn container_env(docker: &bollard::Docker, container_id: &str) -> Vec<String> {
+    if container_id.is_empty() {
+        return Vec::new();
+    }
+    match docker.inspect_container(container_id, None).await {
+        Ok(info) => info.config.and_then(|c| c.env).unwrap_or_default(),
+        Err(e) => {
+            tracing::debug!("docker inspect failed for {}: {}", container_id, e);
+            Vec::new()
+        }
+    }
 }
 
 /// The command line of a `docker top` row produced with
@@ -1537,6 +2028,7 @@ mod tests {
             served_model: None,
             pids: pids.to_vec(),
             container_id: None,
+            fallback_endpoints: Vec::new(),
         }
     }
 
@@ -1596,25 +2088,45 @@ mod tests {
         line.split(' ').map(std::ffi::OsString::from).collect()
     }
 
-    /// The process scan over `(pid, parent, command line)` rows, with each
-    /// process's `OLLAMA_HOST` read by `env`.
-    fn scan_with(
-        rows: &[(u32, Option<u32>, &str)],
-        env: impl Fn(u32) -> std::io::Result<Option<String>>,
+    /// A variable of a process's environment, as `env` reads it: unset, set,
+    /// or unreadable.
+    type EnvRead = std::io::Result<Option<String>>;
+
+    /// The process scan over `(pid, parent, argv)` rows, with each process's
+    /// environment variables read by `env`.
+    fn scan_argvs(
+        rows: &[(u32, Option<u32>, Vec<OsString>)],
+        env: impl Fn(u32, &str) -> EnvRead,
     ) -> Vec<DetectedEngine> {
-        let argvs: Vec<Vec<OsString>> = rows.iter().map(|(_, _, line)| argv(line)).collect();
         let processes: Vec<HostProcess<'_>> = rows
             .iter()
-            .zip(&argvs)
-            .map(|(&(pid, parent, _), cmd)| (pid, parent, cmd.as_slice()))
+            .map(|(pid, parent, cmd)| (*pid, *parent, cmd.as_slice()))
             .collect();
         engines_from_processes(&processes, env)
     }
 
-    /// The process scan where no environment can be read — the dashboard
-    /// running as another user than every engine.
+    /// The process scan over `(pid, parent, command line)` rows, with each
+    /// process's environment variables read by `env`.
+    fn scan_with(
+        rows: &[(u32, Option<u32>, &str)],
+        env: impl Fn(u32, &str) -> EnvRead,
+    ) -> Vec<DetectedEngine> {
+        let rows: Vec<_> = rows
+            .iter()
+            .map(|&(pid, parent, line)| (pid, parent, argv(line)))
+            .collect();
+        scan_argvs(&rows, env)
+    }
+
+    /// An environment that cannot be read — the dashboard running as another
+    /// user than the engine.
+    fn unreadable(_pid: u32, _name: &str) -> EnvRead {
+        Err(std::io::ErrorKind::PermissionDenied.into())
+    }
+
+    /// The process scan where no environment can be read.
     fn scan(rows: &[(u32, Option<u32>, &str)]) -> Vec<DetectedEngine> {
-        scan_with(rows, |_| Err(std::io::ErrorKind::PermissionDenied.into()))
+        scan_with(rows, unreadable)
     }
 
     #[test]
@@ -2032,6 +2544,17 @@ mod tests {
         }
     }
 
+    /// A `/proc/<pid>/cmdline` fixture as sysinfo reads it: one argument per
+    /// NUL-terminated piece.
+    fn cmdline(bytes: &[u8]) -> Vec<OsString> {
+        bytes
+            .strip_suffix(b"\0")
+            .unwrap_or(bytes)
+            .split(|&b| b == 0)
+            .map(|arg| OsString::from(String::from_utf8_lossy(arg).into_owned()))
+            .collect()
+    }
+
     /// `ollama serve` by every path it is launched from: systemd's
     /// `/usr/local/bin/ollama`, the image's `/bin/ollama`, through `PATH`,
     /// Homebrew's, and Windows' `ollama.exe`.
@@ -2055,7 +2578,9 @@ mod tests {
 
     /// Only the server is: not Ollama's clients, not its per-model runners
     /// (`ollama runner` up to v0.19, `llama-server` from v0.35 — `serve` is a
-    /// substring of it), not a program that is merely named like it.
+    /// substring of it), not a program that is merely named like it. (A
+    /// `llama-server` is llama.cpp's, which is why Ollama's own are kept out
+    /// by their ancestry.)
     #[test]
     fn nothing_else_named_ollama_or_serve_is_the_server() {
         for line in [
@@ -2071,9 +2596,19 @@ mod tests {
             "sh -c ollama serve",
             "tail -f /var/log/ollama serve",
         ] {
-            assert_eq!(engine_of_process(&argv(line)), None, "{line}");
+            assert_ne!(
+                engine_of_process(&argv(line)),
+                Some(EngineType::Ollama),
+                "{line}"
+            );
             assert!(!runs_engine(line, &EngineType::Ollama), "{line}");
         }
+        assert_eq!(
+            engine_of_process(&cmdline(include_bytes!(
+                "fixtures/ollama_proc_runner.cmdline"
+            ))),
+            None
+        );
     }
 
     /// A native server is probed where its `OLLAMA_HOST` says it listens, and
@@ -2081,12 +2616,15 @@ mod tests {
     /// cannot be read (Ollama runs as `ollama`, the dashboard does not).
     #[test]
     fn a_native_ollama_is_probed_where_its_ollama_host_says() {
-        let endpoint = |env: std::io::Result<Option<String>>| {
+        let endpoint = |env: EnvRead| {
             let env = std::sync::Mutex::new(Some(env));
-            let detected = scan_with(&[(100, Some(1), "/usr/local/bin/ollama serve")], |pid| {
-                assert_eq!(pid, 100);
-                env.lock().unwrap().take().expect("read once")
-            });
+            let detected = scan_with(
+                &[(100, Some(1), "/usr/local/bin/ollama serve")],
+                |pid, name| {
+                    assert_eq!((pid, name), (100, "OLLAMA_HOST"));
+                    env.lock().unwrap().take().expect("read once")
+                },
+            );
             assert_eq!(detected.len(), 1);
             assert_eq!(detected[0].engine_type, EngineType::Ollama);
             assert_eq!(detected[0].deployment_mode, DeploymentMode::Native);
@@ -2169,22 +2707,34 @@ mod tests {
     }
 
     /// Whatever matcher claims a process, one that an Ollama server started
-    /// is Ollama's and not an engine of its own. A `vllm serve` stands in
-    /// here for the `llama-server` an engine type for llama.cpp (#126) will
-    /// recognize: the exclusion applies before any matcher, so that type
-    /// inherits it. The same command line outside Ollama is an engine.
+    /// is Ollama's and not an engine of its own: the `llama-server` child
+    /// each GGUF model runs in from v0.35 (as its source builds the command
+    /// line), which llama.cpp's engine type recognizes; 0.19.0's `ollama
+    /// runner` child (verbatim from the Spark), which no type does; and
+    /// anything further down. The same `llama-server` outside Ollama is an
+    /// engine.
     #[test]
     fn a_process_ollama_started_is_never_an_engine_of_its_own() {
-        let detected = scan(&[
-            (100, Some(1), "/usr/local/bin/ollama serve"),
-            (101, Some(100), "vllm serve /models/x --port 45999"),
-            (
-                102,
-                Some(101),
-                "python3 -m sglang.launch_server --port 46000",
-            ),
-            (200, Some(1), "vllm serve /models/x --port 8001"),
-        ]);
+        let runner = cmdline(include_bytes!("fixtures/ollama_proc_runner.cmdline"));
+        let detected = scan_argvs(
+            &[
+                (100, Some(1), argv("/usr/local/bin/ollama serve")),
+                (101, Some(100), runner),
+                (102, Some(100), argv(LLAMA_SERVER)),
+                (
+                    103,
+                    Some(102),
+                    argv("python3 -m sglang.launch_server --port 46000"),
+                ),
+                (104, Some(100), argv("vllm serve /models/x --port 45999")),
+                (
+                    200,
+                    Some(1),
+                    argv("/opt/llama.cpp/llama-server -m /models/x.gguf --port 8001"),
+                ),
+            ],
+            unreadable,
+        );
         let found: Vec<_> = detected
             .iter()
             .map(|d| (d.engine_type.clone(), d.endpoint.as_str(), d.pids.clone()))
@@ -2195,9 +2745,9 @@ mod tests {
                 (
                     EngineType::Ollama,
                     "http://127.0.0.1:11434",
-                    vec![100, 101, 102]
+                    vec![100, 101, 102, 103, 104]
                 ),
-                (EngineType::Vllm, "http://localhost:8001", vec![200]),
+                (EngineType::LlamaCpp, "http://localhost:8001", vec![200]),
             ]
         );
     }
@@ -2210,7 +2760,7 @@ mod tests {
                 (100, Some(1), "/usr/local/bin/ollama serve"),
                 (200, Some(1), "/usr/local/bin/ollama serve"),
             ],
-            |pid| Ok((pid == 200).then(|| "127.0.0.1:11500".to_string())),
+            |pid, _| Ok((pid == 200).then(|| "127.0.0.1:11500".to_string())),
         );
         let endpoints: Vec<_> = detected.iter().map(|d| d.endpoint.as_str()).collect();
         assert_eq!(
@@ -2506,5 +3056,952 @@ mod tests {
         );
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].endpoint, "http://127.0.0.1:11500");
+    }
+
+    // -----------------------------------------------------------------------
+    // llama.cpp
+    // -----------------------------------------------------------------------
+
+    /// The models the capture served, by their absolute paths on the Spark.
+    const M15: &str = "/home/niklas/llamacpp-capture/models/qwen2.5-1.5b-instruct-q4_k_m.gguf";
+    const M05: &str = "/home/niklas/llamacpp-capture/models/qwen2.5-0.5b-instruct-q4_k_m.gguf";
+    /// The same 0.5B model mounted into the captured containers.
+    const IN_CONTAINER: &str = "/models/qwen2.5-0.5b-instruct-q4_k_m.gguf";
+
+    /// Every `llama-server` command line the capture recorded, verbatim
+    /// from `/proc/<pid>/cmdline` (llama.cpp v0.7.0, build b11669, on the
+    /// Spark): natively, as a router and its child, and the containers' as
+    /// the host sees them.
+    const LLAMACPP_CMDLINES: [(&str, &[u8]); 13] = [
+        (
+            "m_port_metrics",
+            include_bytes!("fixtures/llamacpp_proc_m_port_metrics.cmdline"),
+        ),
+        (
+            "model_host_port",
+            include_bytes!("fixtures/llamacpp_proc_model_host_port.cmdline"),
+        ),
+        (
+            "api_key",
+            include_bytes!("fixtures/llamacpp_proc_api_key.cmdline"),
+        ),
+        (
+            "api_key_file",
+            include_bytes!("fixtures/llamacpp_proc_api_key_file.cmdline"),
+        ),
+        (
+            "hf_alias",
+            include_bytes!("fixtures/llamacpp_proc_hf_alias.cmdline"),
+        ),
+        ("env", include_bytes!("fixtures/llamacpp_proc_env.cmdline")),
+        (
+            "spec_draft",
+            include_bytes!("fixtures/llamacpp_proc_spec_draft.cmdline"),
+        ),
+        (
+            "sleep_idle",
+            include_bytes!("fixtures/llamacpp_proc_sleep_idle.cmdline"),
+        ),
+        (
+            "router",
+            include_bytes!("fixtures/llamacpp_proc_router.cmdline"),
+        ),
+        (
+            "router_child",
+            include_bytes!("fixtures/llamacpp_proc_router_child.cmdline"),
+        ),
+        (
+            "docker_published",
+            include_bytes!("fixtures/llamacpp_proc_docker_published.cmdline"),
+        ),
+        (
+            "docker_host",
+            include_bytes!("fixtures/llamacpp_proc_docker_host.cmdline"),
+        ),
+        (
+            "docker_env",
+            include_bytes!("fixtures/llamacpp_proc_docker_env.cmdline"),
+        ),
+    ];
+
+    fn llamacpp_cmdline(name: &str) -> Vec<OsString> {
+        let (_, bytes) = LLAMACPP_CMDLINES
+            .iter()
+            .find(|(fixture, _)| *fixture == name)
+            .expect("a captured command line");
+        cmdline(bytes)
+    }
+
+    /// An environment read from a `/proc/<pid>/environ` fixture.
+    fn environ(bytes: &'static [u8]) -> impl Fn(u32, &str) -> EnvRead {
+        move |_: u32, name: &str| Ok(env_var_in(bytes.split(|&b| b == 0), name))
+    }
+
+    /// Every endpoint a candidate is to be probed on, in order.
+    fn endpoints_of(engine: &DetectedEngine) -> Vec<String> {
+        std::iter::once(engine.endpoint.clone())
+            .chain(engine.fallback_endpoints.iter().cloned())
+            .collect()
+    }
+
+    fn strings(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// llama-server by its binary, whichever path it was started from.
+    #[test]
+    fn every_captured_llama_server_is_llamacpp() {
+        for (name, bytes) in LLAMACPP_CMDLINES {
+            assert_eq!(
+                engine_of_process(&cmdline(bytes)),
+                Some(EngineType::LlamaCpp),
+                "{name}"
+            );
+        }
+        for line in [
+            "llama-server -m /models/x.gguf",
+            "/app/llama-server -m /models/x.gguf --metrics",
+            "./llama-server --port 8000",
+        ] {
+            assert!(runs_engine(line, &EngineType::LlamaCpp), "{line}");
+        }
+    }
+
+    /// Only the program counts. A process that names llama-server among its
+    /// arguments serves nothing — and since a llama-server's descendants
+    /// are its own, a tmux session named after it would otherwise hide the
+    /// server started inside it.
+    #[test]
+    fn a_process_that_merely_mentions_llama_server_is_not_a_server() {
+        for line in [
+            "tail -f /var/log/llama-server.log",
+            "journalctl -fu llama-server",
+            "tmux new -s llama-server",
+            "pgrep -f /opt/llama.cpp/llama-server",
+            "/opt/llama-server.sh --port 8080",
+            "/usr/local/bin/llama-server-proxy --port 8080",
+            "my-llama-server --port 8080",
+            "/app/model-runner",
+        ] {
+            assert_eq!(engine_of_process(&argv(line)), None, "{line}");
+            assert!(!runs_engine(line, &EngineType::LlamaCpp), "{line}");
+        }
+
+        let detected = scan(&[
+            (10, Some(1), "tmux new -s llama-server"),
+            (11, Some(10), "-bash"),
+            (
+                12,
+                Some(11),
+                "/opt/llama.cpp/llama-server -m /models/x.gguf --port 18080",
+            ),
+        ]);
+        assert_eq!(detected.len(), 1);
+        assert_eq!(detected[0].endpoint, "http://localhost:18080");
+        assert_eq!(detected[0].pids, vec![12]);
+    }
+
+    /// Each captured launch, as the native scan reads it: the endpoint from
+    /// `--host`/`--port`, else its environment, else the default ports in
+    /// the order a native server is tried on (9931 from v0.7.0, 8080
+    /// before); and the model by the name llama-server serves it under.
+    /// The containers' processes are read here as the host sees them — their
+    /// environment is root's, unreadable — which the container's own
+    /// engine then absorbs.
+    #[test]
+    fn each_captured_launch_is_probed_where_it_listens_and_named_by_what_it_serves() {
+        let defaults = ["http://localhost:9931", "http://localhost:8080"];
+        let env_launch = environ(include_bytes!("fixtures/llamacpp_proc_env.environ"));
+        type Env = Box<dyn Fn(u32, &str) -> EnvRead>;
+        let cases: Vec<(&str, Env, Vec<&str>, Option<&str>)> = vec![
+            (
+                "m_port_metrics",
+                Box::new(unreadable),
+                vec!["http://localhost:18080"],
+                Some(M15),
+            ),
+            (
+                "model_host_port",
+                Box::new(unreadable),
+                vec!["http://127.0.0.1:18081"],
+                Some(M05),
+            ),
+            (
+                "api_key",
+                Box::new(unreadable),
+                vec!["http://localhost:18082"],
+                Some(M05),
+            ),
+            (
+                "api_key_file",
+                Box::new(unreadable),
+                vec!["http://localhost:18083"],
+                Some(M05),
+            ),
+            (
+                "hf_alias",
+                Box::new(unreadable),
+                vec!["http://127.0.0.1:18084"],
+                Some("qwen-small"),
+            ),
+            (
+                "env",
+                Box::new(env_launch),
+                vec!["http://localhost:18085"],
+                Some("env-alias"),
+            ),
+            ("env", Box::new(unreadable), defaults.to_vec(), None),
+            (
+                "spec_draft",
+                Box::new(unreadable),
+                vec!["http://localhost:18086"],
+                Some(M15),
+            ),
+            (
+                "sleep_idle",
+                Box::new(unreadable),
+                vec!["http://localhost:18089"],
+                Some(M05),
+            ),
+            (
+                "router",
+                Box::new(unreadable),
+                vec!["http://localhost:18088"],
+                None,
+            ),
+            (
+                "router_child",
+                Box::new(unreadable),
+                vec!["http://127.0.0.1:52649"],
+                Some("qwen2.5-0.5b-instruct-q4_k_m"),
+            ),
+            (
+                "docker_host",
+                Box::new(unreadable),
+                vec!["http://localhost:18091"],
+                Some(IN_CONTAINER),
+            ),
+            (
+                "docker_published",
+                Box::new(unreadable),
+                defaults.to_vec(),
+                Some(IN_CONTAINER),
+            ),
+            ("docker_env", Box::new(unreadable), defaults.to_vec(), None),
+        ];
+        for (name, env, endpoints, model) in cases {
+            let detected = scan_argvs(&[(42, Some(1), llamacpp_cmdline(name))], env);
+            assert_eq!(detected.len(), 1, "{name}");
+            let engine = &detected[0];
+            assert_eq!(engine.engine_type, EngineType::LlamaCpp, "{name}");
+            assert_eq!(engine.deployment_mode, DeploymentMode::Native, "{name}");
+            assert_eq!(endpoints_of(engine), strings(&endpoints), "{name}");
+            assert_eq!(engine.served_model.as_deref(), model, "{name}");
+            assert_eq!(engine.pids, vec![42], "{name}");
+        }
+    }
+
+    /// Each setting comes from its flag, else its `LLAMA_ARG_*` variable,
+    /// else llama-server's default — as llama-server applies them: the
+    /// environment first, the command line over it, a repeated flag's last
+    /// value, `_` for `-` in a long flag.
+    #[test]
+    fn launch_settings_take_the_flag_then_the_environment_then_the_default() {
+        let env = |vars: &'static [(&'static str, &'static str)]| {
+            move |name: &str| {
+                vars.iter()
+                    .find(|(var, _)| *var == name)
+                    .map(|(_, value)| value.to_string())
+            }
+        };
+        let listen = |args: &[&str], vars: &'static [(&'static str, &'static str)]| {
+            let launch = llamacpp_launch(args, env(vars));
+            launch.listen(llamacpp::NATIVE_DEFAULT_PORTS).map(|listen| {
+                let (endpoint, fallbacks) = listen.endpoints();
+                std::iter::once(endpoint)
+                    .chain(fallbacks)
+                    .collect::<Vec<_>>()
+            })
+        };
+        let one = |endpoint: &str| Some(vec![endpoint.to_string()]);
+
+        assert_eq!(
+            listen(&["llama-server"], &[("LLAMA_ARG_PORT", "18085")]),
+            one("http://localhost:18085")
+        );
+        assert_eq!(
+            listen(
+                &["llama-server", "--port", "18091"],
+                &[("LLAMA_ARG_PORT", "8080"), ("LLAMA_ARG_HOST", "0.0.0.0")]
+            ),
+            one("http://localhost:18091")
+        );
+        assert_eq!(
+            listen(
+                &["llama-server", "--host", "127.0.0.1"],
+                &[("LLAMA_ARG_HOST", "0.0.0.0"), ("LLAMA_ARG_PORT", "18092")]
+            ),
+            one("http://127.0.0.1:18092")
+        );
+        assert_eq!(
+            listen(&["llama-server", "--port=18093", "--host=10.0.0.5"], &[]),
+            one("http://10.0.0.5:18093")
+        );
+        assert_eq!(
+            listen(&["llama-server", "--port", "18080", "--port", "18081"], &[]),
+            one("http://localhost:18081")
+        );
+        assert_eq!(
+            listen(
+                &["llama-server", "--host", "0.0.0.0", "--port", "8081"],
+                &[]
+            ),
+            one("http://localhost:8081")
+        );
+        // An empty variable or a port that is not one says nothing.
+        assert_eq!(
+            listen(&["llama-server"], &[("LLAMA_ARG_PORT", "")]),
+            Some(strings(&["http://localhost:9931", "http://localhost:8080"]))
+        );
+        assert_eq!(
+            listen(&["llama-server", "--port", "auto"], &[]),
+            Some(strings(&["http://localhost:9931", "http://localhost:8080"]))
+        );
+        assert_eq!(
+            llamacpp_launch(&["llama-server", "--hf_repo", "ggml-org/x-GGUF"], |_| None)
+                .served_model()
+                .as_deref(),
+            Some("ggml-org/x-GGUF")
+        );
+    }
+
+    /// The model hint is what `/models` would call the model: the alias
+    /// that sorts first (llama-server keeps its aliases in a sorted set),
+    /// else the Hugging Face repository, else the Docker one, else the
+    /// model path — each setting from its flag, else its variable.
+    #[test]
+    fn the_served_model_is_the_name_llama_server_serves_it_under() {
+        let model = |args: &[&str], vars: &[(&str, &str)]| {
+            llamacpp_launch(args, |name| {
+                vars.iter()
+                    .find(|(var, _)| *var == name)
+                    .map(|(_, value)| value.to_string())
+            })
+            .served_model()
+        };
+        let named = |name: &str| Some(name.to_string());
+
+        assert_eq!(
+            model(&["llama-server", "-a", "qwen-tiny,qwen-small"], &[]),
+            named("qwen-small")
+        );
+        assert_eq!(
+            model(&["llama-server", "--alias", " , x "], &[]),
+            named("x")
+        );
+        assert_eq!(
+            model(
+                &["llama-server", "-m", "/m.gguf", "-hf", "org/repo:Q4_K_M"],
+                &[]
+            ),
+            named("org/repo:Q4_K_M")
+        );
+        assert_eq!(
+            model(&["llama-server", "-m", "/m.gguf", "-dr", "gemma3"], &[]),
+            named("gemma3")
+        );
+        assert_eq!(
+            model(&["llama-server", "-dr", "gemma3", "-hfr", "org/repo"], &[]),
+            named("org/repo")
+        );
+        assert_eq!(
+            model(
+                &["llama-server", "-m", "/m.gguf"],
+                &[("LLAMA_ARG_ALIAS", "env-alias")]
+            ),
+            named("env-alias")
+        );
+        assert_eq!(
+            model(
+                &["llama-server", "-hf", "org/repo"],
+                &[("LLAMA_ARG_MODEL", "/m.gguf")]
+            ),
+            named("org/repo")
+        );
+        assert_eq!(
+            model(&["llama-server"], &[("LLAMA_ARG_HF_REPO", "org/repo")]),
+            named("org/repo")
+        );
+        // A draft model is not the model; a router serves none of its own.
+        assert_eq!(model(&["llama-server", "-md", "/draft.gguf"], &[]), None);
+        assert_eq!(
+            model(&["llama-server", "--models-dir", "/models"], &[]),
+            None
+        );
+    }
+
+    /// A llama-server bound only to a Unix socket — docker-model-runner's
+    /// child, `--host <path>.sock` — has no TCP endpoint, nor has one on
+    /// `--port 0`; neither is a candidate. Of several addresses, the first
+    /// TCP one is probed.
+    #[test]
+    fn a_llama_server_without_a_tcp_port_it_names_is_no_endpoint() {
+        let model_runner_child = "/app/llama-server -ngl 999 --metrics --model /models/x.gguf --host /var/run/docker-model-runner/inference-llama.cpp-0.sock --ctx-size 4096";
+        assert!(scan(&[
+            (300, Some(1), "/app/model-runner"),
+            (301, Some(300), model_runner_child),
+        ])
+        .is_empty());
+        assert!(
+            scan_with(&[(1, None, "/app/llama-server -m /m.gguf")], |_, name| {
+                Ok((name == "LLAMA_ARG_HOST").then(|| "/tmp/llama.sock".to_string()))
+            })
+            .is_empty()
+        );
+        assert!(scan(&[(1, None, "llama-server -m /m.gguf --port 0")]).is_empty());
+
+        let endpoint = |line: &str| {
+            scan(&[(1, None, line)])
+                .first()
+                .map(|engine| engine.endpoint.clone())
+        };
+        assert_eq!(
+            endpoint("llama-server --host /tmp/a.sock,127.0.0.1 --port 8081").as_deref(),
+            Some("http://127.0.0.1:8081")
+        );
+        assert_eq!(
+            endpoint("llama-server --host ::1 --port 8081").as_deref(),
+            Some("http://[::1]:8081")
+        );
+        assert_eq!(
+            endpoint("llama-server --host :: --port 8081").as_deref(),
+            Some("http://localhost:8081")
+        );
+    }
+
+    /// A router (started with no model) is an engine; the child it spawns
+    /// per model — an ordinary-looking `llama-server --port <random>`
+    /// carrying `LLAMA_SERVER_ROUTER_PORT` — is not one of its own. The
+    /// children's PIDs are the router's, so the GPU they run on is its.
+    #[test]
+    fn a_routers_children_are_never_engines_of_their_own() {
+        let child_env = include_bytes!("fixtures/llamacpp_proc_router_child.environ");
+        let detected = scan_argvs(
+            &[
+                (300, Some(1), llamacpp_cmdline("router")),
+                (301, Some(300), llamacpp_cmdline("router_child")),
+                (
+                    302,
+                    Some(300),
+                    argv("/opt/llama-server --host 127.0.0.1 --port 41234 --alias other --model /m2.gguf"),
+                ),
+            ],
+            |pid, name| match pid {
+                301 => environ(child_env)(pid, name),
+                _ => unreadable(pid, name),
+            },
+        );
+        assert_eq!(detected.len(), 1);
+        assert_eq!(detected[0].engine_type, EngineType::LlamaCpp);
+        assert_eq!(
+            endpoints_of(&detected[0]),
+            strings(&["http://localhost:18088"])
+        );
+        assert_eq!(detected[0].served_model, None);
+        assert_eq!(detected[0].pids, vec![300, 301, 302]);
+
+        // A bare router names nothing at all — the binary, no argument — so
+        // it is probed on the default ports, children and all.
+        let bare = llamacpp_cmdline("env")[0].to_string_lossy().into_owned();
+        let detected = scan(&[
+            (400, Some(1), bare.as_str()),
+            (
+                401,
+                Some(400),
+                "/opt/llama-server --host 127.0.0.1 --port 50000 --model /m.gguf",
+            ),
+        ]);
+        assert_eq!(detected.len(), 1);
+        assert_eq!(
+            endpoints_of(&detected[0]),
+            strings(&["http://localhost:9931", "http://localhost:8080"])
+        );
+        assert_eq!(detected[0].pids, vec![400, 401]);
+    }
+
+    /// Image, then command, then name, as for the other engines: a
+    /// repository named after llama.cpp (any spelling) or a command that
+    /// runs llama-server is enough; a name must be confirmed by the
+    /// container's processes. Ollama — "llama" is in its name, llama.cpp in
+    /// its runners — and docker-model-runner, which serves its bundled
+    /// llama-server on a Unix socket, are not llama.cpp containers.
+    #[test]
+    fn a_llamacpp_container_is_classified_by_image_command_then_name() {
+        let llamacpp = |strong_signal| {
+            Some(ContainerClass {
+                engine_type: EngineType::LlamaCpp,
+                strong_signal,
+            })
+        };
+        assert_eq!(
+            classify_container(
+                &["/llamacpp-cap-pub".into()],
+                "ghcr.io/ggml-org/llama.cpp:server-cuda13-b11669",
+                "/app/llama-server -m /models/x.gguf --metrics"
+            ),
+            llamacpp(true)
+        );
+        for image in [
+            "ghcr.io/ggml-org/llama.cpp:full",
+            "local/llama-cpp:cuda",
+            "myorg/llamacpp-server:1",
+            "registry.local:5000/ggml/llama.cpp@sha256:0123abcd",
+        ] {
+            assert_eq!(
+                classify_container(&[], image, "/app/tools.sh --server"),
+                llamacpp(true),
+                "{image}"
+            );
+        }
+        assert_eq!(
+            classify_container(
+                &[],
+                "myorg/inference:1",
+                "/usr/local/bin/llama-server --port 9000"
+            ),
+            llamacpp(true)
+        );
+        for name in [
+            "/llama-server",
+            "/llamacpp-qwen",
+            "/my-llama.cpp",
+            "/Llama-CPP-box",
+        ] {
+            assert_eq!(
+                classify_container(&[name.to_string()], "myorg/base", "sleep infinity"),
+                llamacpp(false),
+                "{name}"
+            );
+        }
+        // A weak match is confirmed by the processes `docker top` lists.
+        let server = to_row(&["4242", "/app/llama-server -m /models/x.gguf"]);
+        assert!(runs_engine(
+            &top_row_command(&server),
+            &EngineType::LlamaCpp
+        ));
+        let idle = to_row(&["4243", "sleep infinity"]);
+        assert!(!runs_engine(&top_row_command(&idle), &EngineType::LlamaCpp));
+
+        let ollama = |strong_signal| {
+            Some(ContainerClass {
+                engine_type: EngineType::Ollama,
+                strong_signal,
+            })
+        };
+        assert_eq!(
+            classify_container(
+                &["/ollama".into()],
+                "ollama/ollama:0.40.5",
+                "/bin/ollama serve"
+            ),
+            ollama(true)
+        );
+        assert_eq!(
+            classify_container(&["/ollama".into()], "myorg/base", "sleep infinity"),
+            ollama(false)
+        );
+        assert_eq!(
+            classify_container(
+                &["/docker-model-runner".into()],
+                "docker/model-runner:latest-cuda",
+                "/app/model-runner"
+            ),
+            None
+        );
+        // A tag is not the repository.
+        assert_eq!(
+            classify_container(&["/web".into()], "myorg/inference:llamacpp", "nginx"),
+            None
+        );
+    }
+
+    /// What `docker inspect` says of a captured container: its command
+    /// (entrypoint and arguments, joined as the container list shows it),
+    /// its environment (the image's merged with the run's), its network
+    /// mode and its published TCP ports.
+    struct Inspected {
+        command: String,
+        env: Vec<String>,
+        network_mode: Option<String>,
+        published: Vec<(u16, u16, String)>,
+    }
+
+    fn inspected(json: &str) -> Inspected {
+        let v: serde_json::Value = serde_json::from_str(json).expect("inspect JSON");
+        let words = |value: &serde_json::Value| -> Vec<String> {
+            value
+                .as_array()
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let config = &v["Config"];
+        let command = [words(&config["Entrypoint"]), words(&config["Cmd"])]
+            .concat()
+            .join(" ");
+        let mut published = Vec::new();
+        for (port, bindings) in v["NetworkSettings"]["Ports"]
+            .as_object()
+            .into_iter()
+            .flatten()
+        {
+            let Some(container) = port
+                .strip_suffix("/tcp")
+                .and_then(|p| p.parse::<u16>().ok())
+            else {
+                continue;
+            };
+            for binding in bindings.as_array().into_iter().flatten() {
+                let host = binding["HostPort"]
+                    .as_str()
+                    .and_then(|p| p.parse::<u16>().ok());
+                let ip = binding["HostIp"].as_str().unwrap_or_default().to_string();
+                published.extend(host.map(|host| (container, host, ip)));
+            }
+        }
+        Inspected {
+            command,
+            env: words(&config["Env"]),
+            network_mode: v["HostConfig"]["NetworkMode"].as_str().map(String::from),
+            published,
+        }
+    }
+
+    /// Where a container's llama-server is probed from the host and what its
+    /// model is called, from its command, environment, network and ports —
+    /// `None` when it listens on no TCP port.
+    fn container_engine(container: &Inspected) -> Option<(Vec<String>, Option<String>)> {
+        let args: Vec<&str> = container.command.split_whitespace().collect();
+        let launch = llamacpp_launch(&args, |name| {
+            env_var_in(container.env.iter().map(|e| e.as_bytes()), name)
+        });
+        let listen = launch.listen(llamacpp::default_ports(&DeploymentMode::Docker))?;
+        let published: Vec<PublishedPort<'_>> = container
+            .published
+            .iter()
+            .map(|(port, host, ip)| PublishedPort {
+                container: *port,
+                host: Some(*host),
+                host_ip: Some(ip.as_str()),
+                tcp: true,
+            })
+            .collect();
+        let endpoints =
+            llamacpp_container_endpoints(&listen, container.network_mode.as_deref(), &published);
+        Some((endpoints, launch.served_model()))
+    }
+
+    /// The three captured containers: published on a bridge (`-p
+    /// 18090:8080`, the image's `LLAMA_ARG_PORT=8080`), on the host network
+    /// with `--port 18091` over the image's 8080, and on the host network
+    /// configured by environment alone.
+    #[test]
+    fn a_captured_llamacpp_container_is_read_from_its_command_and_environment() {
+        let model = Some(IN_CONTAINER.to_string());
+        assert_eq!(
+            container_engine(&inspected(include_str!(
+                "fixtures/llamacpp_docker_published.json"
+            ))),
+            Some((strings(&["http://localhost:18090"]), model.clone()))
+        );
+        assert_eq!(
+            container_engine(&inspected(include_str!(
+                "fixtures/llamacpp_docker_host.json"
+            ))),
+            Some((strings(&["http://localhost:18091"]), model))
+        );
+        assert_eq!(
+            container_engine(&inspected(include_str!(
+                "fixtures/llamacpp_docker_env.json"
+            ))),
+            Some((
+                strings(&["http://localhost:18092"]),
+                Some("docker-env".to_string())
+            ))
+        );
+    }
+
+    /// Every other way a llama.cpp container can be run. No readable port
+    /// means llama.cpp's own defaults for a container — 8080, which the
+    /// official images set, then 9931 — never vLLM's 8000. A bridge
+    /// container publishing nothing is unreachable from the host: probing
+    /// its port there would reach whatever else is on it.
+    #[test]
+    fn a_llamacpp_container_is_probed_where_the_host_reaches_it() {
+        let custom =
+            |command: &str, env: &[&str], mode: Option<&str>, published: &[(u16, u16, &str)]| {
+                container_engine(&Inspected {
+                    command: command.to_string(),
+                    env: strings(env),
+                    network_mode: mode.map(String::from),
+                    published: published
+                        .iter()
+                        .map(|&(port, host, ip)| (port, host, ip.to_string()))
+                        .collect(),
+                })
+                .map(|(endpoints, _)| endpoints)
+            };
+        let official = ["LLAMA_ARG_HOST=0.0.0.0", "LLAMA_ARG_PORT=8080"];
+
+        let defaults = custom("/usr/bin/llama-server -m /m.gguf", &[], Some("host"), &[]);
+        assert_eq!(
+            defaults,
+            Some(strings(&["http://localhost:8080", "http://localhost:9931"]))
+        );
+        assert!(!defaults.unwrap().iter().any(|e| e.ends_with(":8000")));
+
+        assert_eq!(
+            custom(
+                "/app/llama-server -m /m.gguf",
+                &official,
+                Some("bridge"),
+                &[]
+            ),
+            Some(vec![])
+        );
+        assert_eq!(
+            custom(
+                "/app/llama-server -m /m.gguf",
+                &official,
+                Some("my-network"),
+                &[]
+            ),
+            Some(vec![])
+        );
+        // With the network unknown, or another container's, the listening
+        // port is assumed reachable and the probe decides.
+        for mode in [None, Some("container:abc123")] {
+            assert_eq!(
+                custom("/app/llama-server -m /m.gguf", &official, mode, &[]),
+                Some(strings(&["http://localhost:8080"])),
+                "{mode:?}"
+            );
+        }
+        // The binding of the port it listens on comes first; any other
+        // published port after it, for a port set where neither the command
+        // nor the environment shows it.
+        assert_eq!(
+            custom(
+                "/app/llama-server -m /m.gguf",
+                &official,
+                Some("bridge"),
+                &[
+                    (9100, 9100, "0.0.0.0"),
+                    (8080, 9000, "0.0.0.0"),
+                    (8080, 9000, "::")
+                ]
+            ),
+            Some(strings(&["http://localhost:9000", "http://localhost:9100"]))
+        );
+        assert_eq!(
+            custom(
+                "/app/llama-server -m /m.gguf --port 9001",
+                &official,
+                Some("bridge"),
+                &[(9001, 19001, "127.0.0.1")]
+            ),
+            Some(strings(&["http://127.0.0.1:19001"]))
+        );
+        // A Unix socket only: no TCP endpoint at all.
+        assert_eq!(
+            custom(
+                "/app/llama-server -m /m.gguf --host /sockets/llama.sock",
+                &official,
+                Some("host"),
+                &[]
+            ),
+            None
+        );
+    }
+
+    /// A llama.cpp container's launch is its server's: the container's own
+    /// command when that runs llama-server, else the first llama-server
+    /// among its processes (a wrapper entrypoint's child). A router's
+    /// children come after it, with the random ports it gave them.
+    #[test]
+    fn a_llamacpp_containers_launch_is_its_servers() {
+        let router = "/app/llama-server --models-dir /models";
+        let processes = strings(&[
+            router,
+            "/app/llama-server --host 127.0.0.1 --port 41234 --alias x --model /models/x.gguf",
+        ]);
+        assert_eq!(llamacpp_container_command(router, &processes), router);
+
+        let wrapped = strings(&["./llama-server -m /models/x.gguf --port 8000"]);
+        assert_eq!(
+            llamacpp_container_command(
+                "/app/tools.sh --server -m /models/x.gguf --port 8000",
+                &wrapped
+            ),
+            wrapped[0]
+        );
+        assert_eq!(
+            llamacpp_container_command("sleep infinity", &strings(&["sleep infinity"])),
+            "sleep infinity"
+        );
+    }
+
+    /// The host scan sees a container's server too — its environment
+    /// unreadable, so on the default ports — and the container's engine
+    /// absorbs it, as for every engine type.
+    #[test]
+    fn a_llamacpp_containers_server_is_its_engine_not_a_native_one() {
+        let mut candidates = scan_argvs(
+            &[(700, Some(690), llamacpp_cmdline("docker_env"))],
+            unreadable,
+        );
+        assert_eq!(candidates[0].endpoint, "http://localhost:9931");
+        let container = DetectedEngine {
+            engine_type: EngineType::LlamaCpp,
+            served_model: Some("docker-env".into()),
+            container_id: Some("c0ffee".into()),
+            ..candidate("http://localhost:18092", DeploymentMode::Docker, &[700])
+        };
+        merge_docker_candidates(&mut candidates, vec![container]);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].endpoint, "http://localhost:18092");
+        assert_eq!(candidates[0].deployment_mode, DeploymentMode::Docker);
+        assert_eq!(candidates[0].served_model.as_deref(), Some("docker-env"));
+        assert_eq!(candidates[0].pids, vec![700]);
+    }
+
+    /// A llama-server's answer to `/health`, header and all.
+    async fn llamacpp_server() -> super::super::test_server::TestServer {
+        super::super::test_server::TestServer::start_with_headers(|_| {
+            (
+                200,
+                r#"{"status":"ok"}"#.to_string(),
+                vec![("Server", "llama.cpp".to_string())],
+            )
+        })
+        .await
+    }
+
+    /// Nothing listens on port 1 of the loopback: a refused connection.
+    const NOTHING_THERE: &str = "http://127.0.0.1:1";
+
+    fn no_keys() -> ApiKeyResolver {
+        ApiKeyResolver::from_pairs(&[], &[], None)
+    }
+
+    /// A candidate with more than one endpoint is kept on the first that
+    /// answers as its engine type — a refused port, or another engine's
+    /// server, does not — and the endpoints after that one are not asked.
+    /// One that answers nowhere is dropped.
+    #[tokio::test]
+    async fn a_candidate_is_kept_on_the_first_of_its_endpoints_that_identifies() {
+        use super::super::test_server::TestServer;
+        let vllm = TestServer::start(|_| (200, String::new())).await;
+        let llama = llamacpp_server().await;
+        let unasked = llamacpp_server().await;
+        let native = DetectedEngine {
+            engine_type: EngineType::LlamaCpp,
+            fallback_endpoints: vec![vllm.url.clone(), llama.url.clone(), unasked.url.clone()],
+            ..candidate(NOTHING_THERE, DeploymentMode::Native, &[10])
+        };
+        let verified = verify_candidates(vec![native], &reqwest::Client::new(), &no_keys()).await;
+        assert_eq!(verified.len(), 1);
+        assert_eq!(verified[0].endpoint, llama.url);
+        assert!(verified[0].fallback_endpoints.is_empty());
+        assert_eq!(vllm.requests().len(), 1, "the vLLM server was asked once");
+        assert!(unasked.requests().is_empty());
+
+        let nowhere = DetectedEngine {
+            engine_type: EngineType::LlamaCpp,
+            fallback_endpoints: vec![vllm.url.clone()],
+            ..candidate(NOTHING_THERE, DeploymentMode::Native, &[10])
+        };
+        assert!(
+            verify_candidates(vec![nowhere], &reqwest::Client::new(), &no_keys())
+                .await
+                .is_empty()
+        );
+    }
+
+    /// Two candidates verified on one endpoint are one server, one engine —
+    /// the host scan's guess at a default port and a container whose
+    /// processes could not be listed, say — and the container's view of it
+    /// wins, whichever came first: its model too, which the host scan read
+    /// off the command line alone.
+    #[tokio::test]
+    async fn candidates_verified_on_one_endpoint_are_one_engine() {
+        let llama = llamacpp_server().await;
+        let host_view = DetectedEngine {
+            engine_type: EngineType::LlamaCpp,
+            served_model: Some("/models/qwen.gguf".into()),
+            fallback_endpoints: vec![llama.url.clone()],
+            ..candidate(NOTHING_THERE, DeploymentMode::Native, &[500])
+        };
+        let container = DetectedEngine {
+            engine_type: EngineType::LlamaCpp,
+            served_model: Some("docker-env".into()),
+            container_id: Some("c0ffee".into()),
+            ..candidate(&llama.url, DeploymentMode::Docker, &[])
+        };
+        for candidates in [
+            vec![host_view.clone(), container.clone()],
+            vec![container.clone(), host_view.clone()],
+        ] {
+            let verified = verify_candidates(candidates, &reqwest::Client::new(), &no_keys()).await;
+            assert_eq!(verified.len(), 1);
+            let engine = &verified[0];
+            assert_eq!(engine.endpoint, llama.url);
+            assert_eq!(engine.deployment_mode, DeploymentMode::Docker);
+            assert_eq!(engine.container_id.as_deref(), Some("c0ffee"));
+            assert_eq!(engine.served_model.as_deref(), Some("docker-env"));
+            assert_eq!(engine.pids, vec![500]);
+        }
+    }
+
+    /// The host scan cannot read a root container's environment, so where a
+    /// llama.cpp container names its model by `LLAMA_ARG_ALIAS` the host
+    /// scan has only the `-m` path, which `/models` does not report. Where
+    /// the two join, the container's served model wins when it names one,
+    /// whichever came first; the host scan's fills in when it names none.
+    #[test]
+    fn a_containers_served_model_wins_where_candidates_join() {
+        let joined = |order: [&DetectedEngine; 2]| {
+            let mut candidates = Vec::new();
+            for candidate in order {
+                join_on_endpoint(&mut candidates, candidate.clone());
+            }
+            assert_eq!(candidates.len(), 1);
+            candidates.remove(0).served_model
+        };
+        let host_view = DetectedEngine {
+            engine_type: EngineType::LlamaCpp,
+            served_model: Some("/models/qwen2.5-1.5b-instruct-q4_k_m.gguf".into()),
+            ..candidate("http://localhost:8080", DeploymentMode::Native, &[500])
+        };
+        let container = DetectedEngine {
+            engine_type: EngineType::LlamaCpp,
+            served_model: Some("qwen-small".into()),
+            container_id: Some("c0ffee".into()),
+            ..candidate("http://localhost:8080", DeploymentMode::Docker, &[])
+        };
+        let alias = Some("qwen-small".to_string());
+        assert_eq!(joined([&host_view, &container]), alias);
+        assert_eq!(joined([&container, &host_view]), alias);
+
+        let unnamed = DetectedEngine {
+            served_model: None,
+            ..container
+        };
+        assert_eq!(joined([&host_view, &unnamed]), host_view.served_model);
+        assert_eq!(joined([&unnamed, &host_view]), host_view.served_model);
     }
 }
