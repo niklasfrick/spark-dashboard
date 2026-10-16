@@ -144,12 +144,15 @@ _Avoid_: page filter, default engine (it may also be the aggregate), page bindin
 
 **All models**:
 The combined view across every running engine: throughput and counters sum,
-latencies are request-weighted means (`lib/engineAggregate`). A following panel
-rendering it says so — a combined figure wearing no name would read as one
-engine's. It spans engines, however many models each holds, and combines only
-the engines that report the metric — saying so when that is not all of them. An
-engine whose metrics are off is left out the same way, and a request-weighted
-latency leaves out an engine that reports no request count. When no running
+latencies are weighted means (`lib/engineAggregate`), each weighted by what it is
+measured per: requests for time to first token, end-to-end latency, time per
+output token and queue time; generated tokens for the inter-token latency. A
+following panel rendering it says so — a combined figure wearing no name would
+read as one engine's. It spans engines, however many models each holds, and
+combines only the engines that report the metric — saying so when that is not
+all of them. An engine whose metrics are off is left out the same way, a
+request-weighted latency leaves out an engine that reports no request count,
+and the token-weighted one an engine that reports no throughput. When no running
 engine reports a figure's group the panel says so, never a zero; the history
 charted for all models follows the same rule.
 Per-engine things (logs, engine identity, a pin) never aggregate.

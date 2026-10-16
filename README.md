@@ -482,7 +482,7 @@ You choose that answer from **Page config**, beside *Edit layout* in the header:
 | --- | --- |
 | **Automatic** | Whatever the host is serving — the first running engine. What every page starts as, and what the shipped preset uses |
 | **One model** | That engine, named by its endpoint, for as long as the page exists — a *Qwen page* that opens on Qwen for every colleague and every kiosk |
-| **All models** | Every engine at once, combined: throughput and counters sum, latencies are request-weighted means. A panel rendering the combination says so, since a combined figure wearing one engine's name would misread |
+| **All models** | Every engine at once, combined: throughput and counters sum, latencies are weighted means, by requests or, for the inter-token latency, by generated tokens, so an engine that counts no requests (llama.cpp) still enters it. A panel rendering the combination says so, since a combined figure wearing one engine's name would misread |
 
 Two things this is not:
 
