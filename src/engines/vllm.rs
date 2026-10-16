@@ -852,4 +852,61 @@ vllm:time_to_first_token_seconds_count{engine=\"1\",model_name=\"m\"} 6
         assert_eq!(asked[0].path, "/metrics");
         assert_eq!(asked[0].authorization, None);
     }
+
+    /// A body whose request and generation-token counters stand at
+    /// `requests` and `tokens`.
+    fn growing_scrape(requests: u64, tokens: u64) -> String {
+        format!(
+            "# TYPE vllm:time_to_first_token_seconds histogram\n\
+             vllm:time_to_first_token_seconds_bucket{{le=\"+Inf\"}} {requests}\n\
+             vllm:time_to_first_token_seconds_sum {sum}\n\
+             vllm:time_to_first_token_seconds_count {requests}\n\
+             # TYPE vllm:generation_tokens counter\n\
+             vllm:generation_tokens_total {tokens}\n",
+            sum = requests as f64 * 0.1,
+        )
+    }
+
+    /// `total_generation_tokens` is read off the warmup-adjusted scrape, not
+    /// the raw one: the engine's lifetime count while warming, then the tokens
+    /// generated since the warmup baseline — the window every other
+    /// post-warmup figure covers.
+    #[tokio::test]
+    async fn generation_tokens_count_from_the_warmup_baseline() {
+        use super::super::test_server::TestServer;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        // (requests served, generation tokens) at each scrape.
+        const SCRAPES: [(u64, u64); 3] = [(5, 1_000), (6, 1_100), (7, 1_350)];
+        let polls = AtomicUsize::new(0);
+        let server = TestServer::start(move |_| {
+            let (requests, tokens) = SCRAPES[polls.fetch_add(1, Ordering::SeqCst)];
+            (200, growing_scrape(requests, tokens))
+        })
+        .await;
+        let adapter = VllmAdapter::new(reqwest::Client::new(), server.url.clone(), None, None);
+        // Skip one request, whatever `SPARK_WARMUP_SKIP_REQUESTS` says.
+        *adapter.warmup.lock().await = WarmupTracker::new(1, WARMUP_TRIGGER_KEY);
+
+        // Attached at 5 requests: still warming, so the lifetime count.
+        let first = adapter.get_metrics().await.expect("metrics");
+        assert!(first.warming_up);
+        assert_eq!(first.total_generation_tokens, Some(1_000));
+
+        // One more request ends warmup. This scrape is the baseline, so the
+        // count restarts from it.
+        let second = adapter.get_metrics().await.expect("metrics");
+        assert!(!second.warming_up);
+        assert_eq!(second.total_generation_tokens, Some(0));
+
+        // Steady state: the tokens generated since the baseline.
+        let third = adapter.get_metrics().await.expect("metrics");
+        assert!(!third.warming_up);
+        assert_eq!(third.total_generation_tokens, Some(1_350 - 1_100));
+        assert_ne!(
+            third.total_generation_tokens,
+            Some(1_350),
+            "not the engine's lifetime count"
+        );
+    }
 }
