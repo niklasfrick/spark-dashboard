@@ -166,6 +166,28 @@ pub enum ModelMetadataError {
     Unavailable,
 }
 
+/// Why a running engine's metrics endpoint answered without metrics. Travels
+/// on the wire next to `metrics_off`, in the shape `ModelMetadataError` has,
+/// so the frontend says what it says about a refused `/v1/models`: the
+/// dashboard lacks the engine's key. `None` on the snapshot means the
+/// endpoint did not refuse the dashboard — its metrics answered, are off, or
+/// could not be reached for some other reason.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+pub enum MetricsError {
+    /// The metrics endpoint refused the dashboard's request (401/403) —
+    /// the dashboard lacks the engine's API key. Not metrics off: the engine
+    /// publishes them, and the fix is a provider API key, not a launch flag.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no adapter reports a refused metrics endpoint until llama.cpp's does \
+                      (#131); drop this once one constructs the variant"
+        )
+    )]
+    AuthRequired,
+}
+
 /// The outcome of a model-info fetch: what resolved (possibly from the
 /// command-line fallback) and why the engine's own answer is missing, if it
 /// is. Both can be populated at once — a fallback name accompanied by the
@@ -463,6 +485,12 @@ pub struct EngineSnapshot {
     /// `None` when metrics are on or the engine type has no metrics toggle
     /// (the common case — most engines always expose `/metrics`).
     pub metrics_off: Option<String>,
+    /// The engine runs, and its metrics endpoint refused the dashboard — for
+    /// want of its API key, reported the way `model_metadata_error` reports
+    /// a refused `/v1/models` rather than as `metrics_off`, since no launch
+    /// flag fixes it. Carried only while the engine is running, exactly as
+    /// `metrics_off` is. Always serialized, `null` included.
+    pub metrics_error: Option<MetricsError>,
     pub metrics: Option<EngineMetrics>,
     pub recent_requests: Vec<RecentRequest>,
     pub deployment_mode: DeploymentMode,
@@ -517,6 +545,15 @@ pub trait EngineAdapter: Send + Sync {
     /// adapter answers from its last scrape, without making a request.
     fn metrics_off(&self) -> bool {
         false
+    }
+    /// Why this instance's metrics endpoint last refused the dashboard, if it
+    /// did: `AuthRequired` when it answered 401/403 for want of the engine's
+    /// API key. `None` (the default) for an engine type whose metrics never
+    /// need a key, and for one whose last answer did not refuse. Read on
+    /// every snapshot assembly; the adapter answers from its last scrape,
+    /// without making a request.
+    fn metrics_error(&self) -> Option<MetricsError> {
+        None
     }
     /// The models the engine has loaded now, as last read, for an engine type
     /// that serves several models at once and names none on its own: the
@@ -689,6 +726,12 @@ impl EngineState {
             }
             _ => None,
         };
+        // The refusal travels on the same terms: a down engine reports
+        // offline, not "refused the key" from its last live scrape.
+        let metrics_error = match &status {
+            EngineStatus::Running => self.adapter.metrics_error(),
+            _ => None,
+        };
         let metric_groups = self.adapter.metric_groups();
         // An engine that reports no group has no metrics to carry at all —
         // not an all-blank set whose `warming_up` flag could still say it is
@@ -706,6 +749,7 @@ impl EngineState {
             loaded_models: self.adapter.loaded_models(),
             metric_groups,
             metrics_off,
+            metrics_error,
             metrics,
             recent_requests: Vec::new(),
             deployment_mode: self.deployment_mode.clone(),
@@ -1037,6 +1081,9 @@ mod tests {
         /// toggle, the trait default's shape).
         metrics_off: bool,
         flag: Option<&'static str>,
+        /// Why the adapter's metrics endpoint refused the dashboard, as its
+        /// last scrape found (`None` = it did not, the trait default's shape).
+        metrics_error: Option<MetricsError>,
     }
 
     #[async_trait]
@@ -1065,6 +1112,9 @@ mod tests {
         fn metrics_off(&self) -> bool {
             self.metrics_off
         }
+        fn metrics_error(&self) -> Option<MetricsError> {
+            self.metrics_error
+        }
     }
 
     fn state() -> EngineState {
@@ -1078,6 +1128,7 @@ mod tests {
                 groups,
                 metrics_off: false,
                 flag: None,
+                metrics_error: None,
             }),
             DeploymentMode::Native,
         )
@@ -1091,6 +1142,22 @@ mod tests {
                 groups: MetricGroup::all(),
                 metrics_off: true,
                 flag: Some("--enable-metrics"),
+                metrics_error: None,
+            }),
+            DeploymentMode::Native,
+        )
+    }
+
+    /// An adapter whose metrics endpoint refused the dashboard for want of
+    /// its API key, like llama-server started with `--api-key` and no key
+    /// configured here.
+    fn state_metrics_refused() -> EngineState {
+        EngineState::new(
+            Box::new(StubAdapter {
+                groups: MetricGroup::all(),
+                metrics_off: false,
+                flag: None,
+                metrics_error: Some(MetricsError::AuthRequired),
             }),
             DeploymentMode::Native,
         )
@@ -1651,6 +1718,39 @@ mod tests {
         assert_eq!(json["metrics_off"], serde_json::Value::Null);
     }
 
+    #[test]
+    fn a_running_engine_with_metrics_error_carries_it_until_it_stops_running() {
+        // The refusal travels through the real snapshot path in the wire
+        // shape `model_metadata_error` already has, so the frontend says the
+        // same thing about it: a key is missing, not metrics switched off.
+        let json =
+            serde_json_value(&state_metrics_refused().snapshot(EngineStatus::Running, None, None));
+        assert_eq!(json["metrics_error"], serde_json::json!("AuthRequired"));
+        assert_eq!(json["metrics_off"], serde_json::Value::Null);
+
+        // …and, like `metrics_off`, it does not outlive the engine: a down
+        // engine reports offline, never "refused the key" from a latch of
+        // its last live scrape.
+        for status in [EngineStatus::Stopped, EngineStatus::Loading] {
+            let json = serde_json_value(&state_metrics_refused().snapshot(status, None, None));
+            assert_eq!(json["metrics_error"], serde_json::Value::Null);
+        }
+
+        // An engine whose metrics answer carries the field as `null`.
+        let json = serde_json_value(&state().snapshot(EngineStatus::Running, None, None));
+        assert_eq!(json["metrics_error"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn metrics_error_serializes_like_model_metadata_error() {
+        // One wire vocabulary for "the dashboard lacks the engine's key",
+        // whichever endpoint refused it.
+        assert_eq!(
+            serde_json::to_value(MetricsError::AuthRequired).unwrap(),
+            serde_json::to_value(ModelMetadataError::AuthRequired).unwrap(),
+        );
+    }
+
     fn serde_json_value(snapshot: &EngineSnapshot) -> serde_json::Value {
         serde_json::to_value(snapshot).unwrap()
     }
@@ -1658,8 +1758,9 @@ mod tests {
     /// A single-model engine type carries `loaded_models` as `null` — the
     /// field is there, so the frontend can tell "uses `model`" from a backend
     /// that predates the field — and its snapshot is otherwise the shape it
-    /// always was. Through the real adapters, so a type that grows a list
-    /// shows up here.
+    /// always was, but for the `metrics_error` every engine carries (`null`
+    /// for these: neither adapter reports one). Through the real adapters, so
+    /// a type that grows a list shows up here.
     #[test]
     fn single_model_engines_carry_a_null_model_list_and_nothing_else_new() {
         let client = reqwest::Client::new();
@@ -1697,6 +1798,7 @@ mod tests {
                     "loaded_models",
                     "metric_groups",
                     "metrics",
+                    "metrics_error",
                     "metrics_off",
                     "model",
                     "model_metadata_error",
@@ -1707,6 +1809,11 @@ mod tests {
             );
             assert_eq!(
                 json["loaded_models"],
+                serde_json::Value::Null,
+                "{engine_type}"
+            );
+            assert_eq!(
+                json["metrics_error"],
                 serde_json::Value::Null,
                 "{engine_type}"
             );

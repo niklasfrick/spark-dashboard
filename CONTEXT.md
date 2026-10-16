@@ -60,6 +60,15 @@ is disabled by how it was launched. Distinct from a metric group that is not
 reported: the remedy is a launch flag, and the panel names it.
 _Avoid_: metrics disabled, unavailable, unsupported
 
+**Metrics refused**:
+A running engine whose metrics endpoint is enabled but answers 401/403 because
+the dashboard has no key it accepts (`metrics_error: AuthRequired` on the
+metrics contract). Sibling of **metrics off**, with a different remedy: the
+operator supplies the provider API key rather than a launch flag, and the panel
+says authentication is required. Never latches as metrics off, and ends with the
+engine no longer running.
+_Avoid_: metrics locked, unauthorized, auth error
+
 **Provider**:
 The organization that published a model, taken from its HuggingFace-style org
 prefix and used to pick the logo beside it. Not a synonym for engine — one engine

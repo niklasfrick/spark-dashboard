@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import {
   engineDescription,
+  metricsRefusedMessage,
   metricsOffMessage,
   notReportedByAnyMessage,
   notReportedMessage,
@@ -49,6 +50,10 @@ export function EnginePanelNotice({ resolution }: { resolution: EnginePanelNotic
       return (
         <PanelNotice>{metricsOffMessage(resolution.engine, resolution.flag)}</PanelNotice>
       )
+    // The metrics are on, and the engine refused the dashboard its key — the
+    // fix the Engine panel names for a refused model name, said of the metrics.
+    case 'metrics-refused':
+      return <PanelNotice>{metricsRefusedMessage(resolution.engine)}</PanelNotice>
     case 'starting':
       return <PanelNotice>{engineDescription(resolution.engine)} has no metrics yet.</PanelNotice>
     case 'offline':

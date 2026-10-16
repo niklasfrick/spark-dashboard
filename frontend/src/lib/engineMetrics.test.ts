@@ -242,6 +242,19 @@ describe('contributesGroup', () => {
       ),
     ).toBe(false)
   })
+
+  it('leaves out an engine whose metrics endpoint refused the key, whatever it declares', () => {
+    expect(
+      contributesGroup(
+        { ...running, metric_groups: [...METRIC_GROUPS], metrics_error: 'AuthRequired' },
+        'Throughput',
+      ),
+    ).toBe(false)
+  })
+
+  it('counts an engine that says its metrics endpoint refused nothing', () => {
+    expect(contributesGroup({ ...running, metrics_error: null }, 'Throughput')).toBe(true)
+  })
 })
 
 describe('reportsMetrics', () => {
@@ -251,6 +264,11 @@ describe('reportsMetrics', () => {
 
   it('reads an engine whose metrics are off as reporting no metrics', () => {
     expect(reportsMetrics({ metrics_off: '--metrics' })).toBe(false)
+  })
+
+  it('reads an engine whose metrics endpoint refused the key as reporting no metrics', () => {
+    expect(reportsMetrics({ metrics_error: 'AuthRequired' })).toBe(false)
+    expect(reportsMetrics({ metrics_error: null })).toBe(true)
   })
 
   it('reads a backend older than the declaration as reporting metrics', () => {

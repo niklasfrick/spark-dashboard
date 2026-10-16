@@ -344,6 +344,18 @@ export function metricsOffMessage(engine: EngineIdentity, flag: string): string 
   return `${engineDescription(engine)} is running with metrics off — relaunch it with ${flag}.`
 }
 
+/**
+ * What a panel says when the engine's metrics endpoint refused the dashboard
+ * for want of the engine's API key. The same refusal, and the same remedy, as
+ * `modelMetadataWarning` gives for a refused `/v1/models` — configure the
+ * provider API key — said of the metrics, and naming the engine the way every
+ * other panel notice does. Not `metricsOffMessage`: the engine publishes its
+ * metrics, and relaunching it with a flag would change nothing.
+ */
+export function metricsRefusedMessage(engine: EngineIdentity): string {
+  return `${engineDescription(engine)} requires authentication — configure the provider API key to read its metrics.`
+}
+
 /** "a", "a or b", "a, b or c" — the list a negated verb ranges over. */
 function listOfAlternatives(items: readonly string[]): string {
   if (items.length <= 1) return items.join('')

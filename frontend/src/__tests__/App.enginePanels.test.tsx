@@ -1385,6 +1385,18 @@ describe('all models on engines that report different groups', () => {
     expect(within(decode).getByText('1 of 2 engines')).toBeInTheDocument()
   })
 
+  it('leaves out an engine whose metrics endpoint refuses the key', async () => {
+    await showAllModels(
+      [decodePanel],
+      [makeEngine(ALPHA), makeEngine(BETA, { metrics_error: 'AuthRequired', metrics: null })],
+    )
+
+    const decode = region('Decode Throughput')
+    expect(within(decode).getByText('120.0')).toBeInTheDocument()
+    expect(within(decode).getByText('2 of 2 serving')).toBeInTheDocument()
+    expect(within(decode).getByText('1 of 2 engines')).toBeInTheDocument()
+  })
+
   it('reads exactly as before when every engine reports every group', async () => {
     await showAllModels(enginePanels(), [
       makeEngine(ALPHA, { metric_groups: [...METRIC_GROUPS] }),
@@ -1686,6 +1698,118 @@ describe('an engine running with its metrics endpoint off', () => {
     receive(makeSnapshot(1000, [engine]))
 
     expect(within(region('Latency')).queryByText(/metrics off/)).not.toBeInTheDocument()
+  })
+})
+
+// The engine publishes metrics, and its endpoint refused the dashboard for want
+// of the engine's API key (llama-server started with --api-key, #131). Reported
+// the way a refused /v1/models is — a key to configure — never as metrics off,
+// which would send the operator relaunching an engine that needs no new flag.
+describe('an engine whose metrics endpoint refuses the dashboard’s API key', () => {
+  const METRICS_REFUSED =
+    'SGLang localhost:8000 requires authentication — configure the provider API key to read its metrics.'
+
+  /** Every panel type that shows an engine's metrics, two to a row. */
+  const metricPanels = PANEL_TYPE_IDS.filter((type) => panelMetricGroups(type).length > 0).map(
+    (type, i) => ({
+      id: type,
+      type,
+      geometry: { x: (i % 2) * 6, y: Math.floor(i / 2) * 2, w: 6, h: 2 },
+    }),
+  )
+
+  function refused(overrides: Partial<EngineSnapshot> = {}): EngineSnapshot {
+    return makeEngine(ALPHA, {
+      engine_type: 'Sglang',
+      metrics: null,
+      metrics_error: 'AuthRequired',
+      ...overrides,
+    })
+  }
+
+  it('says every metric panel needs the key, not that metrics are off', async () => {
+    const fetchMock = serveConfiguration({ document: storedDocument(metricPanels) })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, [refused()]))
+
+    expect(metricPanels.length).toBeGreaterThan(0)
+    for (const { type } of metricPanels) {
+      const panel = region(defaultPanelTitle(type))
+      expect(within(panel).getByText(METRICS_REFUSED), type).toBeInTheDocument()
+      // Not a launch flag, not a moment that passes, not a property of the engine.
+      expect(within(panel).queryByText(/metrics off/), type).not.toBeInTheDocument()
+      expect(within(panel).queryByText(/has no metrics yet/), type).not.toBeInTheDocument()
+      expect(within(panel).queryByText(/does not report/), type).not.toBeInTheDocument()
+      expect(within(panel).queryByText('--'), type).not.toBeInTheDocument()
+      expect(within(panel).queryByTestId('chart'), type).not.toBeInTheDocument()
+    }
+  })
+
+  it('says it beside the model-name warning when /v1/models refuses the key too', async () => {
+    // A llama-server with an API key refuses everything but /health, so both
+    // warnings arrive together: the Engine panel says what it says about the
+    // model name, and the metric panels say the same about their metrics.
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        { id: 'latency', type: 'engine-latency', geometry: { x: 0, y: 0, w: 6, h: 4 } },
+        { id: 'who', type: 'engine-status', geometry: { x: 6, y: 0, w: 6, h: 4 } },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, [refused({ model_metadata_error: 'AuthRequired' })]))
+
+    expect(within(region('Latency')).getByText(METRICS_REFUSED)).toBeInTheDocument()
+    const status = region('Engine')
+    expect(
+      within(status).getByText(
+        'Engine requires authentication — configure the provider API key to read the model name.',
+      ),
+    ).toBeInTheDocument()
+    // Identity and liveness are not metrics: the Engine panel still says what
+    // is running, and does not repeat the metric panels' notice.
+    expect(within(status).getByText('SGLang')).toBeInTheDocument()
+    expect(within(status).getByText('Serving')).toBeInTheDocument()
+    expect(within(status).queryByText(METRICS_REFUSED)).not.toBeInTheDocument()
+  })
+
+  it('shows the metrics once the key is configured', async () => {
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        { id: 'decode', type: 'engine-decode-throughput', geometry: { x: 0, y: 0, w: 6, h: 4 } },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, [refused()]))
+    expect(within(region('Decode Throughput')).getByText(METRICS_REFUSED)).toBeInTheDocument()
+
+    receive(makeSnapshot(3000, [makeEngine(ALPHA, { engine_type: 'Sglang', metrics_error: null })]))
+    const decode = region('Decode Throughput')
+    expect(within(decode).queryByText(METRICS_REFUSED)).not.toBeInTheDocument()
+    expect(within(decode).getByText('120.0')).toBeInTheDocument()
+  })
+
+  it('leaves an engine without the wire field untouched — absent means nothing refused', async () => {
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        { id: 'latency', type: 'engine-latency', geometry: { x: 0, y: 0, w: 6, h: 4 } },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    const engine = makeEngine(ALPHA, { engine_type: 'Sglang' })
+    expect(engine.metrics_error).toBeUndefined()
+    receive(makeSnapshot(1000, [engine]))
+
+    expect(
+      within(region('Latency')).queryByText(/requires authentication/),
+    ).not.toBeInTheDocument()
   })
 })
 

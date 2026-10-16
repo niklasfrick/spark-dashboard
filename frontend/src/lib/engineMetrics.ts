@@ -133,31 +133,41 @@ export function metricGroupOf(key: keyof EngineMetrics): MetricGroup {
 }
 
 /**
+ * Whether the dashboard can read an engine's metrics endpoint at all: not when
+ * it is switched off, and not when it refused the dashboard's key. Either way
+ * the engine's declaration says what it would report, not what arrives.
+ */
+function metricsReadable(engine: Pick<EngineSnapshot, 'metrics_off' | 'metrics_error'>): boolean {
+  return !engine.metrics_off && !engine.metrics_error
+}
+
+/**
  * Whether an engine reports any metrics at all: false for one that declares no
- * group, and for one whose metrics endpoint is off — which says nothing about
- * what it would declare once turned on. A backend older than the declaration
- * reported every group, so its engines report metrics.
+ * group, and for one whose metrics endpoint is off or refused the dashboard's
+ * key — which says nothing about what it would declare once readable. A backend
+ * older than the declaration reported every group, so its engines report
+ * metrics.
  */
 export function reportsMetrics(
-  engine: Pick<EngineSnapshot, 'metric_groups' | 'metrics_off'>,
+  engine: Pick<EngineSnapshot, 'metric_groups' | 'metrics_off' | 'metrics_error'>,
 ): boolean {
-  if (engine.metrics_off) return false
-  return reportedMetricGroups(engine).size > 0
+  return metricsReadable(engine) && reportedMetricGroups(engine).size > 0
 }
 
 /**
  * Whether an engine enters a combined all-models figure of `group`: it has to be
- * running, have its metrics on, and declare the group. Decided by declaration,
- * never by value — an engine that reports a group but has no sample yet still
- * counts, as it does in "N of M serving", and adds nothing until one arrives.
+ * running, have metrics the dashboard can read (on, and not refusing its key),
+ * and declare the group. Decided by declaration, never by value — an engine that
+ * reports a group but has no sample yet still counts, as it does in "N of M
+ * serving", and adds nothing until one arrives.
  */
 export function contributesGroup(
-  engine: Pick<EngineSnapshot, 'status' | 'metric_groups' | 'metrics_off'>,
+  engine: Pick<EngineSnapshot, 'status' | 'metric_groups' | 'metrics_off' | 'metrics_error'>,
   group: MetricGroup,
 ): boolean {
   return (
     engine.status.type === 'Running' &&
-    !engine.metrics_off &&
+    metricsReadable(engine) &&
     reportedMetricGroups(engine).has(group)
   )
 }

@@ -68,7 +68,7 @@ function engine(
   status: EngineStatus['type'],
   metrics: EngineMetrics | null = fullMetrics(),
   endpoint = 'http://localhost:8000',
-  reporting: Pick<EngineSnapshot, 'metric_groups' | 'metrics_off'> = {},
+  reporting: Pick<EngineSnapshot, 'metric_groups' | 'metrics_off' | 'metrics_error'> = {},
 ): EngineSnapshot {
   return {
     engine_type: 'Vllm',
@@ -440,6 +440,19 @@ describe('aggregateEngines over engines that report different metric groups', ()
     expect(snap.coverage).toEqual({ running: 2, included: everyGroup(1) })
   })
 
+  it('leaves out an engine whose metrics endpoint refused the key', () => {
+    const stale = fullMetrics({ tokens_per_sec: 50 })
+    const snap = aggregateEngines([
+      engine('Running', fullMetrics({ tokens_per_sec: 100 })),
+      engine('Running', stale, 'b', { metric_groups: [...METRIC_GROUPS], metrics_error: 'AuthRequired' }),
+    ])
+
+    expect(snap.tokens_per_sec).toBe(100)
+    // Still running — it serves; it is only its metrics the dashboard may not read.
+    expect(snap.running_count).toBe(2)
+    expect(snap.coverage).toEqual({ running: 2, included: everyGroup(1) })
+  })
+
   it('reads a figure no running engine reports as null, not zero', () => {
     const snap = aggregateEngines([
       reporting(fullMetrics({ tokens_per_sec: 100 }), ['ActiveRequests']),
@@ -568,9 +581,12 @@ describe('includedIn', () => {
     },
   )
 
-  it('leaves out an engine that is not running, or whose metrics are off', () => {
+  it('leaves out an engine that is not running, or whose metrics are off or refused', () => {
     expect(includedIn(engine('Stopped'), 'Throughput')).toBe(false)
     expect(includedIn(engine('Running', null, 'a', { metrics_off: '--metrics' }), 'Throughput')).toBe(false)
+    expect(
+      includedIn(engine('Running', null, 'a', { metrics_error: 'AuthRequired' }), 'Throughput'),
+    ).toBe(false)
   })
 })
 

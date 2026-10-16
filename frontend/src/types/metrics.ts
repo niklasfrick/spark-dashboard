@@ -129,6 +129,12 @@ export type MetricGroup = (typeof METRIC_GROUPS)[number]
  *  covers every non-auth cause (unreachable, error status, empty list). */
 export type ModelMetadataError = 'AuthRequired' | 'Unavailable'
 
+/** Why a running engine's metrics endpoint answered without metrics.
+ *  `AuthRequired` means it refused the dashboard (401/403) —
+ *  the dashboard lacks the engine's API key, the same cause and remedy as
+ *  `ModelMetadataError`'s, and not metrics off: no launch flag fixes it. */
+export type MetricsError = 'AuthRequired'
+
 export interface ModelInfo {
   name: string
   parameter_size: string | null
@@ -277,6 +283,11 @@ export interface EngineSnapshot {
    *  flag that turns it on. Such an engine has `metrics: null`. Written by a
    *  backend newer than this field (#141) — optional so older snapshots parse. */
   metrics_off?: string | null
+  /** Set while a running engine's metrics endpoint refuses the dashboard — for
+   *  want of its API key — so the panels name the key to configure rather than
+   *  a launch flag. Such an engine has `metrics: null`. Optional so snapshots
+   *  from backends older than the field (#131) still parse. */
+  metrics_error?: MetricsError | null
   metrics: EngineMetrics | null
   recent_requests: InferenceRequestData[]
   deployment_mode: DeploymentMode

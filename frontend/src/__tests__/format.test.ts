@@ -15,6 +15,7 @@ import {
   formatUnloadTime,
   metricGroupName,
   metricGroupsPhrase,
+  metricsRefusedMessage,
   modelMetadataWarning,
   NOT_REPORTED,
   notReportedByAnyMessage,
@@ -260,6 +261,19 @@ describe('modelMetadataWarning', () => {
     expect(modelMetadataWarning('Unavailable')).toBeNull()
     expect(modelMetadataWarning(null)).toBeNull()
     expect(modelMetadataWarning(undefined)).toBeNull()
+  })
+})
+
+describe('metricsRefusedMessage', () => {
+  it('names the engine and the remedy the model-name warning gives for the same refusal', () => {
+    // The metrics endpoint refused the dashboard for want of the engine's key:
+    // the same fix as a refused /v1/models — and not a launch flag, so not the
+    // metrics-off wording either.
+    expect(
+      metricsRefusedMessage({ engine_type: 'Sglang', endpoint: 'http://localhost:30000' }),
+    ).toBe(
+      'SGLang localhost:30000 requires authentication — configure the provider API key to read its metrics.',
+    )
   })
 })
 

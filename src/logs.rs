@@ -363,6 +363,7 @@ mod tests {
             loaded_models: None,
             metric_groups: MetricGroup::all(),
             metrics_off: None,
+            metrics_error: None,
             metrics: None,
             recent_requests: Vec::new(),
             deployment_mode: match container_id {

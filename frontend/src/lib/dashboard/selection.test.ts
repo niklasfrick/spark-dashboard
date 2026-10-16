@@ -119,6 +119,21 @@ describe('pageSelection', () => {
     })
   })
 
+  it('passes over a running engine whose metrics endpoint refused the key', () => {
+    const host = snapshot(
+      [gpu(0)],
+      [
+        engine('http://localhost:8000', { type: 'Running' }, { metrics_error: 'AuthRequired' }),
+        engine('http://localhost:8001'),
+      ],
+    )
+
+    expect(pageSelection(host, {}).engineTarget).toEqual({
+      kind: 'engine',
+      endpoint: 'http://localhost:8001',
+    })
+  })
+
   it('falls back to the first running engine when none reports metrics', () => {
     const host = snapshot(
       [gpu(0)],

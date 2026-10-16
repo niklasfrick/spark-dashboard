@@ -101,6 +101,13 @@ export type EnginePanelResolution =
    * the flag instead of calling the engine silent (ADR-0004).
    */
   | { status: 'metrics-off'; engine: EngineSnapshot; flag: string }
+  /**
+   * The engine resolved and is serving, and its metrics endpoint refused the
+   * dashboard for want of the engine's API key. Neither `not-reported` nor
+   * `metrics-off`: the metrics exist and are on — the remedy is a key on the
+   * dashboard's side, said the way a refused `/v1/models` says it.
+   */
+  | { status: 'metrics-refused'; engine: EngineSnapshot }
   /** The engine resolved, and has no metrics yet — starting, or loading a model. */
   | { status: 'starting'; engine: EngineSnapshot }
   /** The engine resolved and is not serving; `detail` says why. */
@@ -233,6 +240,11 @@ export function useEnginePanel(panel: DashboardPanel): EnginePanelResolution {
     // the connection instead of answering it.
     if (engine.metrics_off) {
       return { status: 'metrics-off', engine, flag: engine.metrics_off }
+    }
+    // On the same terms: the backend carries the refusal only while the engine
+    // runs, and no traffic or relaunch fixes it — only the engine's API key.
+    if (engine.metrics_error === 'AuthRequired') {
+      return { status: 'metrics-refused', engine }
     }
 
     const reported = reportedMetricGroups(engine)
