@@ -2,10 +2,10 @@ import type { GroupCoverage } from '@/lib/engineAggregate'
 import {
   coverageNote,
   engineDescription,
+  engineModelLabel,
   modelMetadataWarning,
-  shortModelName,
 } from '@/lib/format'
-import { getProviderLogo, type ProviderLogo } from '@/lib/providerLogo'
+import { engineProviderLogo, type ProviderLogo } from '@/lib/providerLogo'
 import type { AggregateEngineTarget, ResolvedEngineTarget } from './useEnginePanel'
 
 /**
@@ -33,11 +33,14 @@ export interface EngineIdentity {
   /** The engine process, named by provider and endpoint. Null on a
    *  single-engine host. */
   label: string | null
-  /** The model it is serving, without its organization prefix. Null on a
-   *  single-engine host, and where the engine has reported no model. */
+  /** The model it is serving, without its organization prefix — for an engine
+   *  holding several (Ollama), the first and how many more, or "No model
+   *  loaded". Null on a single-engine host, and where a single-model engine
+   *  has reported no model. */
   model: string | null
-  /** The provider of that model. Null on a single-engine host, and for a model
-   *  no shipped provider is recognized from. */
+  /** The provider of that model. Null on a single-engine host, for a model no
+   *  shipped provider is recognized from, and for an engine holding no one
+   *  model. */
   logo: ProviderLogo | null
   /** Why `model` may be wrong: the engine refused to say what it serves, so
    *  the name (if any) is only the launch command line's word for it. Null
@@ -82,12 +85,12 @@ export function engineIdentity(
     return { label: null, model: null, logo: null, modelWarning: null, coverage: null }
   }
 
-  const { model } = resolution.engine
+  const { engine } = resolution
   return {
-    label: engineDescription(resolution.engine),
-    model: model?.name ? shortModelName(model.name) : null,
-    logo: getProviderLogo(model?.name),
-    modelWarning: modelMetadataWarning(resolution.engine.model_metadata_error),
+    label: engineDescription(engine),
+    model: engineModelLabel(engine),
+    logo: engineProviderLogo(engine),
+    modelWarning: modelMetadataWarning(engine.model_metadata_error),
     coverage: null,
   }
 }

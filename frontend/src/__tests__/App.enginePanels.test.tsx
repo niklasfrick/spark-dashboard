@@ -17,6 +17,7 @@ import {
 import { DASHBOARD_SCHEMA_VERSION } from '../lib/dashboard/schema'
 import { metricGroupOf } from '../lib/engineMetrics'
 import { LLAMA_CPP_GROUPS, SGLANG_GROUPS } from '../test/engineGroups'
+import { HF_QWEN, OLLAMA_ENDPOINT, TINYLLAMA, ollamaEngine } from '../test/ollama'
 import {
   METRIC_GROUPS,
   type EngineMetrics,
@@ -1823,5 +1824,97 @@ describe('speculative decoding on an engine that reports gauges instead of count
     const panel = region('Speculative Decoding')
     expect(within(panel).queryByText(/drafted no tokens yet/)).not.toBeInTheDocument()
     expect(within(panel).getByText('Accept Len')).toBeInTheDocument()
+  })
+})
+
+// One Ollama server is one engine holding a list of models in place of one
+// (#132): it is named by that list wherever the UI names an engine by its model.
+describe('an Ollama engine', () => {
+  it('shows an Ollama engine under its own name and icon', async () => {
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        { id: 'who', type: 'engine-status', geometry: { x: 0, y: 0, w: 6, h: 4 } },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, [ollamaEngine([TINYLLAMA])]))
+
+    const chip = within(region('Engine')).getByText('Ollama').parentElement
+    expect(chip?.querySelector('img')?.getAttribute('src')).toBe('/icons/ollama.svg')
+  })
+
+  it('names it on a panel’s identity row by the models it holds, marking no one provider', async () => {
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        {
+          id: 'ollama',
+          type: 'inference-timeline',
+          title: 'Ollama requests',
+          binding: { kind: 'engine', endpoint: OLLAMA_ENDPOINT },
+          geometry: { x: 0, y: 0, w: 6, h: 4 },
+        },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, [makeEngine(ALPHA), ollamaEngine([HF_QWEN, TINYLLAMA])]))
+
+    const panel = region('Ollama requests')
+    expect(within(panel).getByText('Qwen3-8B-GGUF:Q4_K_M +1 more')).toBeInTheDocument()
+    expect(within(panel).getByText('Ollama localhost:11434')).toBeInTheDocument()
+    // Two providers' models on one engine: one mark would claim one for both.
+    expect(within(panel).queryByRole('img')).not.toBeInTheDocument()
+  })
+
+  it('marks the identity row only for a single model whose name spells out its provider', async () => {
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        {
+          id: 'ollama',
+          type: 'inference-timeline',
+          title: 'Ollama requests',
+          binding: { kind: 'engine', endpoint: OLLAMA_ENDPOINT },
+          geometry: { x: 0, y: 0, w: 6, h: 4 },
+        },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, [makeEngine(ALPHA), ollamaEngine([HF_QWEN])]))
+    expect(within(region('Ollama requests')).getByRole('img', { name: 'Qwen' })).toHaveAttribute(
+      'src',
+      '/icons/providers/qwen.svg',
+    )
+
+    // tinyllama carries "llama" in its name and is still not Meta's.
+    receive(makeSnapshot(3000, [makeEngine(ALPHA), ollamaEngine([TINYLLAMA])]))
+    const panel = region('Ollama requests')
+    expect(within(panel).getByText('tinyllama:latest')).toBeInTheDocument()
+    expect(within(panel).queryByRole('img')).not.toBeInTheDocument()
+  })
+
+  it('counts it once on the All Engines overview, by what it holds', async () => {
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        { id: 'all', type: 'engines-overview', geometry: { x: 0, y: 0, w: 6, h: 4 } },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(makeSnapshot(1000, [makeEngine(ALPHA), ollamaEngine([])]))
+
+    const all = region('All Engines')
+    // Idle is running: the engine is up with nothing loaded.
+    expect(within(all).getByText('2/2 running')).toBeInTheDocument()
+    expect(within(all).getByText('Qwen (1)')).toBeInTheDocument()
+    expect(within(all).getByText('No model loaded (1)')).toBeInTheDocument()
+
+    receive(makeSnapshot(3000, [makeEngine(ALPHA), ollamaEngine([HF_QWEN, TINYLLAMA])]))
+    expect(within(region('All Engines')).getByText('Multi-model (1)')).toBeInTheDocument()
   })
 })

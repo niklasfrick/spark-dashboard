@@ -8,6 +8,7 @@ import {
   panelCoverage,
 } from './engineAggregate'
 import { SGLANG_GROUPS } from '@/test/engineGroups'
+import { HF_QWEN, TINYLLAMA, ollamaEngine } from '@/test/ollama'
 import {
   METRIC_GROUPS,
   type EngineMetrics,
@@ -737,5 +738,62 @@ describe('groupRunningByProvider', () => {
     expect(groups[0].label).toBe('Unknown')
     expect(groups[0].logo).toBeNull()
     expect(groups[0].count).toBe(2)
+  })
+})
+
+// An Ollama engine has no single model: it is grouped by the models it holds
+// now, on the engine-level logo rule — one chip per engine, never a guess (#132).
+describe('groupRunningByProvider with an Ollama engine', () => {
+  const one = (engine: EngineSnapshot) => {
+    const groups = groupRunningByProvider([engine])
+    expect(groups).toHaveLength(1)
+    return groups[0]
+  }
+
+  it('files an engine holding one model under the provider its name spells out', () => {
+    const group = one(ollamaEngine([HF_QWEN]))
+    expect(group.key).toBe('qwen')
+    expect(group.label).toBe('Qwen')
+    expect(group.logo?.slug).toBe('qwen')
+  })
+
+  it('guesses no provider from a bare name — tinyllama is not Meta’s', () => {
+    const group = one(ollamaEngine([TINYLLAMA]))
+    expect(group.key).toBe('unknown')
+    expect(group.label).toBe('Unknown')
+    expect(group.logo).toBeNull()
+  })
+
+  it('keeps the raw organization a name spells out when no mark is shipped for it', () => {
+    const group = one(ollamaEngine([{ ...HF_QWEN, name: 'hf.co/bartowski/Phi-4-GGUF:Q4_K_M' }]))
+    expect(group.key).toBe('raw:bartowski')
+    expect(group.label).toBe('bartowski')
+    expect(group.logo).toBeNull()
+  })
+
+  it('says an idle engine has no model loaded rather than an unknown provider', () => {
+    const group = one(ollamaEngine([]))
+    expect(group.label).toBe('No model loaded')
+    expect(group.logo).toBeNull()
+    expect(group.count).toBe(1)
+  })
+
+  it('counts an engine holding several models once, under no one provider', () => {
+    const group = one(ollamaEngine([HF_QWEN, TINYLLAMA]))
+    expect(group.label).toBe('Multi-model')
+    expect(group.logo).toBeNull()
+    expect(group.count).toBe(1)
+  })
+
+  it('leaves single-model engines beside it grouped exactly as before', () => {
+    const groups = groupRunningByProvider([
+      engineWithModel('Running', 'Qwen/Qwen2.5-7B', 'a'),
+      ollamaEngine([HF_QWEN]),
+      engineWithModel('Running', 'llama-3.1-8b-instruct', 'b'),
+    ])
+    expect(groups.map((g) => [g.key, g.count])).toEqual([
+      ['qwen', 2],
+      ['meta', 1],
+    ])
   })
 })

@@ -5,6 +5,7 @@ import {
   pageSourceFromChoice,
   readPageSource,
 } from './pageSource'
+import { HF_QWEN, OLLAMA_ENDPOINT, TINYLLAMA, ollamaEngine } from '@/test/ollama'
 import type { EngineSnapshot } from '@/types/metrics'
 
 function engine(endpoint: string, model: string | null): EngineSnapshot {
@@ -97,6 +98,30 @@ describe('pageSourceChoices', () => {
       kind: 'engine',
       endpoint: 'http://localhost:8000',
     })
+  })
+
+  it('names an Ollama engine by what it has loaded — none, one or several', () => {
+    const label = (engine: EngineSnapshot) => pageSourceChoices(undefined, [engine]).choices[2].label
+
+    expect(label(ollamaEngine([]))).toBe('No model loaded — Ollama localhost:11434')
+    expect(label(ollamaEngine([TINYLLAMA]))).toBe('tinyllama:latest — Ollama localhost:11434')
+    expect(label(ollamaEngine([HF_QWEN, TINYLLAMA]))).toBe(
+      'Qwen3-8B-GGUF:Q4_K_M +1 more — Ollama localhost:11434',
+    )
+  })
+
+  it('keeps an Ollama engine’s choice on its endpoint while its models change', () => {
+    // The option value is what the page stores; a model loading or unloading
+    // must not turn the stored source into one that is "not on this host".
+    const source = { kind: 'engine', endpoint: OLLAMA_ENDPOINT } as const
+    const before = pageSourceChoices(source, [ollamaEngine([TINYLLAMA])])
+    const after = pageSourceChoices(source, [ollamaEngine([HF_QWEN, TINYLLAMA])])
+
+    expect(after.value).toBe(before.value)
+    expect(after.choices.map((choice) => choice.value)).toEqual(
+      before.choices.map((choice) => choice.value),
+    )
+    expect(after.choices.some((choice) => choice.absent)).toBe(false)
   })
 })
 

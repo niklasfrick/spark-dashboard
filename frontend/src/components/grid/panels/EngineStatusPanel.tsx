@@ -1,5 +1,13 @@
-import { getProviderLogo } from '@/lib/providerLogo'
-import { engineDisplayName, engineIconPath, formatEndpoint, formatGpuIndexes, modelMetadataWarning, shortModelName } from '@/lib/format'
+import { engineProviderLogo } from '@/lib/providerLogo'
+import {
+  NO_MODEL_LOADED,
+  engineDisplayName,
+  engineIconPath,
+  engineModelLabel,
+  formatEndpoint,
+  formatGpuIndexes,
+  modelMetadataWarning,
+} from '@/lib/format'
 import type { EngineSnapshot } from '@/types/metrics'
 import { DeploymentChip, EngineChip, ProviderMark } from './engineIdentity'
 import { EnginePanelNotice, PanelNotice } from './PanelNotice'
@@ -45,20 +53,20 @@ export function EngineStatusPanel({ panel }: PanelContentProps) {
 }
 
 function EngineIdentity({ engine }: { engine: EngineSnapshot }) {
-  const { model } = engine
-  const logo = getProviderLogo(model?.name)
+  const { model, loaded_models: loaded } = engine
+  const logo = engineProviderLogo(engine)
   const warning = modelMetadataWarning(engine.model_metadata_error)
   // The model is the headline; the endpoint is already on the frame's title
   // row, so repeating it here would spend the panel's widest line on it twice.
   // With no model to name, the absence is the headline — it is the thing an
   // operator has to act on, not a footnote under a blank line. When the
   // engine refused to say, the refusal is a better headline than a generic
-  // absence: the model may well be loaded, only its name is unreadable.
-  const headline = model?.name
-    ? shortModelName(model.name)
-    : warning
-      ? 'Model name unavailable'
-      : 'No model loaded'
+  // absence: the model may well be loaded, only its name is unreadable. An
+  // engine holding a list of models (Ollama) is headlined by that list.
+  const headline =
+    engineModelLabel(engine) ?? (warning ? 'Model name unavailable' : NO_MODEL_LOADED)
+  // The names in full, organization and all, for the headline's tooltip.
+  const fullName = loaded ? loaded.map(({ name }) => name).join(', ') || null : model?.name
 
   return (
     // One wrapping row rather than a column: in a panel as wide as the page
@@ -71,7 +79,7 @@ function EngineIdentity({ engine }: { engine: EngineSnapshot }) {
         <div className="min-w-0">
           <p
             className="text-sm font-semibold text-zinc-100 truncate leading-tight"
-            title={model?.name ?? engine.endpoint}
+            title={fullName ?? engine.endpoint}
           >
             {headline}
           </p>

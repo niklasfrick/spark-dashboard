@@ -9,6 +9,8 @@ import {
   engineDescription,
   engineDisplayName,
   engineIconPath,
+  engineModelLabel,
+  formatLoadedModelSize,
   metricGroupName,
   metricGroupsPhrase,
   modelMetadataWarning,
@@ -16,7 +18,8 @@ import {
   notReportedByAnyMessage,
   notReportedMessage,
 } from '../lib/format'
-import { METRIC_GROUPS } from '../types/metrics'
+import { HF_QWEN, TINYLLAMA, ollamaEngine } from '../test/ollama'
+import { METRIC_GROUPS, type ModelInfo } from '../types/metrics'
 
 const GIB = 1_073_741_824
 const MIB = 1_048_576
@@ -128,6 +131,80 @@ describe('engineDisplayName and engineIconPath', () => {
     expect(engineIconPath('Vllm')).toBe('/icons/vllm.svg')
     expect(engineDisplayName('Sglang')).toBe('SGLang')
     expect(engineIconPath('Sglang')).toBe('/icons/sglang.svg')
+  })
+
+  it('names an Ollama engine and points at its own icon', () => {
+    expect(engineDisplayName('Ollama')).toBe('Ollama')
+    expect(engineIconPath('Ollama')).toBe('/icons/ollama.svg')
+    expect(engineDescription({ engine_type: 'Ollama', endpoint: 'http://localhost:11434' })).toBe(
+      'Ollama localhost:11434',
+    )
+  })
+})
+
+describe('engineModelLabel', () => {
+  const served = (name: string): ModelInfo => ({
+    name,
+    parameter_size: null,
+    quantization: null,
+    precision: null,
+    tensor_type: null,
+    model_type: null,
+    pipeline_tag: null,
+  })
+
+  it('names a single-model engine by its model, without the organization prefix', () => {
+    expect(engineModelLabel({ model: served('Qwen/Qwen3-8B') })).toBe('Qwen3-8B')
+    expect(engineModelLabel({ model: served('Qwen/Qwen3-8B'), loaded_models: null })).toBe(
+      'Qwen3-8B',
+    )
+  })
+
+  it('leaves the absence of a single-model engine’s model to the caller', () => {
+    // Each place words it differently — the identity row omits it, the Engine
+    // panel tells a refused name apart from none — so there is no one answer.
+    expect(engineModelLabel({ model: null })).toBeNull()
+    expect(engineModelLabel({ model: served('') })).toBeNull()
+  })
+
+  it('says an Ollama engine with nothing loaded has no model loaded', () => {
+    expect(engineModelLabel(ollamaEngine([]))).toBe('No model loaded')
+  })
+
+  it('names an Ollama engine holding one model by that model', () => {
+    expect(engineModelLabel(ollamaEngine([TINYLLAMA]))).toBe('tinyllama:latest')
+    // The same treatment as a single-model engine's name: the organization
+    // goes, the tag stays.
+    expect(engineModelLabel(ollamaEngine([HF_QWEN]))).toBe('Qwen3-8B-GGUF:Q4_K_M')
+  })
+
+  it('names an Ollama engine holding several by the first and how many more', () => {
+    expect(engineModelLabel(ollamaEngine([HF_QWEN, TINYLLAMA]))).toBe(
+      'Qwen3-8B-GGUF:Q4_K_M +1 more',
+    )
+    expect(
+      engineModelLabel(
+        ollamaEngine([HF_QWEN, TINYLLAMA, { ...TINYLLAMA, name: 'tinyllama:q8' }]),
+      ),
+    ).toBe('Qwen3-8B-GGUF:Q4_K_M +2 more')
+  })
+
+  it('goes by the list, not by a model the snapshot also carries', () => {
+    // The backend sends `model: null` beside a list; the list is the only truth.
+    expect(engineModelLabel({ model: served('Qwen/Qwen3-8B'), loaded_models: [] })).toBe(
+      'No model loaded',
+    )
+  })
+})
+
+describe('formatLoadedModelSize', () => {
+  it('reads a model wholly in GPU memory as its size alone', () => {
+    // The captured tinyllama: 800454656 bytes, all of it in VRAM.
+    expect(formatLoadedModelSize(TINYLLAMA)).toBe('763.4 MB')
+  })
+
+  it('adds the VRAM share of a model partly offloaded to the CPU', () => {
+    expect(formatLoadedModelSize(HF_QWEN)).toBe('6.0 GB (4.0 GB VRAM)')
   })
 })
 

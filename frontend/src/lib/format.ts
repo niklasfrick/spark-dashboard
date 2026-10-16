@@ -1,6 +1,12 @@
 import type { GroupCoverage } from '@/lib/engineAggregate'
 import type { EngineIdentity } from '@/lib/identity'
-import type { EngineType, MetricGroup, ModelMetadataError } from '@/types/metrics'
+import type {
+  EngineSnapshot,
+  EngineType,
+  LoadedModel,
+  MetricGroup,
+  ModelMetadataError,
+} from '@/types/metrics'
 
 const KIB = 1024
 const MIB = 1024 * 1024
@@ -168,6 +174,7 @@ export function engineDisplayName(engineType: EngineType): string {
   const names: Record<EngineType, string> = {
     Vllm: 'vLLM',
     Sglang: 'SGLang',
+    Ollama: 'Ollama',
   }
   return names[engineType]
 }
@@ -178,6 +185,7 @@ export function engineIconPath(engineType: EngineType): string {
   const icons: Record<EngineType, string> = {
     Vllm: '/icons/vllm.svg',
     Sglang: '/icons/sglang.svg',
+    Ollama: '/icons/ollama.svg',
   }
   return icons[engineType]
 }
@@ -350,6 +358,44 @@ function listOfAlternatives(items: readonly string[]): string {
  */
 export function shortModelName(name: string): string {
   return name.includes('/') ? name.slice(name.lastIndexOf('/') + 1) : name
+}
+
+/** What an engine with no model loaded reads as, where its model would be named. */
+export const NO_MODEL_LOADED = 'No model loaded'
+
+/**
+ * The model an engine is named by, wherever the UI names one by its model: the
+ * page source choices, a panel's identity row, the Engine panel's headline.
+ *
+ * A single-model engine type (`loaded_models` absent or null) is named by its
+ * `model`, without the organization prefix — and is null without one, because
+ * each caller words that absence its own way. An engine that loads models on
+ * demand (Ollama) is named by the list it holds now, which the backend sorts by
+ * name so the label does not jump between snapshots: nothing loaded is
+ * `No model loaded` — an idle engine, not a missing name — one model is that
+ * model's name, and several are the first and how many more.
+ */
+export function engineModelLabel(
+  engine: Pick<EngineSnapshot, 'model' | 'loaded_models'>,
+): string | null {
+  const loaded = engine.loaded_models
+  if (loaded == null) return engine.model?.name ? shortModelName(engine.model.name) : null
+  if (loaded.length === 0) return NO_MODEL_LOADED
+  const first = shortModelName(loaded[0].name)
+  return loaded.length === 1 ? first : `${first} +${loaded.length - 1} more`
+}
+
+/**
+ * How much memory a loaded model occupies: its size, and — when the engine
+ * offloaded part of it to the CPU — how much of that is in VRAM, since that is
+ * the half that decides how fast it runs. A model wholly in VRAM reads as its
+ * size alone.
+ */
+export function formatLoadedModelSize(model: Pick<LoadedModel, 'size_bytes' | 'vram_bytes'>): string {
+  const size = formatBytes(model.size_bytes)
+  return model.vram_bytes === model.size_bytes
+    ? size
+    : `${size} (${formatBytes(model.vram_bytes)} VRAM)`
 }
 
 /**

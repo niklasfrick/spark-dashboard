@@ -16,7 +16,7 @@
  * document.
  */
 
-import { engineDescription, shortModelName } from '@/lib/format'
+import { NO_MODEL_LOADED, engineDescription, engineModelLabel } from '@/lib/format'
 import type { EngineSnapshot } from '@/types/metrics'
 import { isRecord } from './json'
 
@@ -124,10 +124,11 @@ export function pageSourceFromChoice(value: string): PageSource | null {
 /**
  * An engine as the control names it: the model first, because choosing a model
  * is what an operator opens this control to do; the engine after it, because
- * two engines can serve the same model.
+ * two engines can serve the same model. The value is the endpoint alone, so an
+ * engine whose loaded models change (Ollama) stays the same choice.
  */
 function engineChoice(engine: EngineSnapshot): PageSourceChoice {
-  const model = engine.model?.name ? shortModelName(engine.model.name) : 'No model loaded'
+  const model = engineModelLabel(engine) ?? NO_MODEL_LOADED
   return { value: choiceOf(engine.endpoint), label: `${model} — ${engineDescription(engine)}` }
 }
 

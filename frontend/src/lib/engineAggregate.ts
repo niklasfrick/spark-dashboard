@@ -7,7 +7,14 @@ import {
 } from '@/types/metrics'
 import { contributesGroup, metricGroupOf, type NumericEngineMetric } from './engineMetrics'
 import { LATENCY_GROUPS } from './latencyMode'
-import { getProviderLogo, type ProviderLogo } from './providerLogo'
+import { NO_MODEL_LOADED } from './format'
+import {
+  getNamespacedProviderLogo,
+  getProviderLogo,
+  modelNamespace,
+  providerPrefix,
+  type ProviderLogo,
+} from './providerLogo'
 
 /**
  * The metric groups whose combined figures are request-weighted means: the
@@ -287,6 +294,12 @@ export interface ProviderGroup {
  * Groups running engines by the provider of their served model. Providers
  * with no resolvable logo fall back to the raw `Org/` prefix or 'unknown'
  * so every running engine is still accounted for.
+ *
+ * An engine holding a list of models (Ollama) counts once too, on the
+ * engine-level logo rule: one model is filed under the provider its name
+ * spells out — never one guessed from a keyword — while an idle engine reads
+ * as having no model loaded and one holding several as several models, since
+ * no one provider is theirs.
  */
 export function groupRunningByProvider(
   engines: readonly EngineSnapshot[],
@@ -294,28 +307,7 @@ export function groupRunningByProvider(
   const groups = new Map<string, ProviderGroup>()
   for (const e of engines) {
     if (e.status.type !== 'Running') continue
-    const name = e.model?.name ?? null
-    const logo = getProviderLogo(name)
-
-    let key: string
-    let label: string
-    if (logo) {
-      key = logo.slug
-      label = logo.alt
-    } else if (name) {
-      const slashIdx = name.indexOf('/')
-      const rawPrefix = slashIdx > 0 ? name.slice(0, slashIdx).trim() : ''
-      if (rawPrefix) {
-        key = `raw:${rawPrefix.toLowerCase()}`
-        label = rawPrefix
-      } else {
-        key = 'unknown'
-        label = 'Unknown'
-      }
-    } else {
-      key = 'unknown'
-      label = 'Unknown'
-    }
+    const { key, label, logo } = providerOf(e)
 
     const existing = groups.get(key)
     if (existing) {
@@ -329,6 +321,30 @@ export function groupRunningByProvider(
     if (b.count !== a.count) return b.count - a.count
     return a.label.localeCompare(b.label)
   })
+}
+
+const UNKNOWN_PROVIDER = { key: 'unknown', label: 'Unknown', logo: null }
+
+/** The provider group one running engine is filed under. */
+function providerOf(engine: EngineSnapshot): Omit<ProviderGroup, 'count'> {
+  const loaded = engine.loaded_models
+  if (loaded != null) {
+    if (loaded.length === 0) return { key: 'no-model', label: NO_MODEL_LOADED, logo: null }
+    if (loaded.length > 1) return { key: 'several-models', label: 'Multi-model', logo: null }
+    const [only] = loaded
+    return byProvider(getNamespacedProviderLogo(only.name), modelNamespace(only.name))
+  }
+
+  const name = engine.model?.name ?? null
+  return byProvider(getProviderLogo(name), providerPrefix(name))
+}
+
+/** A resolved provider by its mark; otherwise the organization as written, or
+ *  'Unknown' when the name carries none. */
+function byProvider(logo: ProviderLogo | null, rawOrg: string | null): Omit<ProviderGroup, 'count'> {
+  if (logo) return { key: logo.slug, label: logo.alt, logo }
+  if (rawOrg) return { key: `raw:${rawOrg.toLowerCase()}`, label: rawOrg, logo: null }
+  return UNKNOWN_PROVIDER
 }
 
 export function aggregateEngines(engines: readonly EngineSnapshot[]): AggregateSnapshot {

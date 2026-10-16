@@ -85,7 +85,7 @@ export interface NetworkMetrics {
 
 // --- LLM Engine Types (Phase 2) ---
 
-export type EngineType = 'Vllm' | 'Sglang'
+export type EngineType = 'Vllm' | 'Sglang' | 'Ollama'
 
 export type DeploymentMode = 'Docker' | 'Native'
 
@@ -137,6 +137,29 @@ export interface ModelInfo {
   tensor_type: string | null
   model_type: string | null
   pipeline_tag: string | null
+}
+
+/** One model an engine that loads models on demand (Ollama) holds in memory
+ *  now, as the engine's own API describes it. Matches the backend's
+ *  `LoadedModel` struct field for field. */
+export interface LoadedModel {
+  /** The engine's name for the model, tag included: `tinyllama:latest`,
+   *  `hf.co/Qwen/Qwen3-8B-GGUF:Q4_K_M`. */
+  name: string
+  /** Parameter count as the engine words it (`1B`); null when it does not say. */
+  parameter_size: string | null
+  /** Quantization level (`Q4_0`); null when the engine does not say. */
+  quantization: string | null
+  /** Memory the loaded model occupies, in bytes. */
+  size_bytes: number
+  /** The part of `size_bytes` resident in GPU memory — less than it when the
+   *  engine offloaded layers to the CPU. */
+  vram_bytes: number
+  /** Context window the model was loaded with, in tokens; null when unknown. */
+  context_length: number | null
+  /** When the engine unloads the model if it stays idle, RFC 3339 as the
+   *  engine served it; null when it does not say. */
+  expires_at: string | null
 }
 
 /** Tail-latency percentiles in milliseconds, derived from a Prometheus
@@ -234,6 +257,13 @@ export interface EngineSnapshot {
   endpoint: string
   status: EngineStatus
   model: ModelInfo | null
+  /** The models the engine holds now, sorted by name — set by an engine type
+   *  that loads models on demand and can hold several (Ollama), whose `model`
+   *  is then always null: this list is the only truth. Empty is an idle
+   *  engine, still running. Null for a single-model engine type, which is
+   *  named by `model` as before — optional so snapshots from older backends
+   *  still parse, absent meaning the same. */
+  loaded_models?: LoadedModel[] | null
   /** Why `model` is missing or only a command-line fallback. Null when
    *  metadata resolved normally — optional so snapshots from older backends
    *  still parse. */
