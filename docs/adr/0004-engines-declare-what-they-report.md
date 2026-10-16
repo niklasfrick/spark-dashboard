@@ -1,7 +1,9 @@
 # Engines declare what they report on the metrics contract
 
 **Status:** accepted (2026-10); amended (2026-10, #142): see [The grain is the
-tile](#amendment-the-grain-is-the-tile-142)
+tile](#amendment-the-grain-is-the-tile-142); amended (2026-10, #151): see [The
+inter-token latency is weighted by
+tokens](#amendment-the-inter-token-latency-is-weighted-by-tokens-151)
 
 Engine types other than vLLM report different subsets of what the engine panels
 show: SGLang nearly everything, llama.cpp throughput and means but no
@@ -97,3 +99,54 @@ engines that report its group.
     reported only when two groups both are.
   - It assumes an engine reports the same statistics for every latency it has,
     and nothing guarantees that.
+
+## Amendment: the inter-token latency is weighted by tokens (#151)
+
+All models weighted every latency by request count, and llama.cpp counts no
+requests. Beside vLLM, a host's inter-token latency read as vLLM's alone ("1 of
+2 engines"); llama.cpp on its own read nothing, though its mean inter-token
+latency is the one latency it reports.
+
+**A combined latency is weighted by what it is measured per.**
+- Time to first token, end-to-end latency, time per output token and queue time
+  are per request, and stay weighted by the request count. An engine enters
+  them with the latency group and `RequestTotal`.
+- The inter-token latency is per token. Its mean, its percentiles and the SLO
+  goodput read off them are weighted by the tokens each engine generated. An
+  engine enters with the latency group and `Throughput`, which every engine
+  that reports the latency also reports. No request count is needed.
+
+**The token counters count from the warmup baseline on every engine.** vLLM and
+SGLang already did. llama.cpp reported its lifetime counters and now counts
+from the baseline it takes on its first scrape, for prompt and generated tokens
+alike. The weight then covers the same window as the latency it weights. Rates
+come from the counter's deltas and do not change. `total_requests` stays a
+lifetime count.
+
+### Consequences
+
+- **On a vLLM-only host the combined inter-token latency shifts** from a
+  request-weighted to a token-weighted mean. The token-weighted one is the exact
+  pooled per-token figure, so the shift is a correction.
+- **The Latency panel's coverage note names every group** once the inter-token
+  latency covers engines the others do not. Accepted: it says which figure
+  covers which engines.
+- **An engine at its baseline weighs nothing.** Its token total is 0 on the
+  first scrape. Beside an engine that has generated tokens it carries zero
+  weight, so it drops out of the figure while still counting in the coverage.
+  When every engine is at its baseline, the combination falls back to a simple
+  mean until tokens flow.
+- **The earlier consequence now holds for the request-weighted latencies
+  only.** An engine with no request count still cannot enter those, but it can
+  enter the inter-token latency.
+
+### Considered options
+
+- **Keep the inter-token latency request-weighted.** Rejected because it leaves
+  out the engine that only reports a per-token latency, and a request count
+  says little about how many tokens the latency was averaged over.
+- **Weight every latency by tokens.** Rejected because time to first token,
+  end-to-end latency and queue time are per-request measures. Token weights
+  would let long generations outvote short requests.
+- **Make `total_requests` count from the baseline too.** Left out of #151. The
+  request weight is not what broke.
