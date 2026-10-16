@@ -319,8 +319,8 @@ pub struct EngineMetrics {
     /// Cumulative prompt (prefill) tokens processed since engine start.
     /// Raw lifetime counter, not warmup-adjusted.
     pub total_prompt_tokens: Option<u64>,
-    /// Cumulative generation (decode) tokens produced since engine start.
-    /// Raw lifetime counter, not warmup-adjusted.
+    /// Generation (decode) tokens produced since the warmup baseline.
+    /// Raw lifetime counter while warming; llama.cpp baselines on its first scrape.
     pub total_generation_tokens: Option<u64>,
     /// Cumulative count of prefix-cache token queries since engine start.
     /// Raw lifetime counter, not warmup-adjusted.

@@ -802,7 +802,7 @@ struct SpecInputs {
 /// needs, as on vLLM.
 ///
 /// Filled: the four throughput figures (from the adapter's rates) and the
-/// two lifetime token counters; the requests processing and deferred; the
+/// lifetime prompt count and generated tokens since the baseline; requests processing and deferred; the
 /// mean inter-token latency, seconds over tokens of the requests finished
 /// since the baseline (the seconds are summed per slot, so this is the time
 /// between one request's tokens); and the six speculative-decoding fields.
@@ -865,7 +865,8 @@ fn engine_metrics(
         inter_token_latency_ms: if blank { None } else { inter_token_latency_ms },
         preemptions_total: None,
         total_prompt_tokens: lifetime("llamacpp_prompt_tokens_total"),
-        total_generation_tokens: lifetime("llamacpp_tokens_predicted_total"),
+        total_generation_tokens: counter("llamacpp_tokens_predicted_total")
+            .map(|v| v.max(0.0) as u64),
         prefix_cache_queries_total: None,
         avg_batch_size: None,
         ttft_percentiles: None,
@@ -1775,7 +1776,7 @@ mod tests {
         assert_eq!(json["metrics_error"], serde_json::Value::Null);
         assert_eq!(json["loaded_models"], serde_json::Value::Null);
         assert_eq!(json["metrics"]["active_requests"], 0);
-        assert_eq!(json["metrics"]["total_generation_tokens"], 1803);
+        assert_eq!(json["metrics"]["total_generation_tokens"], 0);
         assert_eq!(json["metrics"]["ttft_ms"], serde_json::Value::Null);
     }
 
@@ -1930,8 +1931,8 @@ mod tests {
 
     /// `tokens_predicted_total` moves only when a request finishes, so a
     /// long generation would read 0 tokens/s until it ends. While it runs,
-    /// the slots' decoded counts carry the rate; the lifetime counter stays
-    /// the engine's own.
+    /// the slots' decoded counts carry the rate; the completed-token counter
+    /// still only counts finished requests.
     #[tokio::test]
     async fn the_generation_rate_moves_while_a_request_runs() {
         let decoded = Arc::new(AtomicU64::new(100));
@@ -1984,11 +1985,23 @@ mod tests {
         })
         .await;
         let adapter = adapter(&server.url);
+        let first_started = Instant::now();
         let first = adapter.get_metrics().await.expect("metrics");
+        let first_finished = Instant::now();
         assert_eq!(first.inter_token_latency_ms, None);
-        assert_eq!(first.total_generation_tokens, Some(1803));
+        assert_eq!(first.total_generation_tokens, Some(0));
+        assert_eq!(*lock(&adapter.generated), Some(1803.0));
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let second_started = Instant::now();
         let second = adapter.get_metrics().await.expect("metrics");
+        let second_finished = Instant::now();
         assert_close(second.inter_token_latency_ms, 6.0);
-        assert_eq!(second.total_generation_tokens, Some(1903));
+        assert_eq!(second.total_generation_tokens, Some(100));
+        assert_eq!(*lock(&adapter.generated), Some(1903.0));
+        let rate = second.tokens_per_sec.expect("rate after two scrapes");
+        let min_rate = 100.0 / second_finished.duration_since(first_started).as_secs_f64();
+        let max_rate = 100.0 / second_started.duration_since(first_finished).as_secs_f64();
+        assert!((min_rate..=max_rate).contains(&rate), "{rate} tokens/s");
+        assert_eq!(second.avg_tokens_per_sec, second.tokens_per_sec);
     }
 }
