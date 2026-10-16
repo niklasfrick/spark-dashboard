@@ -13,5 +13,10 @@ export const SGLANG_GROUPS: MetricGroup[] = METRIC_GROUPS.filter(
 )
 
 /** What a llama.cpp server reports (#131): throughput, the requests in flight,
- *  and the mean inter-token latency. */
-export const LLAMA_CPP_GROUPS: MetricGroup[] = ['Throughput', 'ActiveRequests', 'ItlMean']
+ *  speculative decoding and the mean inter-token latency, in wire order. */
+export const LLAMA_CPP_GROUPS: MetricGroup[] = [
+  'Throughput',
+  'ActiveRequests',
+  'SpeculativeDecoding',
+  'ItlMean',
+]

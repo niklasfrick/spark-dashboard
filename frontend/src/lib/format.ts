@@ -175,6 +175,7 @@ export function engineDisplayName(engineType: EngineType): string {
     Vllm: 'vLLM',
     Sglang: 'SGLang',
     Ollama: 'Ollama',
+    LlamaCpp: 'llama.cpp',
   }
   return names[engineType]
 }
@@ -186,6 +187,7 @@ export function engineIconPath(engineType: EngineType): string {
     Vllm: '/icons/vllm.svg',
     Sglang: '/icons/sglang.svg',
     Ollama: '/icons/ollama.svg',
+    LlamaCpp: '/icons/llamacpp.svg',
   }
   return icons[engineType]
 }

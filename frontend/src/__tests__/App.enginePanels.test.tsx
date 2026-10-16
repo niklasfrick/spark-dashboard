@@ -57,6 +57,15 @@ vi.mock('@/components/charts/TimeSeriesChart', () => ({
 const ALPHA = 'http://localhost:8000'
 const BETA = 'http://localhost:8001'
 
+/** Every panel type that shows an engine's metrics, two to a row. */
+const metricPanels = PANEL_TYPE_IDS.filter((type) => panelMetricGroups(type).length > 0).map(
+  (type, i) => ({
+    id: type,
+    type,
+    geometry: { x: (i % 2) * 6, y: Math.floor(i / 2) * 2, w: 6, h: 2 },
+  }),
+)
+
 /** A stored page holding panels; binding omitted means `follow`. */
 function storedDocument(panels: unknown[]): string {
   return JSON.stringify({
@@ -156,6 +165,17 @@ function declaring(
     Object.assign(metrics, { [key]: key === 'kv_cache_is_estimated' ? false : null })
   }
   return makeEngine(endpoint, { metric_groups: [...groups], metrics })
+}
+
+/** A llama-server with `--metrics`, as the backend puts it on the wire: the
+ *  groups it declares carry its figures, with speculative decoding configured,
+ *  and everything else is null. */
+function llamaCpp(overrides: Partial<EngineSnapshot> = {}): EngineSnapshot {
+  return {
+    ...declaring(ALPHA, LLAMA_CPP_GROUPS, SPEC_DECODE),
+    engine_type: 'LlamaCpp',
+    ...overrides,
+  }
 }
 
 function makeSnapshot(ts: number, engines: EngineSnapshot[]): MetricsSnapshot {
@@ -370,6 +390,7 @@ describe('the engine panels on a grid page', () => {
   it.each([
     ['Vllm', 'vLLM', '/icons/vllm.svg'],
     ['Sglang', 'SGLang', '/icons/sglang.svg'],
+    ['LlamaCpp', 'llama.cpp', '/icons/llamacpp.svg'],
   ] as const)('shows a %s engine under its own name and icon', async (engineType, name, icon) => {
     const fetchMock = serveConfiguration({
       document: storedDocument([
@@ -808,15 +829,6 @@ describe('an engine that does not report a panel’s metric group', () => {
     'engine-spec-decode': 'vLLM localhost:8000 does not report speculative decoding.',
   }
 
-  /** Every panel type that shows an engine's metrics, two to a row. */
-  const metricPanels = PANEL_TYPE_IDS.filter((type) => panelMetricGroups(type).length > 0).map(
-    (type, i) => ({
-      id: type,
-      type,
-      geometry: { x: (i % 2) * 6, y: Math.floor(i / 2) * 2, w: 6, h: 2 },
-    }),
-  )
-
   beforeEach(() => gridSubstitute.reset())
 
   it('keeps every engine metric panel’s slot and says so, naming the engine type', async () => {
@@ -1162,7 +1174,7 @@ describe('a tile whose metric group is not reported', () => {
     ['p95', 'ITL mean'],
   ])('shows a llama.cpp-shaped engine’s ITL mean in %s, and says the rest is not reported', async (mode, itlLabel) => {
     window.localStorage.setItem('spark-dashboard:latency-mode', mode)
-    await showEngine(declaring(ALPHA, LLAMA_CPP_GROUPS))
+    await showEngine(llamaCpp())
 
     const latency = region('Latency')
     expect(within(tile(latency, itlLabel)).getByText('9')).toBeInTheDocument()
@@ -1192,12 +1204,28 @@ describe('a tile whose metric group is not reported', () => {
 
     expect(
       within(region('SLO Goodput')).getByText(
-        'vLLM localhost:8000 does not report latency percentiles.',
+        'llama.cpp localhost:8000 does not report latency percentiles.',
       ),
     ).toBeInTheDocument()
     expect(
-      within(region('Cache')).getByText('vLLM localhost:8000 does not report KV cache or prefix cache.'),
+      within(region('Cache')).getByText(
+        'llama.cpp localhost:8000 does not report KV cache or prefix cache.',
+      ),
     ).toBeInTheDocument()
+
+    // Speculative decoding is the one group beyond throughput, requests and ITL
+    // it reports: its own counters, shown as they are.
+    const spec = region('Speculative Decoding')
+    expect(within(spec).getByText('75')).toBeInTheDocument()
+    expect(within(spec).getByText('300K')).toBeInTheDocument()
+    expect(within(spec).queryByText(/does not report/)).not.toBeInTheDocument()
+
+    // No stand-in for what it has no counter for: the vLLM fixture's TTFT,
+    // end-to-end latency, total and percentiles appear nowhere on the page.
+    for (const stand of ['210', '4.20', '900', '400']) {
+      expect(screen.queryByText(stand), stand).not.toBeInTheDocument()
+    }
+    expect(within(latency).queryByTestId('chart-series-E2E')).not.toBeInTheDocument()
   })
 
   it('keeps the same tiles in the same slots whichever engine the panel shows', async () => {
@@ -1218,7 +1246,7 @@ describe('a tile whose metric group is not reported', () => {
     for (const [ts, engine] of [
       [1000, makeEngine(ALPHA)],
       [2000, declaring(ALPHA, SGLANG_GROUPS)],
-      [3000, declaring(ALPHA, LLAMA_CPP_GROUPS)],
+      [3000, llamaCpp()],
     ] as const) {
       receive(makeSnapshot(ts, [engine]))
       shown.push(
@@ -1236,7 +1264,7 @@ describe('a tile whose metric group is not reported', () => {
   it('never reads as a dash or a zero', async () => {
     // On the wire, every field of an undeclared group is null — which a tile
     // left to itself renders as the "not yet" dash.
-    await showEngine(declaring(ALPHA, LLAMA_CPP_GROUPS))
+    await showEngine(llamaCpp())
 
     const notReported = screen.getAllByText('not reported')
     // TTFT, E2E, Queue, TPOT, Batch; Total, Swapped, Preempt; two Per-Req.
@@ -1708,15 +1736,6 @@ describe('an engine running with its metrics endpoint off', () => {
 describe('an engine whose metrics endpoint refuses the dashboard’s API key', () => {
   const METRICS_REFUSED =
     'SGLang localhost:8000 requires authentication — configure the provider API key to read its metrics.'
-
-  /** Every panel type that shows an engine's metrics, two to a row. */
-  const metricPanels = PANEL_TYPE_IDS.filter((type) => panelMetricGroups(type).length > 0).map(
-    (type, i) => ({
-      id: type,
-      type,
-      geometry: { x: (i % 2) * 6, y: Math.floor(i / 2) * 2, w: 6, h: 2 },
-    }),
-  )
 
   function refused(overrides: Partial<EngineSnapshot> = {}): EngineSnapshot {
     return makeEngine(ALPHA, {
@@ -2239,15 +2258,6 @@ describe('metric panels bound to an Ollama engine', () => {
     'engine-spec-decode': 'Ollama localhost:11434 does not report speculative decoding.',
   }
 
-  /** Every panel type that shows an engine's metrics, two to a row. */
-  const metricPanels = PANEL_TYPE_IDS.filter((type) => panelMetricGroups(type).length > 0).map(
-    (type, i) => ({
-      id: type,
-      type,
-      geometry: { x: (i % 2) * 6, y: Math.floor(i / 2) * 2, w: 6, h: 2 },
-    }),
-  )
-
   const NOTHING_LOADED: LoadedModel[] = []
 
   it.each([
@@ -2347,5 +2357,83 @@ describe('metric panels bound to an Ollama engine', () => {
         'No running engine reports latency means, latency percentiles or queue time.',
       ),
     ).toBeInTheDocument()
+  })
+})
+
+// A llama-server answers /metrics only when launched with `--metrics` (#131).
+// Without it the engine is running and every metric panel names the flag, with
+// the engine named the way the other panels name it.
+describe('a llama.cpp engine launched without --metrics', () => {
+  it('says every metric panel is running with metrics off, and names --metrics', async () => {
+    const fetchMock = serveConfiguration({ document: storedDocument(metricPanels) })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(
+      makeSnapshot(1000, [
+        makeEngine(ALPHA, {
+          engine_type: 'LlamaCpp',
+          metric_groups: [...LLAMA_CPP_GROUPS],
+          metrics: null,
+          metrics_off: '--metrics',
+        }),
+      ]),
+    )
+
+    expect(metricPanels.length).toBeGreaterThan(0)
+    for (const { type } of metricPanels) {
+      const panel = region(defaultPanelTitle(type))
+      expect(
+        within(panel).getByText(
+          'llama.cpp localhost:8000 is running with metrics off — relaunch it with --metrics.',
+        ),
+        type,
+      ).toBeInTheDocument()
+      expect(within(panel).queryByText(/does not report/), type).not.toBeInTheDocument()
+    }
+  })
+})
+
+// A llama-server started with no model is a router that spawns one server per
+// model. It is a running engine that reports no metric group, and no flag
+// would change that — so "not reported", never metrics off (#131).
+describe('a llama.cpp router', () => {
+  const NOT_REPORTED: Partial<Record<PanelType, string>> = {
+    'engine-prefill-throughput': 'llama.cpp localhost:8000 does not report throughput or TTFT mean.',
+    'engine-decode-throughput': 'llama.cpp localhost:8000 does not report throughput or TPOT mean.',
+    'engine-latency':
+      'llama.cpp localhost:8000 does not report latency means, latency percentiles or queue time.',
+    'engine-slo-goodput': 'llama.cpp localhost:8000 does not report latency percentiles.',
+    'engine-requests': 'llama.cpp localhost:8000 does not report requests or preemptions.',
+    'engine-cache': 'llama.cpp localhost:8000 does not report KV cache or prefix cache.',
+    'engine-spec-decode': 'llama.cpp localhost:8000 does not report speculative decoding.',
+  }
+
+  it('says every metric panel is not reported, not that metrics are off', async () => {
+    expect(metricPanels.map((p) => p.type).sort()).toEqual(Object.keys(NOT_REPORTED).sort())
+
+    const fetchMock = serveConfiguration({ document: storedDocument(metricPanels) })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    receive(
+      makeSnapshot(1000, [
+        makeEngine(ALPHA, {
+          engine_type: 'LlamaCpp',
+          model: null,
+          metric_groups: [],
+          metrics: null,
+        }),
+      ]),
+    )
+
+    for (const { type } of metricPanels) {
+      const panel = region(defaultPanelTitle(type))
+      expect(within(panel).getByText(NOT_REPORTED[type]!), type).toBeInTheDocument()
+      expect(within(panel).queryByText(/metrics off/), type).not.toBeInTheDocument()
+      expect(within(panel).queryByText(/has no model/), type).not.toBeInTheDocument()
+      expect(within(panel).queryByText('--'), type).not.toBeInTheDocument()
+      expect(within(panel).queryByTestId('chart'), type).not.toBeInTheDocument()
+    }
   })
 })
