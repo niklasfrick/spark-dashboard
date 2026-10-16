@@ -235,9 +235,9 @@ impl EngineAdapter for VllmAdapter {
             }
         };
 
-        // Cumulative prefix-cache queries — pass-through lifetime counter, the
-        // volume the hit rate is derived from. Mirrors total_*_tokens: shown
-        // raw and ungated by warmup so it stays continuous.
+        // Prefix-cache queries — the volume the hit rate is derived from.
+        // Read off the warmup-adjusted scrape like total_*_tokens, so it
+        // counts from the same baseline as the hit rate.
         let prefix_cache_queries_total = parsed
             .counters
             .get("vllm_prefix_cache_queries_total")
@@ -727,9 +727,11 @@ vllm:generation_tokens_total 7890123.0
         assert_eq!(gen, Some(7_890_123));
     }
 
-    /// `prefix_cache_queries_total` is a pass-through lifetime counter read
-    /// off `parsed.counters` and cast f64 -> u64 (same boundary as the token
-    /// totals, ungated by warmup). Assert it propagates from the metrics body.
+    /// The adapter reads `prefix_cache_queries_total` off `parsed.counters`
+    /// (the warmup-adjusted scrape in `get_metrics`) and casts f64 -> u64,
+    /// the same boundary as the token totals. This test covers only the
+    /// parse and the cast on a raw body, not the warmup adjustment: assert
+    /// the counter propagates from the metrics body.
     #[test]
     fn prefix_cache_queries_roundtrip_from_metrics_body() {
         let body = "\
