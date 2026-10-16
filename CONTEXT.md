@@ -32,6 +32,15 @@ Which inference server software an engine is (vLLM, SGLang, llama.cpp, Ollama).
 Decides how the engine is detected and which metrics it can report.
 _Avoid_: engine kind, runtime, flavor, provider (a provider publishes models)
 
+**Loaded model**:
+A model an engine of an on-demand engine type (Ollama) holds in memory right
+now, as that engine reports it: name, parameter size, quantization, size. The
+engine carries the list of them in place of the single model other engine types
+have; the list may be empty, which is an engine that is running and idle, not
+one that is stopped. Models loading and unloading never change the engine's
+identity.
+_Avoid_: running model, active model, installed model (installed is not loaded)
+
 **Metric group**:
 A set of engine metrics an engine reports together or not at all. The groups
 are cut where the panels cut tiles, so that each is all-or-nothing on every

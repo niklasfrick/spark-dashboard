@@ -4,8 +4,8 @@ Real-time hardware and LLM inference monitoring for Linux systems with NVIDIA
 GPUs. Developed and tested on the NVIDIA DGX Spark, but works on any Linux
 host with NVIDIA drivers — discrete-GPU workstations, DGX boxes, cloud VMs.
 A Rust backend collects GPU, CPU, memory, disk, and network metrics alongside
-vLLM and SGLang engine statistics and streams them over WebSocket to a React
-frontend.
+vLLM and SGLang engine statistics (plus status and loaded models for Ollama)
+and streams them over WebSocket to a React frontend.
 
 ![Stack](https://img.shields.io/badge/Rust-Axum-orange) ![Stack](https://img.shields.io/badge/React_19-TypeScript-blue) ![Stack](https://img.shields.io/badge/Tailwind_CSS_4-06B6D4) ![Stack](https://img.shields.io/badge/Vite_8-646CFF) ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -87,6 +87,13 @@ for details on what each script does.
 - KV cache utilization, prefix cache hit rate
 - Automatic engine discovery via process scan and Docker API
 - SLO Goodput
+
+**Ollama** is detected and shown, but has no metric panels: it exposes no
+server-side metrics, so there is nothing to chart and no flag that adds any.
+An Ollama engine shows its status, the models it has loaded right now (name,
+parameter size, quantization, size) and its GPU; every metric panel bound to it
+says "not reported". An Ollama server is one engine however many models come
+and go, and one with nothing loaded is running and idle.
 
 **Multi-Engine Support**
 - Run and monitor any number of inference engines side by side — each
@@ -283,7 +290,7 @@ spark-dashboard service status
       --state-dir <DIR>       Directory for saved state [default: /var/lib/spark-dashboard] [env: SPARK_DASHBOARD_STATE_DIR]
       --gpu-index <IDX>       Optional NVML GPU index to monitor [env: SPARK_DASHBOARD_GPU_INDEX]
       --simulate-gpus <N>     Append N fictive GPUs with simulated data (dev aid) [env: SPARK_DASHBOARD_SIMULATE_GPUS]
-      --engine <TYPE>         Manual engine type: vllm or sglang [env: SPARK_DASHBOARD_ENGINE]
+      --engine <TYPE>         Manual engine type: vllm, sglang or ollama [env: SPARK_DASHBOARD_ENGINE]
       --engine-url <URL>      Manual engine endpoint (requires --engine) [env: SPARK_DASHBOARD_ENGINE_URL]
       --engine-api-key <KEY>  API key for an endpoint, paired by index with --engine-url [env: SPARK_DASHBOARD_ENGINE_API_KEY]
       --provider-api-key <KEY> Fallback API key for any endpoint [env: SPARK_DASHBOARD_PROVIDER_API_KEY]
@@ -292,8 +299,8 @@ spark-dashboard service status
 
 On multi-GPU hosts, Spark Dashboard monitors all available NVIDIA GPUs by
 default. Use `--gpu-index` to focus on one device. Engines are auto-detected via
-process scan and Docker API (both vLLM and SGLang, on their respective default
-ports 8000 and 30000). Use `--engine` and `--engine-url` to override when
+process scan and Docker API (vLLM, SGLang and Ollama, on their respective default
+ports 8000, 30000 and 11434). Use `--engine` and `--engine-url` to override when
 auto-detection doesn't work. For a host-systemd installation, put the same
 values in `/etc/spark-dashboard/config.env` as `SPARK_DASHBOARD_ENGINE` and
 `SPARK_DASHBOARD_ENGINE_URL`; comma-separated engine and URL values are paired
@@ -305,6 +312,17 @@ every metric panel names the flag instead of guessing. SGLang reports the
 metric groups its version exposes — acceptance rate and length for speculative
 decoding are gauges there, so vLLM's draft/accepted token counters stay "not
 reported" on an SGLang engine.
+
+Ollama has no metric panels, and unlike SGLang no flag changes that: it exposes
+no server-side metrics at all. The dashboard still shows the engine's status,
+the models it has loaded now (name, parameter size, quantization, size) and its
+GPU, and every metric panel bound to it says "not reported". Detection needs no
+configuration: a host process running `ollama serve` or a container from the
+`ollama/ollama` image is found and confirmed as Ollama by its own API
+(`/api/version` and `/api/ps`), on port 11434 or where `OLLAMA_HOST` binds it
+when the dashboard can read the server's environment. A native Ollama usually
+runs as its own user, so its environment is unreadable; if it listens anywhere
+but the default, pass `--engine ollama --engine-url http://<host>:<port>`.
 
 For auth-gated deployments (e.g. vLLM started with `--api-key`), pass
 `--engine-api-key` (index-paired with `--engine-url`) or set
