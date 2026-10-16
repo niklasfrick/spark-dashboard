@@ -132,6 +132,36 @@ impl CounterRate {
     }
 }
 
+/// The running mean of a gauge that is already a rate and reads 0 while idle —
+/// SGLang's `gen_throughput`, say. This is the gauge counterpart of
+/// `CounterRate`'s mean, for a source that is *not* a counter: feeding such a
+/// gauge through `CounterRate` would differentiate it (rate-of-a-rate), and
+/// deriving the rate from a completion-ticked counter instead makes the mean a
+/// per-request token count, not a throughput. Only positive samples count, so
+/// the mean holds steady while the engine idles.
+#[derive(Debug, Default)]
+pub(crate) struct GaugeMean {
+    accum: (f64, u64),
+}
+
+impl GaugeMean {
+    /// Feed one reading; returns the running mean of the positive readings seen
+    /// so far, or `None` until one has been positive.
+    pub(crate) fn observe(&mut self, value: Option<f64>) -> Option<f64> {
+        if let Some(v) = value {
+            if v > 0.0 {
+                self.accum.0 += v;
+                self.accum.1 += 1;
+            }
+        }
+        (self.accum.1 > 0).then(|| self.accum.0 / self.accum.1 as f64)
+    }
+
+    pub(crate) fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
 /// Token acceptance rate (TAR) as a percentage: `accepted / draft * 100`.
 ///
 /// Returns `None` unless both counts are present, `draft > 0`, and `accepted`
@@ -247,5 +277,19 @@ mod tests {
             rate.observe(Some(5.0), t0 + Duration::from_secs(5)),
             (None, None)
         );
+    }
+
+    #[test]
+    fn gauge_mean_averages_positive_samples_and_holds_while_idle() {
+        let mut mean = GaugeMean::default();
+        assert_eq!(mean.observe(None), None);
+        assert_eq!(mean.observe(Some(0.0)), None, "idle reads are not samples");
+        assert_eq!(mean.observe(Some(30.0)), Some(30.0));
+        assert_eq!(mean.observe(Some(40.0)), Some(35.0));
+        // An idle poll leaves the mean where it was, rather than dragging it to
+        // the average of active and idle.
+        assert_eq!(mean.observe(Some(0.0)), Some(35.0));
+        mean.reset();
+        assert_eq!(mean.observe(Some(10.0)), Some(10.0));
     }
 }
