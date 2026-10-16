@@ -326,8 +326,10 @@ pub struct EngineMetrics {
     /// since the baseline scrape. The window every post-warmup figure covers,
     /// and the weight of the combined inter-token latency (#151).
     pub total_generation_tokens: Option<u64>,
-    /// Cumulative count of prefix-cache token queries since engine start.
-    /// Raw lifetime counter, not warmup-adjusted.
+    /// Prefix-cache token queries since the warmup baseline (the engine's
+    /// lifetime count while it is still warming), the volume the hit rate is
+    /// derived from. Warmup-adjusted on vLLM and SGLang; llama.cpp reports
+    /// none.
     pub prefix_cache_queries_total: Option<u64>,
     /// Average tokens processed per engine iteration step (batch size proxy).
     pub avg_batch_size: Option<f64>,

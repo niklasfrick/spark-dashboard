@@ -210,7 +210,10 @@ export interface EngineMetrics {
   total_prompt_tokens: number | null
   /** Cumulative generation (decode) tokens produced since engine start. */
   total_generation_tokens: number | null
-  /** Cumulative count of prefix-cache token queries since engine start. */
+  /** Prefix-cache token queries since the warmup baseline (the engine's
+   *  lifetime count while it is still warming), the volume the hit rate is
+   *  derived from. Warmup-adjusted on vLLM and SGLang; llama.cpp reports
+   *  none. */
   prefix_cache_queries_total: number | null
   avg_batch_size: number | null
   ttft_percentiles: LatencyPercentiles | null
