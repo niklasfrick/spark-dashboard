@@ -128,6 +128,12 @@ struct RunArgs {
     engine: Vec<String>,
 
     /// Manually specify engine endpoint URL (use with --engine)
+    ///
+    /// Detection finds an Ollama server where its OLLAMA_HOST binds it when
+    /// it can read the server's environment, and otherwise — Ollama usually
+    /// runs as its own user — probes Ollama's default, 127.0.0.1:11434. An
+    /// Ollama bound elsewhere is configured here: --engine ollama
+    /// --engine-url http://<host>:<port>.
     #[arg(
         long,
         value_name = "URL",

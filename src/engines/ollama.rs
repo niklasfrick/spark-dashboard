@@ -16,6 +16,7 @@ use super::{
 };
 use async_trait::async_trait;
 use std::collections::BTreeSet;
+use std::net::IpAddr;
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
@@ -238,6 +239,161 @@ async fn json_at(request: reqwest::RequestBuilder) -> Option<serde_json::Value> 
     serde_json::from_str(&response.text().await.ok()?).ok()
 }
 
+/// Where an Ollama server listens, read from its `OLLAMA_HOST` exactly as
+/// Ollama's `envconfig.Host()` reads it — the function is byte-identical
+/// from v0.19.0 through v0.40.5 — so the dashboard probes the address the
+/// server bound.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct OllamaHost {
+    /// `http` unless the value names a scheme. Only clients use it: the
+    /// server listens plain HTTP on the address whatever the scheme says.
+    pub scheme: String,
+    /// The host to bind as Ollama ends up with it: an IP in Go's canonical
+    /// form, a hostname as written, or empty for every interface (`:port`).
+    pub host: String,
+    pub port: u16,
+    /// A path prefix after the address. Clients put it in front of every
+    /// route; the server ignores it (`net.Listen("tcp", Host().Host)`) and
+    /// serves its routes at the root.
+    pub path: String,
+}
+
+impl OllamaHost {
+    /// `envconfig.Host()` over a value of `OLLAMA_HOST` (`None` when unset):
+    ///
+    /// - unset or empty: `http`, 127.0.0.1:11434;
+    /// - without a scheme: the default port is 11434 (`0.0.0.0` binds
+    ///   0.0.0.0:11434, `myhost` myhost:11434), and the value `ollama.com`
+    ///   alone means `https://ollama.com:443`;
+    /// - `http://host` defaults to port 80 and `https://host` to 443 —
+    ///   not 11434;
+    /// - `:port` binds every interface; `::` and `[::]` bind `[::]:11434`;
+    /// - anything after the first `/` is the path;
+    /// - a port that is not a number in 0..=65535 falls back to the default.
+    ///
+    /// Like Ollama's `Var`, surrounding whitespace and quotes are trimmed
+    /// first, which a systemd `Environment=` line can leave in.
+    pub(crate) fn from_env(value: Option<&str>) -> Self {
+        let mut default_port = DEFAULT_PORT;
+        let s = value
+            .unwrap_or_default()
+            .trim()
+            .trim_matches(['"', '\''])
+            .trim();
+        let (scheme, hostport) = match s.split_once("://") {
+            None if s == "ollama.com" => ("https", "ollama.com:443"),
+            None => ("http", s),
+            Some((scheme, hostport)) => {
+                match scheme {
+                    "http" => default_port = 80,
+                    "https" => default_port = 443,
+                    _ => {}
+                }
+                (scheme, hostport)
+            }
+        };
+        let (hostport, path) = hostport.split_once('/').unwrap_or((hostport, ""));
+        let (host, port) = match split_host_port(hostport) {
+            Some((host, port)) => (host.to_string(), port),
+            None => {
+                let host = match hostport.trim_matches(['[', ']']).parse::<IpAddr>() {
+                    Ok(ip) => canonical_ip(ip),
+                    Err(_) if !hostport.is_empty() => hostport.to_string(),
+                    Err(_) => "127.0.0.1".to_string(),
+                };
+                (host, "")
+            }
+        };
+        // `strconv.ParseInt(port, 10, 32)` and the range check: a sign is
+        // accepted, anything else that is not a number in range is not.
+        let port = port
+            .parse::<i32>()
+            .ok()
+            .and_then(|n| u16::try_from(n).ok())
+            .unwrap_or(default_port);
+        OllamaHost {
+            scheme: scheme.to_string(),
+            host,
+            port,
+            path: path.to_string(),
+        }
+    }
+
+    /// The URL `envconfig.Host()` returns, as Ollama's clients use it.
+    pub(crate) fn url(&self) -> String {
+        let address = join_host_port(&self.host, self.port);
+        if self.path.is_empty() {
+            format!("{}://{address}", self.scheme)
+        } else {
+            format!("{}://{address}/{}", self.scheme, self.path)
+        }
+    }
+
+    /// The endpoint the dashboard reaches this server at: plain HTTP on the
+    /// bound address, at the root — the server ignores a scheme and a path.
+    ///
+    /// A server bound to every interface (empty, `0.0.0.0`, or `::`) is
+    /// probed on 127.0.0.1, IPv6 wildcard included: Go listens dual-stack on
+    /// `[::]` for `tcp`, so 127.0.0.1 reaches it, and it still does where
+    /// IPv6 is disabled and Go falls back to 0.0.0.0, which `::1` would not.
+    /// It also keeps one endpoint, and so one engine identity, for every
+    /// wildcard spelling.
+    pub(crate) fn endpoint(&self) -> String {
+        let unspecified = self.host.is_empty()
+            || self
+                .host
+                .parse::<IpAddr>()
+                .is_ok_and(|ip| ip.is_unspecified());
+        let host = if unspecified { "127.0.0.1" } else { &self.host };
+        format!("http://{}", join_host_port(host, self.port))
+    }
+}
+
+/// An IP as Go's `IP.String()` writes it: an IPv4-mapped IPv6 address as
+/// the IPv4 one, any other IPv6 address in its canonical short form.
+fn canonical_ip(ip: IpAddr) -> String {
+    match ip {
+        IpAddr::V6(v6) => v6
+            .to_ipv4_mapped()
+            .map(|v4| v4.to_string())
+            .unwrap_or_else(|| v6.to_string()),
+        IpAddr::V4(v4) => v4.to_string(),
+    }
+}
+
+/// Go's `net.JoinHostPort`: a host containing a colon is bracketed.
+fn join_host_port(host: &str, port: u16) -> String {
+    if host.contains(':') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    }
+}
+
+/// Go's `net.SplitHostPort`: `host:port`, `[host]:port` or `:port`, with
+/// `None` for each case Go rejects — no port, too many colons, a stray
+/// bracket. The port may be empty (`host:`).
+fn split_host_port(hostport: &str) -> Option<(&str, &str)> {
+    let colon = hostport.rfind(':')?;
+    let (host, opens_after, closes_after) = if hostport.starts_with('[') {
+        let end = hostport.find(']')?;
+        if end + 1 != colon {
+            return None;
+        }
+        (&hostport[1..end], 1, end + 1)
+    } else {
+        let host = &hostport[..colon];
+        if host.contains(':') {
+            return None;
+        }
+        (host, 0, 0)
+    };
+    if hostport[opens_after..].contains('[') || hostport[closes_after..].contains(']') {
+        return None;
+    }
+    Some((host, &hostport[colon + 1..]))
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::test_server::{Request, TestServer};
@@ -297,6 +453,81 @@ mod tests {
 
     fn http(url: &str) -> EngineHttp {
         EngineHttp::new(reqwest::Client::new(), url.into(), None)
+    }
+
+    /// `OLLAMA_HOST`, what `Host()` makes of it as `(scheme, host, port,
+    /// path)`, the URL it builds, and the endpoint the dashboard probes.
+    type HostCase = (
+        Option<&'static str>,
+        (&'static str, &'static str, u16, &'static str),
+        &'static str,
+        &'static str,
+    );
+
+    /// Every form of `OLLAMA_HOST` `envconfig.Host()` distinguishes: what
+    /// Ollama makes of it (scheme, host, port, path, and the URL its clients
+    /// build), and the endpoint the dashboard probes the server at.
+    #[test]
+    fn ollama_host_reads_every_form_as_ollama_does() {
+        #[rustfmt::skip]
+        let cases: &[HostCase] = &[
+            // value               scheme   host           port   path     Host() URL                       endpoint
+            (None,                 ("http", "127.0.0.1",    11434, ""),    "http://127.0.0.1:11434",       "http://127.0.0.1:11434"),
+            (Some(""),             ("http", "127.0.0.1",    11434, ""),    "http://127.0.0.1:11434",       "http://127.0.0.1:11434"),
+            (Some("   "),          ("http", "127.0.0.1",    11434, ""),    "http://127.0.0.1:11434",       "http://127.0.0.1:11434"),
+            (Some("127.0.0.1:11434"), ("http", "127.0.0.1", 11434, ""),    "http://127.0.0.1:11434",       "http://127.0.0.1:11434"),
+            // A bare host keeps Ollama's port; the Docker image's own value.
+            (Some("0.0.0.0"),      ("http", "0.0.0.0",      11434, ""),    "http://0.0.0.0:11434",         "http://127.0.0.1:11434"),
+            (Some("0.0.0.0:11434"),("http", "0.0.0.0",      11434, ""),    "http://0.0.0.0:11434",         "http://127.0.0.1:11434"),
+            (Some("myhost"),       ("http", "myhost",       11434, ""),    "http://myhost:11434",          "http://myhost:11434"),
+            (Some("myhost:8080"),  ("http", "myhost",       8080,  ""),    "http://myhost:8080",           "http://myhost:8080"),
+            (Some("10.0.0.5:9000"),("http", "10.0.0.5",     9000,  ""),    "http://10.0.0.5:9000",         "http://10.0.0.5:9000"),
+            // `:port` is every interface.
+            (Some(":8080"),        ("http", "",             8080,  ""),    "http://:8080",                 "http://127.0.0.1:8080"),
+            // IPv6: the wildcard with and without brackets and port, and a
+            // specific address, bracketed in the URL.
+            (Some("[::]:11434"),   ("http", "::",           11434, ""),    "http://[::]:11434",            "http://127.0.0.1:11434"),
+            (Some("[::]"),         ("http", "::",           11434, ""),    "http://[::]:11434",            "http://127.0.0.1:11434"),
+            (Some("::"),           ("http", "::",           11434, ""),    "http://[::]:11434",            "http://127.0.0.1:11434"),
+            (Some("[::1]:9000"),   ("http", "::1",          9000,  ""),    "http://[::1]:9000",            "http://[::1]:9000"),
+            (Some("::1"),          ("http", "::1",          11434, ""),    "http://[::1]:11434",           "http://[::1]:11434"),
+            (Some("::ffff:127.0.0.1"), ("http", "127.0.0.1", 11434, ""),   "http://127.0.0.1:11434",       "http://127.0.0.1:11434"),
+            // A scheme without a port defaults to the scheme's port, and the
+            // server still listens plain HTTP there.
+            (Some("http://myhost"),      ("http",  "myhost", 80,    ""),   "http://myhost:80",             "http://myhost:80"),
+            (Some("http://myhost:9000"), ("http",  "myhost", 9000,  ""),   "http://myhost:9000",           "http://myhost:9000"),
+            (Some("https://myhost"),     ("https", "myhost", 443,   ""),   "https://myhost:443",           "http://myhost:443"),
+            (Some("http://:8080"),       ("http",  "",       8080,  ""),   "http://:8080",                 "http://127.0.0.1:8080"),
+            (Some("ollama.com"),         ("https", "ollama.com", 443, ""), "https://ollama.com:443",       "http://ollama.com:443"),
+            // A path prefix is kept in Ollama's URL; the server's routes stay
+            // at the root.
+            (Some("myhost/prefix"),      ("http",  "myhost", 11434, "prefix"), "http://myhost:11434/prefix", "http://myhost:11434"),
+            (Some("http://h:9000/a/b"),  ("http",  "h",      9000,  "a/b"),    "http://h:9000/a/b",          "http://h:9000"),
+            // An invalid port falls back to the default, the scheme's
+            // included.
+            (Some("myhost:99999"),       ("http",  "myhost", 11434, ""),   "http://myhost:11434",          "http://myhost:11434"),
+            (Some("myhost:abc"),         ("http",  "myhost", 11434, ""),   "http://myhost:11434",          "http://myhost:11434"),
+            (Some("myhost:-1"),          ("http",  "myhost", 11434, ""),   "http://myhost:11434",          "http://myhost:11434"),
+            (Some("myhost:"),            ("http",  "myhost", 11434, ""),   "http://myhost:11434",          "http://myhost:11434"),
+            (Some("http://myhost:99999"),("http",  "myhost", 80,    ""),   "http://myhost:80",             "http://myhost:80"),
+            // Whitespace and quotes a systemd line can leave are trimmed.
+            (Some(" \"0.0.0.0:8080\" "), ("http", "0.0.0.0", 8080, ""),   "http://0.0.0.0:8080",          "http://127.0.0.1:8080"),
+        ];
+        for &(value, (scheme, host, port, path), url, endpoint) in cases {
+            let parsed = OllamaHost::from_env(value);
+            assert_eq!(
+                parsed,
+                OllamaHost {
+                    scheme: scheme.into(),
+                    host: host.into(),
+                    port,
+                    path: path.into(),
+                },
+                "{value:?}"
+            );
+            assert_eq!(parsed.url(), url, "{value:?}");
+            assert_eq!(parsed.endpoint(), endpoint, "{value:?}");
+        }
     }
 
     #[test]

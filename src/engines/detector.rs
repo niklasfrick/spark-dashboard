@@ -1,4 +1,5 @@
 use super::common::EngineHttp;
+use super::ollama::OllamaHost;
 use super::{ApiKeyResolver, DeploymentMode, EngineType};
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
@@ -150,6 +151,15 @@ fn merge_docker_candidates(
 /// a native one beside the container's. The container's `docker top` PIDs
 /// (host-namespace, as the host scan's are) say which processes are its.
 ///
+/// An Ollama server's address the host scan reads from its environment
+/// instead, which it usually cannot read for a containerized server (it
+/// runs as root), so it takes Ollama's default address: on a host that
+/// also runs Ollama natively, the native server's, and the container's
+/// server and runners would join the native engine and its GPU
+/// association. The Docker scan reads the container's own `OLLAMA_HOST`
+/// and published ports, so its endpoint stands, and the native engine
+/// keeps only its own processes.
+///
 /// A candidate made only of the container's processes is absorbed, not
 /// kept beside it: its PIDs are the container's already, so GPU association
 /// loses none, and the model it read off the command line fills in where
@@ -202,12 +212,32 @@ fn server_named_by(arg: &str) -> Option<EngineType> {
     }
 }
 
-/// Which engine a command line runs, if any: the first argument that names
-/// an engine's server decides. The program comes before its arguments, so a
-/// path or flag value that happens to name the other engine —
-/// `python3 -m sglang.launch_server --download-dir /data/vllm` — cannot turn
-/// the process into that engine too. A process is at most one engine.
+/// Whether a command line is `ollama serve`, Ollama's server: the program
+/// `ollama` (by any path; `ollama.exe` harmlessly too) with `serve` as its
+/// subcommand. Token-exact on both counts: `serve` is a substring of
+/// `llama-server`, the child Ollama runs each GGUF model in from v0.35, and
+/// `ollama runner` — each model's child up to v0.19, and an MLX model's on
+/// v0.40 — is the same program with another subcommand. No model appears on
+/// the command line; Ollama loads them on demand.
+fn is_ollama_server(args: &[&str]) -> bool {
+    let program = args
+        .first()
+        .map(|arg| arg.rsplit(&['/', '\\'][..]).next().unwrap_or(arg));
+    matches!(program, Some("ollama" | "ollama.exe")) && args.get(1) == Some(&"serve")
+}
+
+/// Which engine a command line runs, if any. Ollama's server is told by its
+/// program and subcommand together (`is_ollama_server`); otherwise the first
+/// argument that names an engine's server decides. The program comes before
+/// its arguments, so a path or flag value that happens to name the other
+/// engine — `python3 -m sglang.launch_server --download-dir /data/vllm` —
+/// cannot turn the process into that engine too. A process is at most one
+/// engine.
 fn engine_of_command<'a>(args: impl IntoIterator<Item = &'a str>) -> Option<EngineType> {
+    let args: Vec<&str> = args.into_iter().collect();
+    if is_ollama_server(&args) {
+        return Some(EngineType::Ollama);
+    }
     args.into_iter().find_map(server_named_by)
 }
 
@@ -255,13 +285,29 @@ struct ContainerClass {
     strong_signal: bool,
 }
 
+/// Whether an image is Ollama's own, `ollama/ollama`, from any registry and
+/// under any tag or digest: `docker.io/ollama/ollama:0.40.5`,
+/// `ollama/ollama:rocm`, `registry.local:5000/ollama/ollama@sha256:…`.
+#[cfg(any(target_os = "linux", test))]
+fn is_ollama_image(image: &str) -> bool {
+    let name = image.split('@').next().unwrap_or(image);
+    // A tag is a `:` after the last `/`; one before it is a registry port.
+    let repository = match name.rfind(':') {
+        Some(colon) if !name[colon..].contains('/') => &name[..colon],
+        _ => name,
+    };
+    repository == "ollama/ollama" || repository.ends_with("/ollama/ollama")
+}
+
 /// Rank the signals by how much they say:
-///   1. the **image** is what was pulled to run here — when it names exactly
-///      one engine, that engine. An `lmsysorg/sglang` image whose command
-///      mentions vLLM (an env var, a model path) is SGLang.
+///   1. the **image** is what was pulled to run here — Ollama's own image is
+///      Ollama, and an image that names exactly one of vLLM and SGLang is
+///      that engine. An `lmsysorg/sglang` image whose command mentions vLLM
+///      (an env var, a model path) is SGLang.
 ///   2. the **command** is what the entrypoint runs — its launch form, read
-///      like a host process's (the first argument naming a server decides),
-///      so `python3 -m sglang.launch_server --model-path /models/x-vllm-awq`
+///      like a host process's (`ollama serve` by any path, or the first
+///      argument naming a server), so
+///      `python3 -m sglang.launch_server --model-path /models/x-vllm-awq`
 ///      is SGLang. Failing a launch form, a command that mentions exactly
 ///      one engine anywhere (a shell wrapper's quoted `"vllm serve ..."`)
 ///      still names it.
@@ -285,6 +331,9 @@ fn classify_container(names: &[String], image: &str, command: &str) -> Option<Co
         })
     };
 
+    if is_ollama_image(image) {
+        return class(EngineType::Ollama, true);
+    }
     match mentions(image) {
         (true, false) => return class(EngineType::Vllm, true),
         (false, true) => return class(EngineType::Sglang, true),
@@ -308,6 +357,8 @@ fn classify_container(names: &[String], image: &str, command: &str) -> Option<Co
         class(EngineType::Vllm, false)
     } else if named("sglang") {
         class(EngineType::Sglang, false)
+    } else if named("ollama") {
+        class(EngineType::Ollama, false)
     } else {
         None
     }
@@ -330,6 +381,71 @@ fn docker_endpoint(port: Option<&str>, default_port: u16) -> (String, bool) {
     match port {
         Some(p) => (format!("http://localhost:{}", p), false),
         None => (format!("http://localhost:{}", default_port), true),
+    }
+}
+
+/// A port a container publishes, as the Docker API lists it.
+#[cfg(any(target_os = "linux", test))]
+#[derive(Clone, Copy, Debug)]
+struct PublishedPort<'a> {
+    /// The port inside the container.
+    container: u16,
+    /// The host port it is published on; `None` for an exposed port that is
+    /// not published.
+    host: Option<u16>,
+    /// The host address it is published on; empty, `0.0.0.0` or `::` for
+    /// every interface.
+    host_ip: Option<&'a str>,
+    tcp: bool,
+}
+
+/// The endpoint a containerized Ollama answers on from the host, given the
+/// address it listens on inside the container (its `OLLAMA_HOST`, the image
+/// sets `0.0.0.0:11434`), its network mode and its published ports:
+///
+/// - on the host network it listens on the host's own interfaces, read
+///   like a native server's;
+/// - otherwise the host port that publishes the listening port, on
+///   127.0.0.1 when published on every interface;
+/// - with nothing published there and a network mode the Docker API did
+///   not report, or one shared with another container, the listening
+///   address is assumed reachable as on the host network — the probe
+///   rejects a wrong guess;
+/// - on a bridge or other network with nothing published, `None`: the
+///   server is unreachable from the host, and assuming its port would
+///   point at whatever else is there, typically a native Ollama on the
+///   default port.
+#[cfg(any(target_os = "linux", test))]
+fn ollama_container_endpoint(
+    listen: &OllamaHost,
+    network_mode: Option<&str>,
+    published: &[PublishedPort<'_>],
+) -> Option<String> {
+    if network_mode == Some("host") {
+        return Some(listen.endpoint());
+    }
+    let binding = published
+        .iter()
+        .filter(|p| p.tcp && p.container == listen.port)
+        .find_map(|p| Some((p.host?, p.host_ip.unwrap_or_default())));
+    if let Some((port, ip)) = binding {
+        let host = match ip.parse::<std::net::IpAddr>() {
+            Ok(ip) if !ip.is_unspecified() => ip.to_string(),
+            Ok(_) => String::new(),
+            Err(_) if ip.is_empty() => String::new(),
+            Err(_) => ip.to_string(),
+        };
+        let published = OllamaHost {
+            host,
+            port,
+            ..OllamaHost::from_env(None)
+        };
+        return Some(published.endpoint());
+    }
+    match network_mode {
+        None => Some(listen.endpoint()),
+        Some(mode) if mode.starts_with("container:") => Some(listen.endpoint()),
+        Some(_) => None,
     }
 }
 
@@ -376,33 +492,26 @@ fn detect_by_process(sys: &sysinfo::System) -> Vec<DetectedEngine> {
     // launch flags nor the serving `--port`, while the server itself is often
     // named `python3`. Sorted by PID so the candidates come out in a stable
     // order.
-    let mut processes: Vec<(u32, &[OsString])> = sys
+    let mut processes: Vec<HostProcess<'_>> = sys
         .processes()
         .iter()
-        .map(|(pid, p)| (pid.as_u32(), p.cmd()))
+        .map(|(pid, p)| (pid.as_u32(), p.parent().map(|pp| pp.as_u32()), p.cmd()))
         .collect();
-    processes.sort_unstable_by_key(|&(pid, _)| pid);
-    let mut detected = engines_from_processes(processes);
-
-    // vLLM's API-server process rarely holds the CUDA context itself — the
-    // engine-core / tensor-parallel worker child processes do — so NVML's
-    // compute-process list must be matched against the whole process tree,
-    // not just the detected root PID.
-    if !detected.is_empty() {
-        let processes: Vec<(u32, Option<u32>)> = sys
-            .processes()
-            .iter()
-            .map(|(pid, proc_)| (pid.as_u32(), proc_.parent().map(|pp| pp.as_u32())))
-            .collect();
-        for d in &mut detected {
-            d.pids = expand_pid_tree(&d.pids, &processes);
+    processes.sort_unstable_by_key(|&(pid, _, _)| pid);
+    engines_from_processes(&processes, |pid| {
+        let value = process_env_var(pid, "OLLAMA_HOST");
+        if value.is_err() {
+            note_unreadable_ollama_host(pid);
         }
-    }
-
-    detected
+        value
+    })
 }
 
-/// One candidate per engine endpoint from a host's `(pid, argv)` list.
+/// One host process as the scan reads it: its PID, its parent's PID, and
+/// its command line.
+type HostProcess<'a> = (u32, Option<u32>, &'a [OsString]);
+
+/// One candidate per engine endpoint from a host's process table.
 ///
 /// Each process is at most one engine — the one its command line launches
 /// (`engine_of_process`) — so a process is never polled as both: an SGLang
@@ -411,17 +520,61 @@ fn detect_by_process(sys: &sysinfo::System) -> Vec<DetectedEngine> {
 /// candidate per distinct endpoint, too: multi-instance native setups (three
 /// `vllm serve --port 8000/8001/8002` processes) surface each port as its
 /// own engine rather than collapsing to the first.
-fn engines_from_processes<'a>(
-    processes: impl IntoIterator<Item = (u32, &'a [OsString])>,
+///
+/// An Ollama server's own processes are never engines: the runner it starts
+/// per loaded model — `ollama runner ...` up to v0.19 and for MLX models,
+/// `llama-server ...` from v0.35 — serves Ollama on a random loopback port,
+/// an interface Ollama does not promise. Every descendant of an
+/// `ollama serve` is left out before any matcher sees it, so an engine type
+/// that recognizes `llama-server` does not turn one into an engine. Its
+/// PIDs belong to the Ollama engine instead, with every other candidate's
+/// descendants: the GPU sees a server's children, not the server.
+///
+/// `ollama_host_of` reads a process's `OLLAMA_HOST`, which decides where an
+/// Ollama server listens: unset, or an environment that cannot be read,
+/// leaves Ollama's default.
+fn engines_from_processes(
+    processes: &[HostProcess<'_>],
+    ollama_host_of: impl Fn(u32) -> std::io::Result<Option<String>>,
 ) -> Vec<DetectedEngine> {
+    let tree: Vec<(u32, Option<u32>)> = processes
+        .iter()
+        .map(|&(pid, parent, _)| (pid, parent))
+        .collect();
+    let ollama_servers: Vec<u32> = processes
+        .iter()
+        .filter(|(_, _, cmd)| engine_of_process(cmd) == Some(EngineType::Ollama))
+        .map(|&(pid, _, _)| pid)
+        .collect();
+    let ollamas_own: HashSet<u32> = expand_pid_tree(&ollama_servers, &tree)
+        .into_iter()
+        .filter(|pid| !ollama_servers.contains(pid))
+        .collect();
+
     let mut detected: Vec<DetectedEngine> = Vec::new();
     let mut seen_endpoints: HashMap<(EngineType, String), usize> = HashMap::new();
-    for (pid, cmd) in processes {
+    for &(pid, _, cmd) in processes {
+        if ollamas_own.contains(&pid) {
+            continue;
+        }
         let Some(engine_type) = engine_of_process(cmd) else {
             continue;
         };
-        let default_endpoint = format!("http://localhost:{}", default_port(&engine_type));
-        let endpoint = parse_endpoint_from_args(cmd, &default_endpoint).unwrap_or(default_endpoint);
+        let endpoint = match engine_type {
+            EngineType::Ollama => {
+                let host = OllamaHost::from_env(ollama_host_of(pid).ok().flatten().as_deref());
+                tracing::debug!(
+                    "ollama serve (pid {pid}) binds {}; probing {}",
+                    host.url(),
+                    host.endpoint()
+                );
+                host.endpoint()
+            }
+            _ => {
+                let default_endpoint = format!("http://localhost:{}", default_port(&engine_type));
+                parse_endpoint_from_args(cmd, &default_endpoint).unwrap_or(default_endpoint)
+            }
+        };
         let served_model = match engine_type {
             EngineType::Vllm => parse_model_from_args(cmd),
             EngineType::Sglang => parse_sglang_model_from_args(cmd),
@@ -442,7 +595,61 @@ fn engines_from_processes<'a>(
             }
         }
     }
+
+    // vLLM's API-server process rarely holds the CUDA context itself — the
+    // engine-core / tensor-parallel worker child processes do, as Ollama's
+    // runners do for each model it loads — so NVML's compute-process list
+    // must be matched against the whole process tree, not just the detected
+    // root PID. Re-read every detection tick, so a newly loaded model's
+    // runner joins its engine.
+    for d in &mut detected {
+        d.pids = expand_pid_tree(&d.pids, &tree);
+    }
     detected
+}
+
+/// `name` among `NAME=value` entries, as `/proc/<pid>/environ` and Docker's
+/// `Env` list them; `None` when it is not set.
+#[cfg(any(target_os = "linux", test))]
+fn env_var_in<'a>(entries: impl IntoIterator<Item = &'a [u8]>, name: &str) -> Option<String> {
+    entries
+        .into_iter()
+        .find_map(|entry| entry.strip_prefix(name.as_bytes())?.strip_prefix(b"="))
+        .map(|value| String::from_utf8_lossy(value).into_owned())
+}
+
+/// A variable of a host process's environment, from `/proc/<pid>/environ`:
+/// `Ok(None)` when it is not set, an error when the environment cannot be
+/// read — it belongs to the process's own user, and Ollama typically runs
+/// as `ollama` while the dashboard does not.
+#[cfg(target_os = "linux")]
+fn process_env_var(pid: u32, name: &str) -> std::io::Result<Option<String>> {
+    let environ = std::fs::read(format!("/proc/{pid}/environ"))?;
+    Ok(env_var_in(environ.split(|&b| b == 0), name))
+}
+
+/// Outside Linux there is no `/proc` to read another process's environment
+/// from; the server is taken to be on its default address.
+#[cfg(not(target_os = "linux"))]
+fn process_env_var(_pid: u32, _name: &str) -> std::io::Result<Option<String>> {
+    Err(std::io::ErrorKind::Unsupported.into())
+}
+
+/// Say once, at info, that an Ollama server's `OLLAMA_HOST` could not be
+/// read, and what covers a server bound elsewhere than the default. Once,
+/// not every detection tick: a dashboard that runs as another user than
+/// Ollama meets this on every scan.
+fn note_unreadable_ollama_host(pid: u32) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static NOTED: AtomicBool = AtomicBool::new(false);
+    if !NOTED.swap(true, Ordering::Relaxed) {
+        tracing::info!(
+            "The environment of `ollama serve` (pid {pid}) is not readable — it runs as \
+             another user — so its OLLAMA_HOST is unknown; probing Ollama's default {}. \
+             If it binds elsewhere, configure it with --engine ollama --engine-url <url>.",
+            OllamaHost::from_env(None).endpoint()
+        );
+    }
 }
 
 /// Expand root PIDs to the full set including every descendant process,
@@ -695,6 +902,7 @@ fn parse_sglang_model_from_command_str(cmd: &str) -> Option<String> {
 
 #[cfg(target_os = "linux")]
 pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
+    use bollard::models::PortSummaryTypeEnum;
     use bollard::query_parameters::{ListContainersOptions, TopOptionsBuilder};
     use bollard::Docker;
 
@@ -767,84 +975,37 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
             strong_signal,
         } = class;
 
-        // 1. Try port from Docker port mappings (works for -p / port-forwarding)
-        let mapped_port = container
-            .ports
-            .as_ref()
-            .and_then(|ports| ports.iter().find_map(|p| p.public_port));
+        let container_id = container.id.as_deref().unwrap_or_default();
 
-        // 2. Try port + model from the container's own command string
-        let container_cmd = container.command.as_deref().unwrap_or_default();
-        let cmd_port = parse_port_from_command_str(container_cmd);
-        let cmd_model = parse_model_for(&engine_type, container_cmd);
-
-        let port = mapped_port.map(|p| p.to_string()).or(cmd_port);
-
-        // 3. Inspect the actual processes running inside the container via
-        //    `docker top`. Always queried when a container id is known: its rows
-        //    carry the *host-namespace* PIDs (the namespace NVML reports) used
-        //    for GPU association, and double as the fallback source for the port
-        //    (host networking + `sleep infinity` containers) and the model
-        //    argument, since `container.command` is just the container's
-        //    *entrypoint* and often omits the child vllm-serve args.
+        // The processes running inside the container, via `docker top`. Its
+        // rows carry the *host-namespace* PIDs (the namespace NVML reports)
+        // used for GPU association — an Ollama container's per-model runners
+        // among them, re-listed every detection tick — prove that a
+        // container matched only by name runs the engine, and are the
+        // fallback source for a vLLM or SGLang port and model (host
+        // networking + `sleep infinity` containers), since
+        // `container.command` is just the container's *entrypoint* and often
+        // omits the child vllm-serve args.
         let mut pids: Vec<u32> = Vec::new();
-        let mut saw_engine_process = false;
-        let (port, served_model) = {
-            let container_id = container.id.as_deref().unwrap_or_default();
-            if container_id.is_empty() {
-                (port, cmd_model)
-            } else {
-                let top_opts = TopOptionsBuilder::default().ps_args("-eo pid,args").build();
-                match docker.top_processes(container_id, Some(top_opts)).await {
-                    Ok(top) => {
-                        let mut found_port = port;
-                        let mut found_model = cmd_model;
-                        if let Some(procs) = top.processes.as_ref() {
-                            for row in procs {
-                                if let Some(pid) = parse_pid_from_top_row(row) {
-                                    pids.push(pid);
-                                }
-                                let line = row.join(" ");
-                                if runs_engine(&line, &engine_type) {
-                                    saw_engine_process = true;
-                                }
-                                if found_port.is_none() {
-                                    if let Some(p) = parse_port_from_command_str(&line) {
-                                        tracing::debug!(
-                                            "Docker top: found port {} in: {}",
-                                            p,
-                                            line
-                                        );
-                                        found_port = Some(p);
-                                    }
-                                }
-                                if found_model.is_none() {
-                                    if let Some(m) = parse_model_for(&engine_type, &line) {
-                                        tracing::debug!(
-                                            "Docker top: found model {} in: {}",
-                                            m,
-                                            line
-                                        );
-                                        found_model = Some(m);
-                                    }
-                                }
-                            }
-                        }
-                        (found_port, found_model)
-                    }
-                    Err(e) => {
-                        tracing::debug!("docker top failed for {}: {}", container_id, e);
-                        (port, cmd_model)
+        let mut commands: Vec<String> = Vec::new();
+        if !container_id.is_empty() {
+            let top_opts = TopOptionsBuilder::default().ps_args("-eo pid,args").build();
+            match docker.top_processes(container_id, Some(top_opts)).await {
+                Ok(top) => {
+                    for row in top.processes.iter().flatten() {
+                        pids.extend(parse_pid_from_top_row(row));
+                        commands.push(top_row_command(row));
                     }
                 }
+                Err(e) => tracing::debug!("docker top failed for {}: {}", container_id, e),
             }
-        };
+        }
         pids.sort_unstable();
         pids.dedup();
 
         // A container that only matched by name has to prove itself. Nothing
         // that merely calls itself an engine becomes an engine.
-        if !strong_signal && !saw_engine_process {
+        if !strong_signal && !commands.iter().any(|c| runs_engine(c, &engine_type)) {
             tracing::debug!(
                 "Container named like an engine (image={}) runs no engine process; skipping",
                 container.image.as_deref().unwrap_or("?"),
@@ -852,22 +1013,97 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
             continue;
         }
 
-        // No port anywhere — no published binding, no `--port` in the command,
-        // none in the container's process list — means vLLM is on its own
-        // default. That is the normal shape of a host-networked container: it
-        // publishes nothing, because it is already on the host's ports.
-        //
-        // Guessing is safe here and dropping the container is not. The health
-        // probe below rejects a candidate whose `/health` does not answer, so a
-        // wrong guess costs one request and corrects itself, while a container
-        // dropped for having no port is invisible to the dashboard for good —
-        // engine, metrics and logs alike.
-        let (endpoint, guessed) = docker_endpoint(port.as_deref(), default_port(&engine_type));
+        let (endpoint, served_model) = if engine_type == EngineType::Ollama {
+            // Ollama listens where the container's OLLAMA_HOST says — the
+            // image sets 0.0.0.0:11434 — and names no model at launch. Its
+            // process list holds each loaded model's runner, `--port` and
+            // all, which is not where Ollama serves, so no port is read off
+            // it.
+            let env = if container_id.is_empty() {
+                Vec::new()
+            } else {
+                match docker.inspect_container(container_id, None).await {
+                    Ok(info) => info.config.and_then(|c| c.env).unwrap_or_default(),
+                    Err(e) => {
+                        tracing::debug!("docker inspect failed for {}: {}", container_id, e);
+                        Vec::new()
+                    }
+                }
+            };
+            let listen = OllamaHost::from_env(
+                env_var_in(env.iter().map(|e| e.as_bytes()), "OLLAMA_HOST").as_deref(),
+            );
+            let published: Vec<PublishedPort<'_>> = container
+                .ports
+                .iter()
+                .flatten()
+                .map(|p| PublishedPort {
+                    container: p.private_port,
+                    host: p.public_port,
+                    host_ip: p.ip.as_deref(),
+                    tcp: !matches!(
+                        p.typ,
+                        Some(PortSummaryTypeEnum::UDP | PortSummaryTypeEnum::SCTP)
+                    ),
+                })
+                .collect();
+            let network_mode = container
+                .host_config
+                .as_ref()
+                .and_then(|h| h.network_mode.as_deref());
+            match ollama_container_endpoint(&listen, network_mode, &published) {
+                Some(endpoint) => (endpoint, None),
+                None => {
+                    tracing::debug!(
+                        "Ollama container (image={}) is not on the host network and publishes \
+                         no port for {}; unreachable from the host. Publish the port, or \
+                         configure it with --engine ollama --engine-url <url>.",
+                        container.image.as_deref().unwrap_or("?"),
+                        listen.port,
+                    );
+                    continue;
+                }
+            }
+        } else {
+            // The port from the container's port mappings (-p / port
+            // forwarding), else its own command string, else its process
+            // list; the model from the command string, else the process list.
+            let container_cmd = container.command.as_deref().unwrap_or_default();
+            let port = container
+                .ports
+                .iter()
+                .flatten()
+                .find_map(|p| p.public_port)
+                .map(|p| p.to_string())
+                .or_else(|| parse_port_from_command_str(container_cmd))
+                .or_else(|| commands.iter().find_map(|c| parse_port_from_command_str(c)));
+            let served_model = parse_model_for(&engine_type, container_cmd).or_else(|| {
+                commands
+                    .iter()
+                    .find_map(|c| parse_model_for(&engine_type, c))
+            });
+
+            // No port anywhere — no published binding, no `--port` in the
+            // command, none in the container's process list — means the
+            // engine is on its own default. That is the normal shape of a
+            // host-networked container: it publishes nothing, because it is
+            // already on the host's ports.
+            //
+            // Guessing is safe here and dropping the container is not. The
+            // health probe below rejects a candidate whose `/health` does not
+            // answer, so a wrong guess costs one request and corrects itself,
+            // while a container dropped for having no port is invisible to the
+            // dashboard for good — engine, metrics and logs alike.
+            let (endpoint, guessed) = docker_endpoint(port.as_deref(), default_port(&engine_type));
+            if guessed {
+                tracing::debug!("Docker engine on {endpoint}: no port found, assuming the default");
+            }
+            (endpoint, served_model)
+        };
         tracing::debug!(
-            "Docker engine candidate: image={}, endpoint={}{}, model={:?}",
+            "Docker engine candidate: image={}, endpoint={}, model={:?}",
             container.image.as_deref().unwrap_or("?"),
             endpoint,
-            if guessed { " (default port)" } else { "" },
             served_model,
         );
         detected.push(DetectedEngine {
@@ -881,6 +1117,15 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
     }
 
     detected
+}
+
+/// The command line of a `docker top` row produced with
+/// `ps_args("-eo pid,args")`: every column after the PID. Without the PID
+/// in front, the program is the first token, as in a host process's argv —
+/// which `ollama serve` is recognized by.
+#[cfg(any(target_os = "linux", test))]
+fn top_row_command(row: &[String]) -> String {
+    row.get(1..).unwrap_or_default().join(" ")
 }
 
 /// Parse the host-namespace PID from a `docker top` row produced with
@@ -1345,6 +1590,27 @@ mod tests {
         line.split(' ').map(std::ffi::OsString::from).collect()
     }
 
+    /// The process scan over `(pid, parent, command line)` rows, with each
+    /// process's `OLLAMA_HOST` read by `env`.
+    fn scan_with(
+        rows: &[(u32, Option<u32>, &str)],
+        env: impl Fn(u32) -> std::io::Result<Option<String>>,
+    ) -> Vec<DetectedEngine> {
+        let argvs: Vec<Vec<OsString>> = rows.iter().map(|(_, _, line)| argv(line)).collect();
+        let processes: Vec<HostProcess<'_>> = rows
+            .iter()
+            .zip(&argvs)
+            .map(|(&(pid, parent, _), cmd)| (pid, parent, cmd.as_slice()))
+            .collect();
+        engines_from_processes(&processes, env)
+    }
+
+    /// The process scan where no environment can be read — the dashboard
+    /// running as another user than every engine.
+    fn scan(rows: &[(u32, Option<u32>, &str)]) -> Vec<DetectedEngine> {
+        scan_with(rows, |_| Err(std::io::ErrorKind::PermissionDenied.into()))
+    }
+
     #[test]
     fn container_classification_follows_image_then_command_then_name() {
         // The image is the strongest claim about what runs in a container:
@@ -1444,9 +1710,14 @@ mod tests {
     /// a one-token generation, every second.
     #[test]
     fn a_process_is_detected_as_one_engine_only() {
-        let sglang = argv("python3 -m sglang.launch_server --download-dir /data/vllm --port 30000");
-        let vllm = argv("vllm serve /models/sglang-distill --port 8001");
-        let detected = engines_from_processes([(10, sglang.as_slice()), (20, vllm.as_slice())]);
+        let detected = scan(&[
+            (
+                10,
+                None,
+                "python3 -m sglang.launch_server --download-dir /data/vllm --port 30000",
+            ),
+            (20, None, "vllm serve /models/sglang-distill --port 8001"),
+        ]);
         let found: Vec<_> = detected
             .iter()
             .map(|d| (d.engine_type.clone(), d.endpoint.as_str(), d.pids.clone()))
@@ -1464,13 +1735,13 @@ mod tests {
     /// port: SGLang's 30000, never vLLM's 8000.
     #[test]
     fn a_host_without_a_port_keeps_the_engines_default_port() {
-        let sglang = argv("python3 -m sglang.launch_server --host 0.0.0.0");
-        let vllm = argv("vllm serve Qwen/Qwen3-8B --host 0.0.0.0");
-        let endpoints: Vec<_> =
-            engines_from_processes([(1, sglang.as_slice()), (2, vllm.as_slice())])
-                .into_iter()
-                .map(|d| d.endpoint)
-                .collect();
+        let endpoints: Vec<_> = scan(&[
+            (1, None, "python3 -m sglang.launch_server --host 0.0.0.0"),
+            (2, None, "vllm serve Qwen/Qwen3-8B --host 0.0.0.0"),
+        ])
+        .into_iter()
+        .map(|d| d.endpoint)
+        .collect();
         assert_eq!(
             endpoints,
             vec!["http://localhost:30000", "http://localhost:8000"]
@@ -1481,11 +1752,11 @@ mod tests {
     /// the launch argv) are one engine, holding every PID.
     #[test]
     fn processes_on_one_endpoint_are_one_engine() {
-        let a = argv("vllm serve m --port 8000");
-        let b = argv("vllm serve m --port 8000");
-        let c = argv("vllm serve m --port 8001");
-        let detected =
-            engines_from_processes([(1, a.as_slice()), (2, b.as_slice()), (3, c.as_slice())]);
+        let detected = scan(&[
+            (1, None, "vllm serve m --port 8000"),
+            (2, None, "vllm serve m --port 8000"),
+            (3, None, "vllm serve m --port 8001"),
+        ]);
         assert_eq!(detected.len(), 2);
         assert_eq!(detected[0].pids, vec![1, 2]);
         assert_eq!(detected[1].pids, vec![3]);
@@ -1589,8 +1860,11 @@ mod tests {
     /// none.
     #[test]
     fn a_containers_processes_are_its_engine_whatever_endpoint_the_host_read() {
-        let serve = argv("vllm serve Qwen/Qwen3-8B --host 127.0.0.1 --port 8000");
-        let mut candidates = engines_from_processes([(500, serve.as_slice())]);
+        let mut candidates = scan(&[(
+            500,
+            None,
+            "vllm serve Qwen/Qwen3-8B --host 127.0.0.1 --port 8000",
+        )]);
         assert_eq!(candidates[0].endpoint, "http://127.0.0.1:8000");
         let container = DetectedEngine {
             container_id: Some("c0ffee".into()),
@@ -1616,8 +1890,11 @@ mod tests {
     /// native engine either, and lends the container no model.
     #[test]
     fn a_containers_process_is_no_native_engine_of_any_type() {
-        let serve = argv("python3 -m sglang.launch_server --model-path m --port 30000");
-        let mut candidates = engines_from_processes([(500, serve.as_slice())]);
+        let mut candidates = scan(&[(
+            500,
+            None,
+            "python3 -m sglang.launch_server --model-path m --port 30000",
+        )]);
         merge_docker_candidates(
             &mut candidates,
             vec![candidate(
@@ -1640,10 +1917,10 @@ mod tests {
     /// port 8000.
     #[test]
     fn a_process_in_no_container_stays_native() {
-        let native = argv("vllm serve m --port 8000");
-        let contained = argv("vllm serve m --port 8000");
-        let mut candidates =
-            engines_from_processes([(100, native.as_slice()), (401, contained.as_slice())]);
+        let mut candidates = scan(&[
+            (100, None, "vllm serve m --port 8000"),
+            (401, None, "vllm serve m --port 8000"),
+        ]);
         assert_eq!(candidates.len(), 1, "one endpoint to the host scan");
         merge_docker_candidates(
             &mut candidates,
@@ -1681,8 +1958,7 @@ mod tests {
     /// endpoint still makes the two one engine, the container's.
     #[test]
     fn a_container_whose_processes_are_unknown_merges_by_endpoint() {
-        let serve = argv("vllm serve m --port 8000");
-        let mut candidates = engines_from_processes([(500, serve.as_slice())]);
+        let mut candidates = scan(&[(500, None, "vllm serve m --port 8000")]);
         let container = DetectedEngine {
             container_id: Some("c0ffee".into()),
             ..candidate("http://localhost:8000", DeploymentMode::Docker, &[])
@@ -1731,5 +2007,498 @@ mod tests {
         assert_eq!(candidates.len(), 2);
         assert_eq!(candidates[0].pids, vec![100]);
         assert_eq!(candidates[1].pids, vec![200]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Ollama
+    // -----------------------------------------------------------------------
+
+    /// The runner child of Ollama 0.19.0 on the Spark, verbatim from the
+    /// live capture, and v0.40.5's `llama-server` child as its source builds
+    /// the command line.
+    const OLLAMA_RUNNER: &str = "/usr/local/bin/ollama runner --model /usr/share/ollama/.ollama/models/blobs/sha256-2af3b81862c6be03c769683af18efdadb2c33f60ff32ab6f83e42c043d6c7816 --port 45983";
+    const LLAMA_SERVER: &str = "/usr/lib/ollama/llama-server --model /root/.ollama/models/blobs/sha256-2af3b81862c6be03c769683af18efdadb2c33f60ff32ab6f83e42c043d6c7816 --port 41234 --host 127.0.0.1 --no-webui --offline -c 4096";
+
+    fn ollama_candidate(endpoint: &str, mode: DeploymentMode, pids: &[u32]) -> DetectedEngine {
+        DetectedEngine {
+            engine_type: EngineType::Ollama,
+            ..candidate(endpoint, mode, pids)
+        }
+    }
+
+    /// `ollama serve` by every path it is launched from: systemd's
+    /// `/usr/local/bin/ollama`, the image's `/bin/ollama`, through `PATH`,
+    /// Homebrew's, and Windows' `ollama.exe`.
+    #[test]
+    fn ollama_serve_is_recognized_in_its_launch_forms() {
+        for line in [
+            "/usr/local/bin/ollama serve",
+            "/bin/ollama serve",
+            "ollama serve",
+            "/opt/homebrew/bin/ollama serve",
+            "C:\\Ollama\\ollama.exe serve",
+        ] {
+            assert_eq!(
+                engine_of_process(&argv(line)),
+                Some(EngineType::Ollama),
+                "{line}"
+            );
+            assert!(runs_engine(line, &EngineType::Ollama), "{line}");
+        }
+    }
+
+    /// Only the server is: not Ollama's clients, not its per-model runners
+    /// (`ollama runner` up to v0.19, `llama-server` from v0.35 — `serve` is a
+    /// substring of it), not a program that is merely named like it.
+    #[test]
+    fn nothing_else_named_ollama_or_serve_is_the_server() {
+        for line in [
+            OLLAMA_RUNNER,
+            LLAMA_SERVER,
+            "ollama run tinyllama",
+            "ollama run serve",
+            "ollama ps",
+            "ollama",
+            "/usr/local/bin/ollama-serve",
+            "my-ollama serve",
+            "llama-server serve",
+            "sh -c ollama serve",
+            "tail -f /var/log/ollama serve",
+        ] {
+            assert_eq!(engine_of_process(&argv(line)), None, "{line}");
+            assert!(!runs_engine(line, &EngineType::Ollama), "{line}");
+        }
+    }
+
+    /// A native server is probed where its `OLLAMA_HOST` says it listens, and
+    /// on Ollama's default when the variable is unset or the environment
+    /// cannot be read (Ollama runs as `ollama`, the dashboard does not).
+    #[test]
+    fn a_native_ollama_is_probed_where_its_ollama_host_says() {
+        let endpoint = |env: std::io::Result<Option<String>>| {
+            let env = std::sync::Mutex::new(Some(env));
+            let detected = scan_with(&[(100, Some(1), "/usr/local/bin/ollama serve")], |pid| {
+                assert_eq!(pid, 100);
+                env.lock().unwrap().take().expect("read once")
+            });
+            assert_eq!(detected.len(), 1);
+            assert_eq!(detected[0].engine_type, EngineType::Ollama);
+            assert_eq!(detected[0].deployment_mode, DeploymentMode::Native);
+            assert_eq!(detected[0].served_model, None);
+            detected[0].endpoint.clone()
+        };
+        assert_eq!(endpoint(Ok(None)), "http://127.0.0.1:11434");
+        assert_eq!(
+            endpoint(Err(std::io::ErrorKind::PermissionDenied.into())),
+            "http://127.0.0.1:11434"
+        );
+        assert_eq!(
+            endpoint(Ok(Some("0.0.0.0:8080".into()))),
+            "http://127.0.0.1:8080"
+        );
+        assert_eq!(
+            endpoint(Ok(Some("http://10.0.0.5".into()))),
+            "http://10.0.0.5:80"
+        );
+        assert_eq!(endpoint(Ok(Some("[::]".into()))), "http://127.0.0.1:11434");
+    }
+
+    #[test]
+    fn ollama_host_is_read_from_an_environment_listing() {
+        let environ = b"HOME=/usr/share/ollama\0OLLAMA_HOSTNAME=x\0OLLAMA_HOST=0.0.0.0:11434\0PATH=/usr/bin\0";
+        let entries = environ.split(|&b| b == 0);
+        assert_eq!(
+            env_var_in(entries, "OLLAMA_HOST").as_deref(),
+            Some("0.0.0.0:11434")
+        );
+        // Docker's `Env`, as the image's Dockerfile sets it.
+        let docker = [
+            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            "NVIDIA_VISIBLE_DEVICES=all",
+            "OLLAMA_HOST=0.0.0.0:11434",
+        ];
+        assert_eq!(
+            env_var_in(docker.iter().map(|e| e.as_bytes()), "OLLAMA_HOST").as_deref(),
+            Some("0.0.0.0:11434")
+        );
+        assert_eq!(
+            env_var_in(b"OLLAMA_HOSTNAME=x\0".split(|&b| b == 0), "OLLAMA_HOST"),
+            None
+        );
+    }
+
+    /// One Ollama server is one engine, its runners inside it: a loaded
+    /// model's runner neither becomes an engine nor gets its own endpoint,
+    /// and its PID joins the server's — the GPU sees the runner, not the
+    /// server. Before a load, after it and after the unload, the engine is
+    /// the same `(type, endpoint)`; only its PIDs follow the runners.
+    #[test]
+    fn an_ollama_server_is_one_engine_with_its_runners_inside_it() {
+        let serve = (100, Some(1), "/usr/local/bin/ollama serve");
+        let identity = |d: &[DetectedEngine]| -> Vec<(EngineType, String, Vec<u32>)> {
+            d.iter()
+                .map(|d| (d.engine_type.clone(), d.endpoint.clone(), d.pids.clone()))
+                .collect()
+        };
+        let engine = |pids: Vec<u32>| {
+            vec![(
+                EngineType::Ollama,
+                "http://127.0.0.1:11434".to_string(),
+                pids,
+            )]
+        };
+
+        assert_eq!(identity(&scan(&[serve])), engine(vec![100]), "idle");
+        assert_eq!(
+            identity(&scan(&[
+                serve,
+                (101, Some(100), OLLAMA_RUNNER),
+                (102, Some(100), LLAMA_SERVER),
+                (103, Some(102), "/usr/lib/ollama/llama-server --worker"),
+            ])),
+            engine(vec![100, 101, 102, 103]),
+            "two models loaded"
+        );
+        assert_eq!(identity(&scan(&[serve])), engine(vec![100]), "unloaded");
+    }
+
+    /// Whatever matcher claims a process, one that an Ollama server started
+    /// is Ollama's and not an engine of its own. A `vllm serve` stands in
+    /// here for the `llama-server` an engine type for llama.cpp (#126) will
+    /// recognize: the exclusion applies before any matcher, so that type
+    /// inherits it. The same command line outside Ollama is an engine.
+    #[test]
+    fn a_process_ollama_started_is_never_an_engine_of_its_own() {
+        let detected = scan(&[
+            (100, Some(1), "/usr/local/bin/ollama serve"),
+            (101, Some(100), "vllm serve /models/x --port 45999"),
+            (
+                102,
+                Some(101),
+                "python3 -m sglang.launch_server --port 46000",
+            ),
+            (200, Some(1), "vllm serve /models/x --port 8001"),
+        ]);
+        let found: Vec<_> = detected
+            .iter()
+            .map(|d| (d.engine_type.clone(), d.endpoint.as_str(), d.pids.clone()))
+            .collect();
+        assert_eq!(
+            found,
+            vec![
+                (
+                    EngineType::Ollama,
+                    "http://127.0.0.1:11434",
+                    vec![100, 101, 102]
+                ),
+                (EngineType::Vllm, "http://localhost:8001", vec![200]),
+            ]
+        );
+    }
+
+    /// Two servers bound to different addresses are two engines.
+    #[test]
+    fn ollama_servers_on_different_addresses_are_different_engines() {
+        let detected = scan_with(
+            &[
+                (100, Some(1), "/usr/local/bin/ollama serve"),
+                (200, Some(1), "/usr/local/bin/ollama serve"),
+            ],
+            |pid| Ok((pid == 200).then(|| "127.0.0.1:11500".to_string())),
+        );
+        let endpoints: Vec<_> = detected.iter().map(|d| d.endpoint.as_str()).collect();
+        assert_eq!(
+            endpoints,
+            ["http://127.0.0.1:11434", "http://127.0.0.1:11500"]
+        );
+    }
+
+    #[test]
+    fn ollamas_image_is_recognized_from_any_registry_and_tag() {
+        for image in [
+            "ollama/ollama",
+            "ollama/ollama:latest",
+            "ollama/ollama:0.40.5",
+            "ollama/ollama:rocm",
+            "docker.io/ollama/ollama:0.19.0",
+            "registry.local:5000/ollama/ollama@sha256:0123abcd",
+            "registry.local:5000/ollama/ollama:0.40.5@sha256:0123abcd",
+        ] {
+            assert!(is_ollama_image(image), "{image}");
+        }
+        for image in [
+            "ghcr.io/open-webui/open-webui:ollama",
+            "ollama/ollama-webui",
+            "myorg/ollama",
+            "registry.local:5000/ollama",
+            "vllm/vllm-openai:latest",
+            "",
+        ] {
+            assert!(!is_ollama_image(image), "{image}");
+        }
+    }
+
+    /// Image, then command, then name — as for the other engines. Ollama's
+    /// image is enough; a private image running `ollama serve` is too; a
+    /// container that is only named like Ollama must show the server in
+    /// its process list.
+    #[test]
+    fn an_ollama_container_is_classified_by_image_command_then_name() {
+        let ollama = |strong_signal| {
+            Some(ContainerClass {
+                engine_type: EngineType::Ollama,
+                strong_signal,
+            })
+        };
+        assert_eq!(
+            classify_container(&[], "ollama/ollama:0.40.5", "/bin/ollama serve"),
+            ollama(true)
+        );
+        // The image wins over a command that mentions another engine.
+        assert_eq!(
+            classify_container(&[], "docker.io/ollama/ollama", "/bin/ollama serve --vllm"),
+            ollama(true)
+        );
+        assert_eq!(
+            classify_container(&["llm".into()], "myorg/llm:1", "/usr/bin/ollama serve"),
+            ollama(true)
+        );
+        assert_eq!(
+            classify_container(&["/ollama".into()], "myorg/base", "sleep infinity"),
+            ollama(false)
+        );
+        // Open WebUI is not an Ollama server, whatever its tag says.
+        assert_eq!(
+            classify_container(
+                &["/open-webui".into()],
+                "ghcr.io/open-webui/open-webui:ollama",
+                "bash start.sh"
+            ),
+            None
+        );
+    }
+
+    /// `docker top` rows lead with the PID; the command line after it is
+    /// read like a host process's argv, so `ollama serve` is recognized in
+    /// it and the runners are not.
+    #[test]
+    fn a_top_row_is_read_without_its_pid() {
+        let row = to_row(&["4242", "/bin/ollama serve"]);
+        assert_eq!(top_row_command(&row), "/bin/ollama serve");
+        assert!(runs_engine(&top_row_command(&row), &EngineType::Ollama));
+        let runner = to_row(&["4243", LLAMA_SERVER]);
+        assert!(!runs_engine(&top_row_command(&runner), &EngineType::Ollama));
+        assert_eq!(top_row_command(&to_row(&["PID"])), "");
+    }
+
+    fn published(container: u16, host: Option<u16>, host_ip: &str) -> PublishedPort<'_> {
+        PublishedPort {
+            container,
+            host,
+            host_ip: Some(host_ip),
+            tcp: true,
+        }
+    }
+
+    /// Where a container's Ollama answers from the host, for each way it can
+    /// be run: published (`-p`), on the host network, or neither.
+    #[test]
+    fn an_ollama_container_is_probed_where_the_host_reaches_it() {
+        let image = OllamaHost::from_env(Some("0.0.0.0:11434"));
+        let resolve = |listen: &OllamaHost, mode: Option<&str>, ports: &[PublishedPort<'_>]| {
+            ollama_container_endpoint(listen, mode, ports)
+        };
+
+        // `docker run -p 11434:11434 ollama/ollama` — Docker lists the
+        // binding once per address family.
+        let both = [
+            published(11434, Some(11434), "0.0.0.0"),
+            published(11434, Some(11434), "::"),
+        ];
+        assert_eq!(
+            resolve(&image, Some("bridge"), &both).as_deref(),
+            Some("http://127.0.0.1:11434")
+        );
+        // Published elsewhere, or on one address only.
+        assert_eq!(
+            resolve(
+                &image,
+                Some("default"),
+                &[published(11434, Some(11500), "")]
+            )
+            .as_deref(),
+            Some("http://127.0.0.1:11500")
+        );
+        assert_eq!(
+            resolve(
+                &image,
+                Some("bridge"),
+                &[published(11434, Some(11500), "192.168.1.5")]
+            )
+            .as_deref(),
+            Some("http://192.168.1.5:11500")
+        );
+        assert_eq!(
+            resolve(
+                &image,
+                Some("bridge"),
+                &[published(11434, Some(11500), "127.0.0.1")]
+            )
+            .as_deref(),
+            Some("http://127.0.0.1:11500")
+        );
+        // A UDP binding of the port, or an exposed port that is not
+        // published, does not reach the server.
+        let udp = PublishedPort {
+            tcp: false,
+            ..published(11434, Some(11434), "0.0.0.0")
+        };
+        assert_eq!(resolve(&image, Some("bridge"), &[udp]), None);
+        assert_eq!(
+            resolve(&image, Some("bridge"), &[published(11434, None, "")]),
+            None
+        );
+
+        // The container's own OLLAMA_HOST moves the port that has to be
+        // published: `-e OLLAMA_HOST=0.0.0.0:8080 -p 9000:8080`.
+        let moved = OllamaHost::from_env(Some("0.0.0.0:8080"));
+        assert_eq!(
+            resolve(
+                &moved,
+                Some("bridge"),
+                &[published(8080, Some(9000), "0.0.0.0")]
+            )
+            .as_deref(),
+            Some("http://127.0.0.1:9000")
+        );
+        assert_eq!(
+            resolve(
+                &moved,
+                Some("bridge"),
+                &[published(11434, Some(11434), "0.0.0.0")]
+            ),
+            None
+        );
+
+        // `--network host` publishes nothing: the server is on the host's
+        // interfaces, where its OLLAMA_HOST binds it — the image's, a
+        // custom one, or none (a private image).
+        assert_eq!(
+            resolve(&image, Some("host"), &[]).as_deref(),
+            Some("http://127.0.0.1:11434")
+        );
+        assert_eq!(
+            resolve(
+                &OllamaHost::from_env(Some("127.0.0.1:12000")),
+                Some("host"),
+                &[]
+            )
+            .as_deref(),
+            Some("http://127.0.0.1:12000")
+        );
+        assert_eq!(
+            resolve(&OllamaHost::from_env(None), Some("host"), &[]).as_deref(),
+            Some("http://127.0.0.1:11434")
+        );
+
+        // On a bridge with nothing published it is unreachable from the
+        // host; with the network unknown, or another container's, the
+        // listening port is assumed and the probe decides.
+        assert_eq!(resolve(&image, Some("bridge"), &[]), None);
+        assert_eq!(resolve(&image, Some("my-network"), &[]), None);
+        assert_eq!(
+            resolve(&image, None, &[]).as_deref(),
+            Some("http://127.0.0.1:11434")
+        );
+        assert_eq!(
+            resolve(&image, Some("container:abc123"), &[]).as_deref(),
+            Some("http://127.0.0.1:11434")
+        );
+    }
+
+    /// The host scan sees a containerized server too, and — unable to read a
+    /// root process's environment — puts it on Ollama's default address.
+    /// Published there, it is the same engine as the container's and the
+    /// two merge. Published elsewhere, its processes are the container's:
+    /// they leave a native engine on the default address (here a native
+    /// Ollama's, whose runner they must not join), and a host-scan
+    /// candidate made only of them is dropped.
+    #[test]
+    fn an_ollama_containers_processes_belong_to_its_container() {
+        // `-p 11434:11434`: one engine, from the container.
+        let mut candidates = vec![ollama_candidate(
+            "http://127.0.0.1:11434",
+            DeploymentMode::Native,
+            &[300, 301],
+        )];
+        merge_docker_candidates(
+            &mut candidates,
+            vec![ollama_candidate(
+                "http://127.0.0.1:11434",
+                DeploymentMode::Docker,
+                &[300, 301],
+            )],
+        );
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].deployment_mode, DeploymentMode::Docker);
+        assert_eq!(candidates[0].pids, vec![300, 301]);
+
+        // A native Ollama on the default port, and a container published on
+        // 11500 whose server the host scan also put on the default port.
+        let mut candidates = vec![ollama_candidate(
+            "http://127.0.0.1:11434",
+            DeploymentMode::Native,
+            &[100, 101, 300, 301],
+        )];
+        merge_docker_candidates(
+            &mut candidates,
+            vec![ollama_candidate(
+                "http://127.0.0.1:11500",
+                DeploymentMode::Docker,
+                &[300, 301],
+            )],
+        );
+        let found: Vec<_> = candidates
+            .iter()
+            .map(|c| {
+                (
+                    c.endpoint.as_str(),
+                    c.deployment_mode.clone(),
+                    c.pids.clone(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            found,
+            vec![
+                (
+                    "http://127.0.0.1:11434",
+                    DeploymentMode::Native,
+                    vec![100, 101]
+                ),
+                (
+                    "http://127.0.0.1:11500",
+                    DeploymentMode::Docker,
+                    vec![300, 301]
+                ),
+            ]
+        );
+
+        // The container alone: the host scan's guess has nothing left.
+        let mut candidates = vec![ollama_candidate(
+            "http://127.0.0.1:11434",
+            DeploymentMode::Native,
+            &[300, 301],
+        )];
+        merge_docker_candidates(
+            &mut candidates,
+            vec![ollama_candidate(
+                "http://127.0.0.1:11500",
+                DeploymentMode::Docker,
+                &[300, 301],
+            )],
+        );
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].endpoint, "http://127.0.0.1:11500");
     }
 }
