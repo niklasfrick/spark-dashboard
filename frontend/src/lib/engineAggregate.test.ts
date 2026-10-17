@@ -289,15 +289,16 @@ describe('aggregateEngines', () => {
     expect(snap.ttft_ms).toBeCloseTo(460, 5)
   })
 
-  it('weighted mean applies to inter-token latency', () => {
-    // Engine A: ITL 20ms, 10 requests; Engine B: ITL 80ms, 40 requests
-    // Weighted mean = (20*10 + 80*40) / 50 = 68
+  it('weights inter-token latency by generated tokens, not by requests', () => {
+    // Engine A: ITL 20ms, 10 requests; Engine B: ITL 80ms, 40 requests; both
+    // 2000 generated tokens. By tokens (20*2000 + 80*2000) / 4000 = 50 — by
+    // requests it would be (20*10 + 80*40) / 50 = 68.
     const engines = [
       engine('Running', fullMetrics({ inter_token_latency_ms: 20, total_requests: 10 })),
       engine('Running', fullMetrics({ inter_token_latency_ms: 80, total_requests: 40 })),
     ]
     const snap = aggregateEngines(engines)
-    expect(snap.inter_token_latency_ms).toBeCloseTo(68, 5)
+    expect(snap.inter_token_latency_ms).toBeCloseTo(50, 5)
   })
 
   it('weighted mean falls back to simple mean when all weights are zero', () => {
@@ -538,6 +539,146 @@ describe('aggregateEngines over engines that report different metric groups', ()
     expect(snap.total_requests).toBe(40)
   })
 
+  // The inter-token latency is measured per token, so it combines by the tokens
+  // each engine generated (#151): A 1000 tokens and 10 requests, B 3000 and 40.
+  const itlA = fullMetrics({
+    inter_token_latency_ms: 20,
+    itl_percentiles: percentiles(10),
+    itl_goodput_pct: 90,
+    total_generation_tokens: 1000,
+    total_requests: 10,
+  })
+  const itlB = (overrides: Partial<EngineMetrics> = {}) =>
+    fullMetrics({
+      inter_token_latency_ms: 80,
+      itl_percentiles: percentiles(40),
+      itl_goodput_pct: 50,
+      total_generation_tokens: 3000,
+      total_requests: 40,
+      ...overrides,
+    })
+
+  it('weights the inter-token latency, its percentiles and its goodput by generated tokens', () => {
+    const snap = aggregateEngines([engine('Running', itlA), engine('Running', itlB(), 'b')])
+
+    // (20·1000 + 80·3000) / 4000 — by requests it would be (20·10 + 80·40) / 50 = 68.
+    expect(snap.inter_token_latency_ms).toBeCloseTo(65, 5)
+    // Per quantile, (q_A·1000 + q_B·3000) / 4000.
+    expect(snap.itl_percentiles!.p50_ms).toBeCloseTo(32.5, 5)
+    expect(snap.itl_percentiles!.p95_ms).toBeCloseTo(65, 5)
+    expect(snap.itl_percentiles!.p99_ms).toBeCloseTo(97.5, 5)
+    // (90·1000 + 50·3000) / 4000 — by requests it would be 58.
+    expect(snap.itl_goodput_pct).toBeCloseTo(60, 5)
+  })
+
+  it('enters an engine that reports throughput but no request count into the inter-token latency', () => {
+    // llama.cpp-shaped: it counts the tokens it generates, not its requests.
+    const a = engine('Running', itlA)
+    const b = (groups: MetricGroup[], overrides: Partial<EngineMetrics> = { total_requests: null }) =>
+      reporting(itlB(overrides), groups)
+    const bWithRequests = (groups: MetricGroup[]) => b(groups, { total_requests: 40 })
+
+    const both = aggregateEngines([a, b(['ItlMean', 'ItlPercentiles', 'Throughput'])])
+    expect(both.inter_token_latency_ms).toBeCloseTo(65, 5)
+    expect(both.itl_percentiles!.p50_ms).toBeCloseTo(32.5, 5)
+    expect(both.itl_goodput_pct).toBeCloseTo(60, 5)
+    expect(both.coverage.included.ItlMean).toBe(2)
+    expect(both.coverage.included.ItlPercentiles).toBe(2)
+    // Its missing request count leaves the request total A's alone.
+    expect(both.total_requests).toBe(10)
+
+    // Declaring the mean but not the percentiles, B enters only the mean.
+    const meanOnly = aggregateEngines([a, b(['ItlMean', 'Throughput'])])
+    expect(meanOnly.inter_token_latency_ms).toBeCloseTo(65, 5)
+    expect(meanOnly.itl_percentiles).toEqual(percentiles(10))
+    expect(meanOnly.itl_goodput_pct).toBe(90)
+    expect(meanOnly.coverage.included.ItlPercentiles).toBe(1)
+
+    // Without throughput B has no tokens to weigh in with — a request count
+    // does not stand in for them.
+    const noTokens = aggregateEngines([a, bWithRequests(['ItlMean', 'RequestTotal'])])
+    expect(noTokens.inter_token_latency_ms).toBe(20)
+    expect(noTokens.coverage.included.ItlMean).toBe(1)
+  })
+
+  it('keeps TTFT, end-to-end, TPOT and queue time request-weighted, and still requires a request count', () => {
+    // A: few requests, many tokens; B: many requests, few tokens.
+    const a = engine('Running', fullMetrics({
+      ttft_ms: 100, e2e_latency_ms: 200, tpot_ms: 10, queue_time_ms: 20, inter_token_latency_ms: 20,
+      total_requests: 10, total_generation_tokens: 9000,
+    }))
+    const bMetrics = fullMetrics({
+      ttft_ms: 500, e2e_latency_ms: 600, tpot_ms: 50, queue_time_ms: 80, inter_token_latency_ms: 80,
+      total_requests: 90, total_generation_tokens: 1000,
+    })
+
+    const snap = aggregateEngines([a, engine('Running', bMetrics, 'b')])
+    // (100·10 + 500·90) / 100 — by tokens it would be (100·9000 + 500·1000) / 10000 = 140.
+    expect(snap.ttft_ms).toBeCloseTo(460, 5)
+    expect(snap.e2e_latency_ms).toBeCloseTo(560, 5)
+    expect(snap.tpot_ms).toBeCloseTo(46, 5)
+    expect(snap.queue_time_ms).toBeCloseTo(74, 5)
+    // ITL by tokens: (20·9000 + 80·1000) / 10000.
+    expect(snap.inter_token_latency_ms).toBeCloseTo(26, 5)
+
+    // Without a request count B leaves every request-weighted figure, and stays
+    // in the inter-token latency.
+    const noRequests = aggregateEngines([
+      a,
+      reporting(bMetrics, METRIC_GROUPS.filter((g) => g !== 'RequestTotal')),
+    ])
+    expect(noRequests.ttft_ms).toBe(100)
+    expect(noRequests.e2e_latency_ms).toBe(200)
+    expect(noRequests.tpot_ms).toBe(10)
+    expect(noRequests.queue_time_ms).toBe(20)
+    expect(noRequests.coverage.included.TtftMean).toBe(1)
+    expect(noRequests.coverage.included.E2eMean).toBe(1)
+    expect(noRequests.coverage.included.TpotMean).toBe(1)
+    expect(noRequests.coverage.included.QueueTime).toBe(1)
+    expect(noRequests.inter_token_latency_ms).toBeCloseTo(26, 5)
+    expect(noRequests.coverage.included.ItlMean).toBe(2)
+  })
+
+  it('combines the inter-token latency of a vLLM-only host weighted by generated tokens', () => {
+    // vLLM declares every group; a backend older than the declaration sends none.
+    const undeclared = aggregateEngines([engine('Running', itlA), engine('Running', itlB(), 'b')])
+    const declared = aggregateEngines([
+      engine('Running', itlA, 'a', { metric_groups: [...METRIC_GROUPS] }),
+      engine('Running', itlB(), 'b', { metric_groups: [...METRIC_GROUPS] }),
+    ])
+
+    expect(undeclared.inter_token_latency_ms).toBeCloseTo(65, 5)
+    expect(declared.inter_token_latency_ms).toBeCloseTo(65, 5)
+    expect(declared).toEqual(undeclared)
+  })
+
+  it('falls back to a simple mean of inter-token latency when no engine has generated tokens', () => {
+    // Request counts that would give (20·10 + 80·40) / 50 = 68 do not step in.
+    const itl = (inter_token_latency_ms: number, total_requests: number, tokens: number | null) =>
+      fullMetrics({ inter_token_latency_ms, total_requests, total_generation_tokens: tokens })
+
+    const zero = aggregateEngines([
+      engine('Running', itl(20, 10, 0)),
+      engine('Running', itl(80, 40, 0), 'b'),
+    ])
+    expect(zero.inter_token_latency_ms).toBe(50)
+
+    const none = aggregateEngines([
+      engine('Running', itl(20, 10, null)),
+      engine('Running', itl(80, 40, null), 'b'),
+    ])
+    expect(none.inter_token_latency_ms).toBe(50)
+
+    // On its baseline scrape an engine has generated nothing yet, so it carries
+    // no weight beside one that has — while still counted as covered.
+    const baseline = aggregateEngines([
+      engine('Running', itl(20, 10, 1000)),
+      engine('Running', itl(80, 40, 0), 'b'),
+    ])
+    expect(baseline.inter_token_latency_ms).toBe(20)
+    expect(baseline.coverage.included.ItlMean).toBe(2)
+  })
+
   it('means a percentage over the engines that report it, and its estimate flag with it', () => {
     const snap = aggregateEngines([
       engine('Running', fullMetrics({ kv_cache_percent: 30, kv_cache_is_estimated: false })),
@@ -564,13 +705,23 @@ describe('aggregateEngines over engines that report different metric groups', ()
 describe('includedIn', () => {
   const requestWeighted: MetricGroup[] = [
     'TtftMean', 'TtftPercentiles', 'E2eMean', 'E2ePercentiles',
-    'ItlMean', 'ItlPercentiles', 'TpotMean', 'TpotPercentiles', 'QueueTime',
+    'TpotMean', 'TpotPercentiles', 'QueueTime',
   ]
+  const tokenWeighted: MetricGroup[] = ['ItlMean', 'ItlPercentiles']
 
   it.each(requestWeighted)('requires %s to come with request counts', (group) => {
     expect(includedIn(reporting(null, [group]), group)).toBe(false)
     expect(includedIn(reporting(null, [group, 'RequestTotal']), group)).toBe(true)
-    // Active requests are not request counts.
+    // Active requests are not request counts, and generated tokens do not weight it.
+    expect(includedIn(reporting(null, [group, 'ActiveRequests']), group)).toBe(false)
+    expect(includedIn(reporting(null, [group, 'Throughput']), group)).toBe(false)
+  })
+
+  it.each(tokenWeighted)('requires %s to come with throughput, its generated tokens', (group) => {
+    expect(includedIn(reporting(null, [group]), group)).toBe(false)
+    expect(includedIn(reporting(null, [group, 'Throughput']), group)).toBe(true)
+    // A request count is not a token count.
+    expect(includedIn(reporting(null, [group, 'RequestTotal']), group)).toBe(false)
     expect(includedIn(reporting(null, [group, 'ActiveRequests']), group)).toBe(false)
   })
 
@@ -660,7 +811,7 @@ describe('aggregateEngineMetrics', () => {
     const metrics = aggregateEngineMetrics(engines)!
 
     expect(metrics.tokens_per_sec).toBe(250)
-    // Weighted mean by total_requests, like the other latencies: (20·10 + 40·30) / 40.
+    // Weighted mean by total_requests, like TTFT and E2E: (20·10 + 40·30) / 40.
     expect(metrics.tpot_ms).toBe(35)
   })
 

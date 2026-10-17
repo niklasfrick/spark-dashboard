@@ -18,27 +18,53 @@ import {
 
 /**
  * The metric groups whose combined figures are request-weighted means: the
- * eight latency groups (mean and percentiles of TTFT, end-to-end, inter-token
- * and per-output-token latency) and queue time. An engine has to report
- * request counts to carry a weight, so one that reports such a group without
- * the RequestTotal group cannot enter its mean.
+ * latencies measured per request (mean and percentiles of TTFT, end-to-end and
+ * per-output-token latency) and queue time. An engine has to report request
+ * counts to carry a weight, so one that reports such a group without the
+ * RequestTotal group cannot enter its mean.
  */
 export const REQUEST_WEIGHTED_GROUPS: ReadonlySet<MetricGroup> = new Set<MetricGroup>([
-  ...Object.values(LATENCY_GROUPS).flatMap(({ mean, percentiles }) => [mean, percentiles]),
+  ...(['ttft', 'e2e', 'tpot'] as const).flatMap((dimension) => [
+    LATENCY_GROUPS[dimension].mean,
+    LATENCY_GROUPS[dimension].percentiles,
+  ]),
   'QueueTime',
 ])
 
 /**
+ * The metric groups whose combined figures are token-weighted means: the
+ * inter-token latency's mean and percentiles (with its goodput), a measure per
+ * generated token, weighted by the tokens each engine generated (#151). The
+ * engines that report it count those tokens in the Throughput group, so one
+ * that counts no requests (llama.cpp) still enters; one that reports such a
+ * group without Throughput cannot.
+ */
+export const TOKEN_WEIGHTED_GROUPS: ReadonlySet<MetricGroup> = new Set<MetricGroup>([
+  LATENCY_GROUPS.itl.mean,
+  LATENCY_GROUPS.itl.percentiles,
+])
+
+/** The group whose counter weights `group`'s combined figures — what they are
+ *  measured per — or null for a group whose figures sum or take a plain mean. */
+function weightGroupOf(group: MetricGroup): MetricGroup | null {
+  if (REQUEST_WEIGHTED_GROUPS.has(group)) return 'RequestTotal'
+  if (TOKEN_WEIGHTED_GROUPS.has(group)) return 'Throughput'
+  return null
+}
+
+/**
  * Whether an engine enters the combined all-models figures of `group`: it is
- * running, its metrics are on, it declares the group — and, for a
- * request-weighted group, it declares the RequestTotal group too. Decided by
- * declaration, never by value, so a host running only vLLM combines exactly as
- * it did before engines declared their groups.
+ * running, its metrics are on, it declares the group — and, for a weighted
+ * group, the group its weight is counted in too: RequestTotal for a
+ * request-weighted one, Throughput for a token-weighted one. Decided by
+ * declaration, never by value, so a host running only vLLM covers exactly the
+ * engines it did before engines declared their groups.
  */
 export function includedIn(engine: EngineSnapshot, group: MetricGroup): boolean {
+  const weightGroup = weightGroupOf(group)
   return (
     contributesGroup(engine, group) &&
-    (!REQUEST_WEIGHTED_GROUPS.has(group) || contributesGroup(engine, 'RequestTotal'))
+    (weightGroup === null || contributesGroup(engine, weightGroup))
   )
 }
 
@@ -82,8 +108,10 @@ export function panelCoverage(
  * Aggregated metrics across multiple engines for the "Global" dashboard tab.
  *
  * Semantics are per-field: throughput/counts sum (concurrent workers compose
- * additively), latencies are request-weighted means, and cache percentages
- * are simple means (each engine has its own KV pool, so summing is nonsensical).
+ * additively), latencies are weighted means — by requests, or by generated
+ * tokens for the inter-token latency, a per-token measure — and cache
+ * percentages are simple means (each engine has its own KV pool, so summing is
+ * nonsensical).
  *
  * Each figure combines only the engines included in its metric group
  * (`includedIn`): an engine that does not report a group, or whose metrics are
@@ -123,7 +151,8 @@ export interface AggregateSnapshot {
   spec_decode_acceptance_rate_live: number | null
   spec_decode_mean_acceptance_length: number | null
 
-  // Weighted mean by total_requests (simple mean fallback)
+  // Weighted mean by total_requests — inter_token_latency_ms by
+  // total_generation_tokens (simple mean fallback)
   ttft_ms: number | null
   e2e_latency_ms: number | null
   queue_time_ms: number | null
@@ -150,7 +179,8 @@ export interface AggregateSnapshot {
   e2e_percentiles: LatencyPercentiles | null
   tpot_percentiles: LatencyPercentiles | null
 
-  // Goodput (% meeting SLO), weighted mean by total_requests.
+  // Goodput (% meeting SLO), weighted like its latency: by total_requests,
+  // itl_goodput_pct by total_generation_tokens.
   ttft_goodput_pct: number | null
   itl_goodput_pct: number | null
   e2e_goodput_pct: number | null
@@ -250,7 +280,7 @@ function emptySnapshot(totalCount: number): AggregateSnapshot {
 
 /**
  * Aggregates a single percentile field across running engines using a
- * weighted mean (same weighting as the latency averages). Returns null
+ * weighted mean (weighted like the latency's mean). Returns null
  * when no engine reports the field. Each quantile is independently
  * aggregated; if every engine has the percentiles object but a given
  * quantile is null, that quantile stays null.
@@ -359,14 +389,25 @@ export function aggregateEngines(engines: readonly EngineSnapshot[]): AggregateS
   const get = <K extends keyof EngineMetrics>(key: K): Array<EngineMetrics[K] | null> =>
     running.map((e) => (includedIn(e, metricGroupOf(key)) ? (e.metrics?.[key] ?? null) : null))
 
-  // Null for an engine that does not report requests, so it carries no weight;
-  // its latencies are masked above, so the simple-mean fallback below only ever
-  // runs over engines that do report requests.
-  const weights = get('total_requests')
-  const weightedBy = (key: NumericEngineMetric) =>
-    weightedMeanOrNull(
-      get(key).map((value, i) => ({ value, weight: weights[i] })),
-    )
+  // A latency is weighted by what it is measured per: the inter-token latency
+  // by the tokens each engine generated, every other by its requests. A weight
+  // is null for an engine that does not report its counter, so it carries
+  // none; that engine's latencies are masked above too, so the simple-mean
+  // fallback below only ever runs over engines that do report the counter.
+  const requests = get('total_requests')
+  const tokens = get('total_generation_tokens')
+  const weightsByGroup: Partial<Record<MetricGroup, typeof requests>> = {
+    RequestTotal: requests,
+    Throughput: tokens,
+  }
+  // The split lives in weightGroupOf; a group it leaves unweighted falls back
+  // to the requests, as every latency did before the inter-token one moved.
+  const weightsOf = (key: keyof EngineMetrics) =>
+    weightsByGroup[weightGroupOf(metricGroupOf(key)) ?? 'RequestTotal'] ?? requests
+  const weightedBy = (key: NumericEngineMetric) => {
+    const weights = weightsOf(key)
+    return weightedMeanOrNull(get(key).map((value, i) => ({ value, weight: weights[i] })))
+  }
 
   // Speculative decoding. The engines that count drafted and accepted tokens
   // (vLLM) pool their counters, and TAR and mean acceptance length are
@@ -441,7 +482,7 @@ export function aggregateEngines(engines: readonly EngineSnapshot[]): AggregateS
       'spec_decode_mean_acceptance_length',
     ),
 
-    // Weighted mean
+    // Weighted mean — by requests, the inter-token latency by generated tokens
     ttft_ms: weightedBy('ttft_ms'),
     e2e_latency_ms: weightedBy('e2e_latency_ms'),
     queue_time_ms: weightedBy('queue_time_ms'),
@@ -456,13 +497,13 @@ export function aggregateEngines(engines: readonly EngineSnapshot[]): AggregateS
     prefix_cache_hit_rate: meanOrNull(get('prefix_cache_hit_rate')),
     kv_cache_is_estimated: get('kv_cache_is_estimated').some((estimated) => estimated === true),
 
-    // Tail latency — weighted mean per quantile.
-    ttft_percentiles: aggregatePercentiles(get('ttft_percentiles'), weights),
-    itl_percentiles: aggregatePercentiles(get('itl_percentiles'), weights),
-    e2e_percentiles: aggregatePercentiles(get('e2e_percentiles'), weights),
-    tpot_percentiles: aggregatePercentiles(get('tpot_percentiles'), weights),
+    // Tail latency — weighted mean per quantile, weighted like its mean.
+    ttft_percentiles: aggregatePercentiles(get('ttft_percentiles'), weightsOf('ttft_percentiles')),
+    itl_percentiles: aggregatePercentiles(get('itl_percentiles'), weightsOf('itl_percentiles')),
+    e2e_percentiles: aggregatePercentiles(get('e2e_percentiles'), weightsOf('e2e_percentiles')),
+    tpot_percentiles: aggregatePercentiles(get('tpot_percentiles'), weightsOf('tpot_percentiles')),
 
-    // Goodput — weighted mean by total_requests, same caveat as percentiles.
+    // Goodput — weighted mean like its latency, same caveat as percentiles.
     ttft_goodput_pct: weightedBy('ttft_goodput_pct'),
     itl_goodput_pct: weightedBy('itl_goodput_pct'),
     e2e_goodput_pct: weightedBy('e2e_goodput_pct'),

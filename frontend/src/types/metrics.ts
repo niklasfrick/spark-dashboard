@@ -206,9 +206,14 @@ export interface EngineMetrics {
   queue_time_ms: number | null
   inter_token_latency_ms: number | null
   preemptions_total: number | null
-  /** Cumulative prompt (prefill) tokens processed since engine start. */
+  /** Prompt (prefill) tokens processed since the warmup baseline: the engine's
+   *  lifetime count while it is still warming, then the tokens since the
+   *  baseline scrape. */
   total_prompt_tokens: number | null
-  /** Cumulative generation (decode) tokens produced since engine start. */
+  /** Generation (decode) tokens produced since the warmup baseline: the
+   *  engine's lifetime count while it is still warming, then the tokens since
+   *  the baseline scrape. The window every post-warmup figure covers, and the
+   *  weight of the combined inter-token latency on all models (#151). */
   total_generation_tokens: number | null
   /** Prefix-cache token queries since the warmup baseline (the engine's
    *  lifetime count while it is still warming), the volume the hit rate is

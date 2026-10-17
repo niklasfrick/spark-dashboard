@@ -137,7 +137,7 @@ export function formatKvCache(percent: number | null): string {
 
 /** Abbreviate a large cumulative count: 950 -> "950", 1234 -> "1.2K",
  *  3.4e9 -> "3.4B". One decimal above 1000, trailing ".0" trimmed.
- *  Null/negative -> '--'. Used for lifetime token totals. */
+ *  Null/negative -> '--'. Used for the token totals. */
 export function formatCompactTokens(n: number | null): string {
   if (n === null || !Number.isFinite(n) || n < 0) return '--'
   if (n < 1000) return String(Math.round(n))
