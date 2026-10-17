@@ -84,7 +84,7 @@ interface LiveWithTotalProps {
   liveValue: string
   liveUnit?: string
   trend?: Trend
-  /** Right half: cumulative lifetime token total (animated, abbreviated). */
+  /** Right half: the token total since the warmup baseline (animated, abbreviated). */
   totalLabel: string
   total: number | null
   /** The engine reports neither figure: both labels stay, "not reported" replaces both values. */
