@@ -1525,6 +1525,46 @@ describe('all models on engines that report different groups', () => {
     expect(within(latency).queryByText('not reported')).not.toBeInTheDocument()
   })
 
+  // llama.cpp counts no requests, but the inter-token latency is weighted by the
+  // tokens each engine generated, which it does count (#151).
+  it('counts a llama.cpp engine in the combined inter-token latency, and says which groups cover which engines', async () => {
+    await showAllModels(
+      [{ id: 'latency', type: 'engine-latency', geometry: { x: 0, y: 0, w: 6, h: 4 } }],
+      [
+        makeEngine(ALPHA),
+        {
+          ...declaring(BETA, LLAMA_CPP_GROUPS, {
+            inter_token_latency_ms: 29,
+            total_generation_tokens: 1_500_000,
+          }),
+          engine_type: 'LlamaCpp',
+        },
+      ],
+    )
+
+    const latency = region('Latency')
+    // (9·500 000 + 29·1 500 000) / 2 000 000 — not vLLM's 9 alone.
+    expect(within(tile(latency, 'ITL')).getByText('24')).toBeInTheDocument()
+    // TTFT is request-weighted, and llama.cpp has no requests to weigh in with.
+    expect(within(tile(latency, 'TTFT')).getByText('210')).toBeInTheDocument()
+    expect(within(latency).getByText(/ITL mean 2 of 2/)).toBeInTheDocument()
+    expect(within(latency).getByText(/TTFT mean 1 of 2/)).toBeInTheDocument()
+    expect(within(latency).queryByText('1 of 2 engines')).not.toBeInTheDocument()
+  })
+
+  it('combines the inter-token latency of a llama.cpp engine alone', async () => {
+    await showAllModels(
+      [{ id: 'latency', type: 'engine-latency', geometry: { x: 0, y: 0, w: 6, h: 4 } }],
+      [llamaCpp()],
+    )
+
+    const latency = region('Latency')
+    expect(within(tile(latency, 'ITL')).getByText('9')).toBeInTheDocument()
+    expect(within(tile(latency, 'TTFT')).getByText('not reported')).toBeInTheDocument()
+    // Its one engine is every engine the figure could cover.
+    expect(within(latency).queryByText(/of 1 engines/)).not.toBeInTheDocument()
+  })
+
   it('says a tile no running engine reports is not reported', async () => {
     await showAllModels(enginePanels(), [
       declaring(ALPHA, SGLANG_GROUPS),

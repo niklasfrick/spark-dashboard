@@ -76,8 +76,9 @@ pub enum EngineStatus {
 pub enum MetricGroup {
     /// Prompt and generation token rates and their running averages
     /// (`prompt_tokens_per_sec`, `tokens_per_sec`, `avg_prompt_tokens_per_sec`,
-    /// `avg_tokens_per_sec`), and the lifetime token counters behind them
-    /// (`total_prompt_tokens`, `total_generation_tokens`).
+    /// `avg_tokens_per_sec`), and the token counters behind them, counted
+    /// from the warmup baseline (`total_prompt_tokens`,
+    /// `total_generation_tokens`).
     Throughput,
     /// Tokens per engine step (`avg_batch_size`).
     BatchSize,
@@ -316,14 +317,19 @@ pub struct EngineMetrics {
     pub inter_token_latency_ms: Option<f64>,
     /// Cumulative count of scheduling preemptions.
     pub preemptions_total: Option<u64>,
-    /// Cumulative prompt (prefill) tokens processed since engine start.
-    /// Raw lifetime counter, not warmup-adjusted.
+    /// Prompt (prefill) tokens processed since the warmup baseline: the
+    /// engine's lifetime count while it is still warming, then the tokens
+    /// since the baseline scrape.
     pub total_prompt_tokens: Option<u64>,
-    /// Cumulative generation (decode) tokens produced since engine start.
-    /// Raw lifetime counter, not warmup-adjusted.
+    /// Generation (decode) tokens produced since the warmup baseline: the
+    /// engine's lifetime count while it is still warming, then the tokens
+    /// since the baseline scrape. The window every post-warmup figure covers,
+    /// and the weight of the combined inter-token latency (#151).
     pub total_generation_tokens: Option<u64>,
-    /// Cumulative count of prefix-cache token queries since engine start.
-    /// Raw lifetime counter, not warmup-adjusted.
+    /// Prefix-cache token queries since the warmup baseline (the engine's
+    /// lifetime count while it is still warming), the volume the hit rate is
+    /// derived from. Warmup-adjusted on vLLM and SGLang; llama.cpp reports
+    /// none.
     pub prefix_cache_queries_total: Option<u64>,
     /// Average tokens processed per engine iteration step (batch size proxy).
     pub avg_batch_size: Option<f64>,
