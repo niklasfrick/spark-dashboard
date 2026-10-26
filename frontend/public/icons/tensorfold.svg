@@ -1,0 +1,5 @@
+<!-- TensorFold placeholder mark: a hand-drawn stand-in, in the style of the
+     other engine placeholders. TensorFold (github.com/ashhart/TensorFold) has
+     no vector mark shipped here yet, so the official asset should replace
+     this glyph. -->
+<svg role="img" viewBox="0 0 96 96" fill="none" xmlns="http://www.w3.org/2000/svg"><title>TensorFold</title><rect x="8" y="8" width="80" height="80" rx="18" fill="#2b2b2b"/><path d="M48 20 22 48l26 28z" fill="#52525b"/><path d="M48 20l26 28-26 28z" fill="#a1a1aa"/><path d="M48 20 22 48l26 28 26-28z" stroke="#d4d4d8" stroke-width="2" stroke-linejoin="round"/><path d="M48 20v56" stroke="#18181b" stroke-width="2"/></svg>

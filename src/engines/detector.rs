@@ -41,6 +41,10 @@ const VLLM_DEFAULT_PORT: u16 = 8000;
 /// SGLang's default HTTP port (`--port` unset), same role as above.
 const SGLANG_DEFAULT_PORT: u16 = 30000;
 
+/// TensorFold's default HTTP port: `tensorfold-native serve` listens on
+/// 127.0.0.1:8080 unless `--host`/`--port` say otherwise.
+const TENSORFOLD_DEFAULT_PORT: u16 = 8080;
+
 /// The port an engine type serves on when it is not told otherwise. A
 /// llama-server has two, by release, which its candidates carry whole
 /// (`llamacpp::default_ports`); this is only the first a native one is
@@ -51,6 +55,7 @@ fn default_port(engine_type: &EngineType) -> u16 {
         EngineType::Sglang => SGLANG_DEFAULT_PORT,
         EngineType::Ollama => super::ollama::DEFAULT_PORT,
         EngineType::LlamaCpp => llamacpp::default_ports(&DeploymentMode::Native)[0],
+        EngineType::Tensorfold => TENSORFOLD_DEFAULT_PORT,
     }
 }
 
@@ -290,13 +295,47 @@ fn is_llama_server(args: &[&str]) -> bool {
     matches!(program, Some("llama-server" | "llama-server.exe"))
 }
 
+/// Whether a command line runs TensorFold's server: the program
+/// `tensorfold-native` by any path, or the Homebrew `tensorfold` binary,
+/// either with `.exe`. Only the program counts — a log file named after the
+/// engine is not the server.
+///
+/// The one module launch TensorFold documents, `python -m tensorfold[.…]`, is
+/// recognized by the module token *after* `-m`, and by nothing else: a Python
+/// process that merely passes a path or a flag value containing "tensorfold."
+/// — `--served-model-name tensorfold.v1`, `--download-dir
+/// /data/tensorfold.models` — stays whatever its module names, and
+/// `server_named_by` can still name it vLLM or SGLang.
+fn is_tensorfold_server(args: &[&str]) -> bool {
+    let program = args
+        .first()
+        .map(|arg| arg.rsplit(&['/', '\\'][..]).next().unwrap_or(arg));
+    if matches!(
+        program,
+        Some("tensorfold-native" | "tensorfold-native.exe" | "tensorfold" | "tensorfold.exe")
+    ) {
+        return true;
+    }
+    program.is_some_and(|program| program.starts_with("python"))
+        && args
+            .windows(2)
+            .any(|pair| pair[0] == "-m" && is_tensorfold_module(pair[1]))
+}
+
+/// Whether a `python -m` module names TensorFold: `tensorfold` itself or a
+/// submodule of it.
+fn is_tensorfold_module(module: &str) -> bool {
+    module == "tensorfold" || module.starts_with("tensorfold.")
+}
+
 /// Which engine a command line runs, if any. Ollama's server is told by its
-/// program and subcommand together (`is_ollama_server`), llama.cpp's by its
-/// program (`is_llama_server`); otherwise the first argument that names an
-/// engine's server decides. The program comes before its arguments, so a
-/// path or flag value that happens to name the other engine — `python3 -m
-/// sglang.launch_server --download-dir /data/vllm` — cannot turn the process
-/// into that engine too. A process is at most one engine.
+/// program and subcommand together (`is_ollama_server`), llama.cpp's and
+/// TensorFold's by their programs (`is_llama_server`, `is_tensorfold_server`);
+/// otherwise the first argument that names an engine's server decides. The
+/// program comes before its arguments, so a path or flag value that happens
+/// to name the other engine — `python3 -m sglang.launch_server --download-dir
+/// /data/vllm` — cannot turn the process into that engine too. A process is at
+/// most one engine.
 fn engine_of_command<'a>(args: impl IntoIterator<Item = &'a str>) -> Option<EngineType> {
     let args: Vec<&str> = args.into_iter().collect();
     if is_ollama_server(&args) {
@@ -304,6 +343,9 @@ fn engine_of_command<'a>(args: impl IntoIterator<Item = &'a str>) -> Option<Engi
     }
     if is_llama_server(&args) {
         return Some(EngineType::LlamaCpp);
+    }
+    if is_tensorfold_server(&args) {
+        return Some(EngineType::Tensorfold);
     }
     args.into_iter().find_map(server_named_by)
 }
@@ -342,6 +384,10 @@ fn parse_model_for(engine_type: &EngineType, cmd: &str) -> Option<String> {
         EngineType::LlamaCpp => {
             llamacpp_launch(&cmd.split_whitespace().collect::<Vec<_>>(), |_| None).served_model()
         }
+        // TensorFold names the model it serves with `--name`, and `/v1/models`
+        // answers that name; the model path is the positional argument and
+        // names a file, not the served id, so only `--name` is read.
+        EngineType::Tensorfold => parse_tensorfold_model_from_command_str(cmd),
     }
 }
 
@@ -396,6 +442,15 @@ fn is_llamacpp_image(image: &str) -> bool {
         .any(|spelling| repository.contains(spelling))
 }
 
+/// Whether an image is a TensorFold build: its repository — not its tag —
+/// names tensorfold, as `ghcr.io/ashhart/tensorfold` does, in any tag or
+/// digest. The official image runs `tensorfold-native`, so the image is a
+/// strong signal on its own.
+#[cfg(any(target_os = "linux", test))]
+fn is_tensorfold_image(image: &str) -> bool {
+    image_repository(image).contains("tensorfold")
+}
+
 /// Rank the signals by how much they say:
 ///   1. the **image** is what was pulled to run here — Ollama's own image is
 ///      Ollama, one whose repository names llama.cpp is llama.cpp, and an
@@ -436,6 +491,9 @@ fn classify_container(names: &[String], image: &str, command: &str) -> Option<Co
     if is_llamacpp_image(image) {
         return class(EngineType::LlamaCpp, true);
     }
+    if is_tensorfold_image(image) {
+        return class(EngineType::Tensorfold, true);
+    }
     match mentions(image) {
         (true, false) => return class(EngineType::Vllm, true),
         (false, true) => return class(EngineType::Sglang, true),
@@ -467,6 +525,8 @@ fn classify_container(names: &[String], image: &str, command: &str) -> Option<Co
         .any(|spelling| named(spelling))
     {
         class(EngineType::LlamaCpp, false)
+    } else if named("tensorfold") {
+        class(EngineType::Tensorfold, false)
     } else {
         None
     }
@@ -992,14 +1052,15 @@ fn engines_from_processes(
                 let (endpoint, fallback_endpoints) = listen.endpoints();
                 (endpoint, fallback_endpoints, launch.served_model())
             }
-            EngineType::Vllm | EngineType::Sglang => {
+            EngineType::Vllm | EngineType::Sglang | EngineType::Tensorfold => {
                 let default_endpoint = format!("http://localhost:{}", default_port(&engine_type));
                 let endpoint =
                     parse_endpoint_from_args(cmd, &default_endpoint).unwrap_or(default_endpoint);
-                let served_model = if engine_type == EngineType::Vllm {
-                    parse_model_from_args(cmd)
-                } else {
-                    parse_sglang_model_from_args(cmd)
+                let served_model = match engine_type {
+                    EngineType::Vllm => parse_model_from_args(cmd),
+                    EngineType::Sglang => parse_sglang_model_from_args(cmd),
+                    // TensorFold: `--name` on its `serve` launch.
+                    _ => parse_tensorfold_model_from_args(cmd),
                 };
                 (endpoint, Vec::new(), served_model)
             }
@@ -1338,6 +1399,48 @@ fn parse_sglang_model_from_command_str(cmd: &str) -> Option<String> {
     parse_sglang_model_parts(&cmd.split_whitespace().collect::<Vec<_>>())
 }
 
+/// Parse the served model from a TensorFold launch command line:
+/// `tensorfold-native serve MODEL --name NAME` serves it under `--name`, and
+/// that is the id `/v1/models` reports. The `MODEL` positional names the
+/// weights on disk, not the served id, so it is not used as a hint.
+fn parse_tensorfold_model_from_args(args: &[OsString]) -> Option<String> {
+    let args: Vec<String> = args
+        .iter()
+        .filter_map(|a| a.to_str().map(String::from))
+        .collect();
+    parse_tensorfold_model_parts(&args)
+}
+
+/// Shared by the OsString and pre-joined-string forms.
+fn parse_tensorfold_model_parts<S: AsRef<str>>(args: &[S]) -> Option<String> {
+    let flags = ["--name"];
+    for flag in flags {
+        for (i, arg) in args.iter().enumerate() {
+            let arg = arg.as_ref();
+            if arg == flag {
+                if let Some(val) = args.get(i + 1) {
+                    let val = val.as_ref();
+                    if !val.is_empty() && !val.starts_with('-') {
+                        return Some(val.to_string());
+                    }
+                }
+            } else if let Some(val) = arg.strip_prefix(&format!("{flag}=")) {
+                if !val.is_empty() {
+                    return Some(val.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Pre-joined-command-string form of [`parse_tensorfold_model_from_args`]
+/// (Docker `container.command` and `docker top` rows).
+#[cfg(any(target_os = "linux", test))]
+fn parse_tensorfold_model_from_command_str(cmd: &str) -> Option<String> {
+    parse_tensorfold_model_parts(&cmd.split_whitespace().collect::<Vec<_>>())
+}
+
 // ---------------------------------------------------------------------------
 // Layer 2: Docker scan
 // ---------------------------------------------------------------------------
@@ -1480,7 +1583,7 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
             .and_then(|h| h.network_mode.as_deref());
         let env = match engine_type {
             EngineType::Ollama | EngineType::LlamaCpp => container_env(&docker, container_id).await,
-            EngineType::Vllm | EngineType::Sglang => Vec::new(),
+            EngineType::Vllm | EngineType::Sglang | EngineType::Tensorfold => Vec::new(),
         };
         let env_var = |name: &str| env_var_in(env.iter().map(|e| e.as_bytes()), name);
 
@@ -1706,6 +1809,9 @@ async fn probe_engine(http: &EngineHttp, engine_type: &EngineType) -> bool {
         // By the `Server: llama.cpp` header every llama-server answer carries
         // (`llamacpp::identify`).
         EngineType::LlamaCpp => super::llamacpp::identify(http).await,
+        // By its `Server: TensorFold` header and the health JSON only it
+        // answers (`tensorfold::identify`).
+        EngineType::Tensorfold => super::tensorfold::identify(http).await,
     }
 }
 
@@ -3056,6 +3162,267 @@ mod tests {
         );
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].endpoint, "http://127.0.0.1:11500");
+    }
+
+    // -----------------------------------------------------------------------
+    // TensorFold
+    // -----------------------------------------------------------------------
+
+    /// The endpoint and key the probe is called with.
+    fn tensorfold_http(url: &str, key: Option<&str>) -> EngineHttp {
+        EngineHttp::new(
+            reqwest::Client::new(),
+            url.to_string(),
+            key.map(str::to_string),
+        )
+    }
+
+    /// TensorFold's server is `tensorfold-native` (and Homebrew's
+    /// `tensorfold`), whichever path it was started from. Only the program
+    /// counts: a log file, a proxy or a tmux session named after it serves
+    /// nothing. The python module launch is the one documented exception.
+    #[test]
+    fn tensorfold_servers_are_recognized_and_mentions_are_not() {
+        for line in [
+            "tensorfold-native serve /models/x.gguf --name x",
+            "/opt/tensorfold/tensorfold-native serve /models/x.gguf --name x --port 8090",
+            "/usr/local/bin/tensorfold serve /models/x.gguf --name x",
+            "./tensorfold.exe serve C:\\models\\x.gguf",
+            "python3 -m tensorfold.cli serve /models/x.gguf --name x",
+        ] {
+            assert_eq!(
+                engine_of_process(&argv(line)),
+                Some(EngineType::Tensorfold),
+                "{line}"
+            );
+            assert!(runs_engine(line, &EngineType::Tensorfold), "{line}");
+        }
+        for line in [
+            "tail -f /var/log/tensorfold.log",
+            "journalctl -fu tensorfold-native",
+            "tmux new -s tensorfold",
+            "pgrep -f tensorfold-native",
+            "/opt/my-tensorfold-proxy --port 8080",
+            "my-tensorfold --port 8080",
+            "sleep infinity",
+        ] {
+            assert_eq!(engine_of_process(&argv(line)), None, "{line}");
+            assert!(!runs_engine(line, &EngineType::Tensorfold), "{line}");
+        }
+
+        // A python module that *mentions* tensorfold. in a flag value is not
+        // TensorFold: the engine its module names must still be found, or the
+        // probe drops a real vLLM/SGLang and the engine disappears.
+        assert_eq!(
+            engine_of_process(&argv(
+                "python3 -m vllm.entrypoints.openai.api_server --served-model-name tensorfold.v1"
+            )),
+            Some(EngineType::Vllm),
+            "a served-model-name containing tensorfold. stays vLLM"
+        );
+        assert_eq!(
+            engine_of_process(&argv(
+                "python3 -m sglang.launch_server --download-dir /data/tensorfold.models"
+            )),
+            Some(EngineType::Sglang),
+            "a download dir containing tensorfold. stays SGLang"
+        );
+        // The module token itself is what decides, so the bare module and a
+        // submodule both identify TensorFold.
+        for line in [
+            "python3 -m tensorfold serve /models/x.gguf --name x",
+            "python3 -m tensorfold.cli serve /models/x.gguf --name x",
+        ] {
+            assert_eq!(
+                engine_of_process(&argv(line)),
+                Some(EngineType::Tensorfold),
+                "{line}"
+            );
+        }
+    }
+
+    /// A native launch is probed where `--host` and `--port` say — in both
+    /// flag forms — and named by the `--name` it serves under. With neither,
+    /// TensorFold's own default, 8080.
+    #[test]
+    fn a_tensorfold_launch_is_probed_where_it_listens_and_named_by_its_name() {
+        let detected = scan(&[(
+            10,
+            Some(1),
+            "tensorfold-native serve /models/x.gguf --name qwen-small --host 0.0.0.0 --port 8090",
+        )]);
+        assert_eq!(detected.len(), 1);
+        assert_eq!(detected[0].engine_type, EngineType::Tensorfold);
+        assert_eq!(detected[0].endpoint, "http://localhost:8090");
+        assert_eq!(detected[0].served_model.as_deref(), Some("qwen-small"));
+        assert!(detected[0].fallback_endpoints.is_empty());
+
+        let equal_form = scan(&[(
+            11,
+            Some(1),
+            "tensorfold-native serve /models/x.gguf --name=qwen-small --host=127.0.0.1 --port=8091",
+        )]);
+        assert_eq!(equal_form.len(), 1);
+        assert_eq!(equal_form[0].endpoint, "http://127.0.0.1:8091");
+        assert_eq!(equal_form[0].served_model.as_deref(), Some("qwen-small"));
+
+        // No flags: the engine's default listen address.
+        let default = scan(&[(
+            12,
+            Some(1),
+            "/usr/local/bin/tensorfold serve /models/x.gguf --name qwen-small",
+        )]);
+        assert_eq!(default.len(), 1);
+        assert_eq!(default[0].endpoint, "http://localhost:8080");
+        assert_eq!(default[0].served_model.as_deref(), Some("qwen-small"));
+        assert_eq!(default_port(&EngineType::Tensorfold), 8080);
+    }
+
+    /// The model hint is `--name` in the host and the docker command-string
+    /// forms; the positional model path names a file, not the served id.
+    #[test]
+    fn tensorfold_model_parse_reads_name_flag_only() {
+        assert_eq!(
+            parse_model_for(
+                &EngineType::Tensorfold,
+                "tensorfold-native serve /models/x.gguf --name qwen-small --port 8090",
+            )
+            .as_deref(),
+            Some("qwen-small")
+        );
+        assert_eq!(
+            parse_model_for(
+                &EngineType::Tensorfold,
+                "tensorfold-native serve /models/x.gguf --name=qwen-small",
+            )
+            .as_deref(),
+            Some("qwen-small")
+        );
+        // The positional is only a path; without `--name` there is no hint.
+        assert_eq!(
+            parse_model_for(
+                &EngineType::Tensorfold,
+                "tensorfold-native serve /models/x.gguf",
+            ),
+            None
+        );
+        assert_eq!(
+            parse_tensorfold_model_parts(&["serve", "--name", "--port", "8080"]),
+            None,
+            "a flag value is not a model name"
+        );
+    }
+
+    /// The docker signals: an image repository naming tensorfold (any
+    /// registry, tag or digest) is a strong claim by itself, a command running
+    /// `tensorfold-native` is too, and a name only is not — it must be
+    /// confirmed by the container's processes, like the other engines' weak
+    /// signal.
+    #[test]
+    fn a_tensorfold_container_is_classified_by_image_command_then_name() {
+        for image in [
+            "ghcr.io/ashhart/tensorfold:1.1.3",
+            "tensorfold/tensorfold:latest",
+            "registry.local:5000/tensorfold@sha256:abc",
+        ] {
+            assert_eq!(
+                classify_container(&strings(&["tf-lane"]), image, "sleep infinity",),
+                Some(ContainerClass {
+                    engine_type: EngineType::Tensorfold,
+                    strong_signal: true,
+                }),
+                "{image}"
+            );
+        }
+        // The image beats the command: a wrapper mentioning vllm does not
+        // make an image that is TensorFold's anything else.
+        assert_eq!(
+            classify_container(
+                strings(&[]).as_slice(),
+                "ghcr.io/ashhart/tensorfold:1.1.3",
+                "/bin/sh -c 'exec vllm serve'"
+            ),
+            Some(ContainerClass {
+                engine_type: EngineType::Tensorfold,
+                strong_signal: true,
+            })
+        );
+        // The command's launch form.
+        assert_eq!(
+            classify_container(
+                strings(&[]).as_slice(),
+                "my/inference:1",
+                "/app/tensorfold-native serve /models/x.gguf --name x",
+            ),
+            Some(ContainerClass {
+                engine_type: EngineType::Tensorfold,
+                strong_signal: true,
+            })
+        );
+        // A name alone is weak, like every engine's.
+        assert_eq!(
+            classify_container(
+                strings(&["tensorfold-lane"]).as_slice(),
+                "my/inference:1",
+                "sleep infinity"
+            ),
+            Some(ContainerClass {
+                engine_type: EngineType::Tensorfold,
+                strong_signal: false,
+            })
+        );
+        assert_eq!(
+            classify_container(
+                strings(&["proxy"]).as_slice(),
+                "my/inference:1",
+                "sleep infinity"
+            ),
+            None
+        );
+    }
+
+    /// The identify arm: only TensorFold's own answers are accepted. A vLLM
+    /// shaped empty 200 `/health`, SGLang's 200 ready body, llama.cpp's
+    /// status-only JSON and Ollama's missing route all stay out.
+    #[tokio::test]
+    async fn the_tensorfold_probe_accepts_only_tensorfold() {
+        use super::super::test_server::{Headers, Request, TestServer};
+
+        let tensorfold = |status: u16, body: &'static str, headers: Headers| async move {
+            TestServer::start_with_headers(move |_: &Request| {
+                (status, body.to_string(), headers.clone())
+            })
+            .await
+        };
+
+        let named = tensorfold(200, "", vec![("Server", "TensorFold/1.1.3".to_string())]).await;
+        assert!(probe_engine(&tensorfold_http(&named.url, None), &EngineType::Tensorfold).await);
+
+        let body = tensorfold(
+            200,
+            r#"{"status":"ok","model":"m","model_ids":["m"],"warming":false}"#,
+            vec![("Server", "uvicorn".to_string())],
+        )
+        .await;
+        assert!(probe_engine(&tensorfold_http(&body.url, None), &EngineType::Tensorfold).await);
+
+        let rejected = [
+            (200, "", vec![("Server", "uvicorn".to_string())]),
+            (200, "OK", vec![("Server", "uvicorn".to_string())]),
+            (
+                200,
+                r#"{"status":"ok"}"#,
+                vec![("Server", "llama.cpp".to_string())],
+            ),
+            (404, "Not Found", vec![("Server", "uvicorn".to_string())]),
+        ];
+        for (status, body, headers) in rejected {
+            let server = tensorfold(status, body, headers.clone()).await;
+            assert!(
+                !probe_engine(&tensorfold_http(&server.url, None), &EngineType::Tensorfold).await,
+                "{status} {body:?} {headers:?}"
+            );
+        }
     }
 
     // -----------------------------------------------------------------------

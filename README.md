@@ -4,8 +4,8 @@ Real-time hardware and LLM inference monitoring for Linux systems with NVIDIA
 GPUs. Developed and tested on the NVIDIA DGX Spark, but works on any Linux
 host with NVIDIA drivers — discrete-GPU workstations, DGX boxes, cloud VMs.
 A Rust backend collects GPU, CPU, memory, disk, and network metrics alongside
-vLLM, SGLang and llama.cpp engine statistics (plus status and loaded models for
-Ollama) and streams them over WebSocket to a React frontend.
+vLLM, SGLang, llama.cpp and TensorFold engine statistics (plus status and
+loaded models for Ollama) and streams them over WebSocket to a React frontend.
 
 ![Stack](https://img.shields.io/badge/Rust-Axum-orange) ![Stack](https://img.shields.io/badge/React_19-TypeScript-blue) ![Stack](https://img.shields.io/badge/Tailwind_CSS_4-06B6D4) ![Stack](https://img.shields.io/badge/Vite_8-646CFF) ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -80,7 +80,7 @@ for details on what each script does.
   (e.g. DGX Spark GB10, GH200)
 - Disk and network I/O throughput
 
-**LLM Engine Monitoring** (vLLM, SGLang and llama.cpp via Prometheus metrics)
+**LLM Engine Monitoring** (vLLM, SGLang, llama.cpp and TensorFold via Prometheus metrics)
 - Tokens per second (generation + prompt)
 - Time to first token, inter-token latency, end-to-end latency, queue time
 - Active/queued requests, batch size
@@ -290,7 +290,7 @@ spark-dashboard service status
       --state-dir <DIR>       Directory for saved state [default: /var/lib/spark-dashboard] [env: SPARK_DASHBOARD_STATE_DIR]
       --gpu-index <IDX>       Optional NVML GPU index to monitor [env: SPARK_DASHBOARD_GPU_INDEX]
       --simulate-gpus <N>     Append N fictive GPUs with simulated data (dev aid) [env: SPARK_DASHBOARD_SIMULATE_GPUS]
-      --engine <TYPE>         Manual engine type: vllm, sglang, llamacpp or ollama [env: SPARK_DASHBOARD_ENGINE]
+      --engine <TYPE>         Manual engine type: vllm, sglang, llamacpp, tensorfold or ollama [env: SPARK_DASHBOARD_ENGINE]
       --engine-url <URL>      Manual engine endpoint (requires --engine) [env: SPARK_DASHBOARD_ENGINE_URL]
       --engine-api-key <KEY>  API key for an endpoint, paired by index with --engine-url [env: SPARK_DASHBOARD_ENGINE_API_KEY]
       --provider-api-key <KEY> Fallback API key for any endpoint [env: SPARK_DASHBOARD_PROVIDER_API_KEY]
@@ -299,8 +299,9 @@ spark-dashboard service status
 
 On multi-GPU hosts, Spark Dashboard monitors all available NVIDIA GPUs by
 default. Use `--gpu-index` to focus on one device. Engines are auto-detected via
-process scan and Docker API (vLLM, SGLang, llama.cpp and Ollama, on their
-default ports 8000, 30000, 9931 — 8080 before llama.cpp v0.7.0 — and 11434).
+process scan and Docker API (vLLM, SGLang, llama.cpp, TensorFold and Ollama, on
+their default ports 8000, 30000, 9931 — 8080 before llama.cpp v0.7.0 — 8080 for
+TensorFold, and 11434).
 Use `--engine` and `--engine-url` to override when auto-detection doesn't work. For a host-systemd installation, put the same
 values in `/etc/spark-dashboard/config.env` as `SPARK_DASHBOARD_ENGINE` and
 `SPARK_DASHBOARD_ENGINE_URL`; comma-separated engine and URL values are paired
@@ -335,6 +336,55 @@ children of a llama.cpp router, never show up as engines of their own; a router
 (started with no model) shows as running with nothing reported. The dashboard's
 polling does not keep a server from sleeping under `--sleep-idle-seconds`: it
 reads `/slots` only while requests are running.
+
+TensorFold ([ashhart/TensorFold](https://github.com/ashhart/TensorFold)) is
+detected with no configuration: a host process or a container running its
+`tensorfold-native` server is found and confirmed as TensorFold by its own
+answer (`Server: TensorFold` and its `/health` JSON), on its `--host`/`--port`
+or otherwise on its default `127.0.0.1:8080`. To point at one by hand —
+including an engine on another machine — pass `--engine tensorfold` with
+`--engine-url`, for example `--engine tensorfold --engine-url
+http://192.168.1.20:8000`. The served model, its aliases and its metadata come
+from `/v1/models`, so no model has to be named on the command line.
+
+It reports throughput, batch size, running and queued requests, the request
+total, preemptions, KV cache utilization, MTP speculative-decoding counters
+(draft and accepted tokens, lifetime acceptance and a live acceptance rate
+derived from counter deltas), TTFT and end-to-end latency means and percentiles,
+TPOT means and percentiles, per-request decode and prefill throughput, and SLO
+goodput. Prefix-cache hit rate is reported only where the served engine keeps
+prompt states; on an engine that keeps none, the cache panel says it is not
+reported instead of showing an empty figure. Queue time and inter-token latency
+read "not reported": TensorFold publishes no queue-wait histogram, and its
+`request_time_per_output_token_seconds` is the TPOT figure already shown under
+time per output token, not a separate per-gap inter-token series. When the
+served engine runs no MTP drafter, the speculative-decoding panel says it is
+not using speculative decoding; when it does, the counters and rates show, and
+the mean acceptance length stays empty ("--") because TensorFold counts drafted
+and accepted tokens, not draft attempts.
+
+Two readings are the engine's own rather than the dashboard's arithmetic: the
+live decode and prefill throughput come from its `/health` `live` block (tokens
+in the last 2 s over 2, the same number its terminal and `--dashboard` page
+show), and the KV-cache figure is its `kv_cache_usage_ratio` — the tokens a live
+stream holds over that stream's context window. That gauge therefore stays small
+while requests are short and reads 0 when no stream is live (the engine reports
+0 there, not an absent series); it is a stream's cache occupancy, not the
+device's KV-pool utilization. With a multi-stream launch (`--parallel N`) the
+engine fits and shares the context window between the streams while the gauge
+divides a stream's tokens by the whole window, so a stream filled to its own
+limit reads about 1/N of it — 25% at `--parallel 4` — and the reading can never
+pass that share. With `--api-key` set, the open health route answers
+only the status, so the dashboard falls back to diffing the scrape's counters
+for the live rate.
+
+Its metrics are served at `/metrics` and `/v1/metrics`. Started with
+`--api-key`, every route except `/`, `/health` and its `/slide` assets needs
+that key, and `/health` answers only `{"status":"ok"}`; pass the key with
+`--engine-api-key` (or `--provider-api-key` for an auto-detected engine), and
+start the engine with `--metrics-open` if the dashboard should read metrics
+without one. Until a key is configured, the metric panels say authentication is
+required rather than metrics off.
 
 Ollama has no metric panels, and unlike SGLang no flag changes that: it exposes
 no server-side metrics at all. The dashboard still shows the engine's status,

@@ -16,7 +16,7 @@ import {
 } from '../lib/dashboard/panels'
 import { DASHBOARD_SCHEMA_VERSION } from '../lib/dashboard/schema'
 import { metricGroupOf } from '../lib/engineMetrics'
-import { LLAMA_CPP_GROUPS, SGLANG_GROUPS } from '../test/engineGroups'
+import { LLAMA_CPP_GROUPS, SGLANG_GROUPS, TENSORFOLD_GROUPS } from '../test/engineGroups'
 import { HF_QWEN, OLLAMA_ENDPOINT, TINYLLAMA, ollamaEngine } from '../test/ollama'
 import {
   METRIC_GROUPS,
@@ -391,6 +391,7 @@ describe('the engine panels on a grid page', () => {
     ['Vllm', 'vLLM', '/icons/vllm.svg'],
     ['Sglang', 'SGLang', '/icons/sglang.svg'],
     ['LlamaCpp', 'llama.cpp', '/icons/llamacpp.svg'],
+    ['Tensorfold', 'TensorFold', '/icons/tensorfold.svg'],
   ] as const)('shows a %s engine under its own name and icon', async (engineType, name, icon) => {
     const fetchMock = serveConfiguration({
       document: storedDocument([
@@ -1164,6 +1165,44 @@ describe('a tile whose metric group is not reported', () => {
     expect(within(cache).getByText('42')).toBeInTheDocument()
     expect(within(cache).getByText('55')).toBeInTheDocument()
     expect(within(cache).queryByText('not reported')).not.toBeInTheDocument()
+  })
+
+  // TensorFold declares every group but the queue-wait histogram and the
+  // separate inter-token histogram. Nothing here is keyed by engine type: the
+  // panel reads the declaration the backend sends (ADR-0004).
+  it('renders a TensorFold engine from its declared groups, and names the two tiles it lacks', async () => {
+    await showEngine({
+      ...declaring(ALPHA, TENSORFOLD_GROUPS),
+      engine_type: 'Tensorfold',
+    })
+
+    const latency = region('Latency')
+    expect(within(tile(latency, 'TTFT')).getByText('210')).toBeInTheDocument()
+    expect(within(tile(latency, 'E2E')).getByText('4.20')).toBeInTheDocument()
+    expect(within(tile(latency, 'TPOT')).getByText('8')).toBeInTheDocument()
+    expect(within(tile(latency, 'Batch')).getByText('6.5')).toBeInTheDocument()
+    // No queue-wait histogram and no separate inter-token histogram.
+    expect(within(tile(latency, 'Queue')).getByText('not reported')).toBeInTheDocument()
+    expect(within(tile(latency, 'ITL')).getByText('not reported')).toBeInTheDocument()
+    expect(within(latency).queryByTestId('chart-series-ITL')).not.toBeInTheDocument()
+    expect(within(latency).queryByTestId('chart-series-Queue')).not.toBeInTheDocument()
+
+    // The groups it does declare render generically, like any other engine's.
+    expect(
+      within(tile(region('Prefill Throughput'), 'Live')).getByText('3000.0'),
+    ).toBeInTheDocument()
+    expect(within(tile(region('Requests'), 'Total')).getByText('900')).toBeInTheDocument()
+    expect(within(region('Cache')).getByText('42')).toBeInTheDocument()
+    expect(
+      within(region('Speculative Decoding')).getByText(
+        'This engine is not using speculative decoding.',
+      ),
+    ).toBeInTheDocument()
+
+    // Its inter-token goodput tile falls with the percentiles group it lacks.
+    expect(
+      within(tile(region('SLO Goodput'), 'ITL ≤ 50ms')).getByText('not reported'),
+    ).toBeInTheDocument()
   })
 
   // Its latency mean is a mean in every mode: plain under the "avg" the header

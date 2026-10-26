@@ -28,8 +28,8 @@ engine either way.
 _Avoid_: server, model, backend (the backend is the Rust process)
 
 **Engine type**:
-Which inference server software an engine is (vLLM, SGLang, llama.cpp, Ollama).
-Decides how the engine is detected and which metrics it can report.
+Which inference server software an engine is (vLLM, SGLang, llama.cpp, TensorFold,
+Ollama). Decides how the engine is detected and which metrics it can report.
 _Avoid_: engine kind, runtime, flavor, provider (a provider publishes models)
 
 **Loaded model**:

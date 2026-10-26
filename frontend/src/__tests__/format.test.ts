@@ -136,6 +136,8 @@ describe('engineDisplayName and engineIconPath', () => {
     expect(engineIconPath('Sglang')).toBe('/icons/sglang.svg')
     expect(engineDisplayName('LlamaCpp')).toBe('llama.cpp')
     expect(engineIconPath('LlamaCpp')).toBe('/icons/llamacpp.svg')
+    expect(engineDisplayName('Tensorfold')).toBe('TensorFold')
+    expect(engineIconPath('Tensorfold')).toBe('/icons/tensorfold.svg')
   })
 
   it('names an Ollama engine and points at its own icon', () => {

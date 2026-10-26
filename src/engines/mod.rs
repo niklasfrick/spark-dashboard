@@ -6,6 +6,7 @@ mod model_info;
 pub mod ollama;
 pub mod prometheus;
 pub mod sglang;
+pub mod tensorfold;
 #[cfg(test)]
 pub(crate) mod test_server;
 pub mod vllm;
@@ -28,6 +29,8 @@ pub enum EngineType {
     Ollama,
     /// llama.cpp's `llama-server`.
     LlamaCpp,
+    /// TensorFold's `tensorfold-native`.
+    Tensorfold,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
@@ -43,6 +46,7 @@ impl std::fmt::Display for EngineType {
             EngineType::Sglang => write!(f, "SGLang"),
             EngineType::Ollama => write!(f, "Ollama"),
             EngineType::LlamaCpp => write!(f, "llama.cpp"),
+            EngineType::Tensorfold => write!(f, "TensorFold"),
         }
     }
 }
@@ -923,6 +927,9 @@ pub fn create_adapter(
         // from its own API.
         EngineType::Ollama => Box::new(ollama::OllamaAdapter::new(client, endpoint, api_key)),
         EngineType::LlamaCpp => Box::new(llamacpp::LlamaCppAdapter::new(
+            client, endpoint, model_hint, api_key,
+        )),
+        EngineType::Tensorfold => Box::new(tensorfold::TensorfoldAdapter::new(
             client, endpoint, model_hint, api_key,
         )),
     }
@@ -1850,7 +1857,7 @@ mod tests {
     #[test]
     fn single_model_engines_carry_a_null_model_list_and_nothing_else_new() {
         let client = reqwest::Client::new();
-        let adapters: [Box<dyn EngineAdapter>; 3] = [
+        let adapters: [Box<dyn EngineAdapter>; 4] = [
             Box::new(vllm::VllmAdapter::new(
                 client.clone(),
                 "http://127.0.0.1:8000".into(),
@@ -1864,8 +1871,14 @@ mod tests {
                 None,
             )),
             Box::new(llamacpp::LlamaCppAdapter::new(
-                client,
+                client.clone(),
                 "http://127.0.0.1:9931".into(),
+                None,
+                None,
+            )),
+            Box::new(tensorfold::TensorfoldAdapter::new(
+                client,
+                "http://127.0.0.1:8080".into(),
                 None,
                 None,
             )),

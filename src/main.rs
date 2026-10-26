@@ -113,12 +113,16 @@ struct RunArgs {
     #[arg(long, env = "SPARK_DASHBOARD_SIMULATE_GPUS", default_value_t = 0)]
     simulate_gpus: u32,
 
-    /// Manually specify engine type: vllm, sglang, llamacpp or ollama (use
-    /// with --engine-url).
+    /// Manually specify engine type: vllm, sglang, llamacpp, ollama or
+    /// tensorfold (use with --engine-url).
     ///
     /// llama.cpp's llama-server is also accepted as llama.cpp or llama-cpp.
     /// It serves metrics only when started with --metrics; without it the
     /// metric panels say so and name the flag.
+    ///
+    /// TensorFold's tensorfold-native server is detected natively and in
+    /// containers on its default port 8080; an override here is for a server
+    /// started with --host/--port elsewhere.
     ///
     /// Ollama has no metric panels: it exposes no server-side metrics, so the
     /// dashboard shows only whether its server is up and which models it has
@@ -212,6 +216,7 @@ fn engine_overrides(args: &RunArgs, api_keys: &ApiKeyResolver) -> Vec<EngineOver
                 "sglang" => EngineType::Sglang,
                 "ollama" => EngineType::Ollama,
                 "llamacpp" | "llama.cpp" | "llama-cpp" => EngineType::LlamaCpp,
+                "tensorfold" => EngineType::Tensorfold,
                 unknown => {
                     tracing::warn!("Unknown engine type '{}', ignoring override", unknown);
                     return None;
@@ -418,11 +423,11 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let args = parse(&[
             "--engine",
-            "vllm,SGLang,ollama,llamacpp,llama.cpp,Llama-CPP,llamafile",
+            "vllm,SGLang,ollama,llamacpp,llama.cpp,Llama-CPP,tensorfold,llamafile",
             "--engine-url",
             "http://127.0.0.1:8000,http://127.0.0.1:30000,http://127.0.0.1:11434,\
              http://127.0.0.1:9931,http://127.0.0.1:8080,http://127.0.0.1:8081,\
-             http://127.0.0.1:8082",
+             http://127.0.0.1:8082,http://127.0.0.1:8083",
         ]);
         let overrides: Vec<_> = engine_overrides(&args, &ApiKeyResolver::default())
             .into_iter()
@@ -438,6 +443,7 @@ mod tests {
                 (EngineType::LlamaCpp, "http://127.0.0.1:9931".to_string()),
                 (EngineType::LlamaCpp, "http://127.0.0.1:8080".to_string()),
                 (EngineType::LlamaCpp, "http://127.0.0.1:8081".to_string()),
+                (EngineType::Tensorfold, "http://127.0.0.1:8082".to_string()),
             ]
         );
     }
