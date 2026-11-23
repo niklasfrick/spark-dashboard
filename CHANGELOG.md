@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.17.1](https://github.com/niklasfrick/spark-dashboard/compare/spark-dashboard-v0.17.0...spark-dashboard-v0.17.1) (2026-11-23)
+
+
+### Bug Fixes
+
+* **engines:** do not detect the dashboard itself as an engine ([8d56277](https://github.com/niklasfrick/spark-dashboard/commit/8d56277f35e9172ebdf9f91de247ad3bce4022b7))
+* **engines:** keep manually configured engines after they stop ([113b26d](https://github.com/niklasfrick/spark-dashboard/commit/113b26deca49a3f3462d58cd74cc176f18621651))
+* **engines:** notice a restart when the first scrape was idle ([e09cbec](https://github.com/niklasfrick/spark-dashboard/commit/e09cbec076eb366d622cfce74249f1aee75a6c41))
+* **engines:** probe detection candidates concurrently ([cc3b8c9](https://github.com/niklasfrick/spark-dashboard/commit/cc3b8c90f2c7c042a5793630877a29379e0f5209))
+* **engines:** stop one slow endpoint from freezing every engine ([88913a4](https://github.com/niklasfrick/spark-dashboard/commit/88913a4299971ba86255b93b1dfd9cd6b59408eb))
+* exit when a collector task dies and reject a zero poll interval ([629af49](https://github.com/niklasfrick/spark-dashboard/commit/629af49bbc242c54a93741d02495b2f03da14805))
+* **frontend:** keep GPU events from being dropped or crowded out ([d322f24](https://github.com/niklasfrick/spark-dashboard/commit/d322f2485faa8c59945b2b4666189033a8358400))
+* **frontend:** reconnect when the metrics socket goes silent ([26ed304](https://github.com/niklasfrick/spark-dashboard/commit/26ed304b00a9a1691e5521a66ba13151ed8b6ac2))
+* **frontend:** sample charts across the whole time window ([d59da18](https://github.com/niklasfrick/spark-dashboard/commit/d59da18687cad2a932061a54ba57f6e34d0d7d9c))
+* **frontend:** say when a GPU reports no utilization, temperature or power ([38e656b](https://github.com/niklasfrick/spark-dashboard/commit/38e656b8a8c31bedd10bc12498f6be48ff5c8ae2))
+* **frontend:** show metrics for a serving engine whose model name is unreadable ([b5ff766](https://github.com/niklasfrick/spark-dashboard/commit/b5ff766a9c87fd60a841b8781d4d4ff16f3118d8))
+* **installer:** create PREFIX/bin for --no-service installs ([1f9a649](https://github.com/niklasfrick/spark-dashboard/commit/1f9a649affc5bb52ee4e66bde07f63a43886c611))
+* **metrics:** divide network bytes by the real sample interval ([4d6cd08](https://github.com/niklasfrick/spark-dashboard/commit/4d6cd0821a3f9e5acbb3e9842599b5a22b36ae2f))
+* **server:** refuse cross-origin API and WebSocket access ([16bfbf3](https://github.com/niklasfrick/spark-dashboard/commit/16bfbf361fc97d4624671f17616c9fa6a75b694b))
+* **service:** start on hosts without a docker, render or video group ([87bc80d](https://github.com/niklasfrick/spark-dashboard/commit/87bc80d816c4944477d53f7248a37faf083aa9d8))
+* **service:** start the binary from the chosen --prefix ([ed24ee2](https://github.com/niklasfrick/spark-dashboard/commit/ed24ee278807451b68e2c49f0c6e9825b7651257))
+
+
+### Dependencies & Chores
+
+* **deps:** remove unused tower-http ([6acc52f](https://github.com/niklasfrick/spark-dashboard/commit/6acc52f772a7e7f4d80c0213fbdcf7750d3479b3))
+
 ## [0.17.0](https://github.com/niklasfrick/spark-dashboard/compare/spark-dashboard-v0.16.0...spark-dashboard-v0.17.0) (2026-11-23)
 
 
