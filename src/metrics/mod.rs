@@ -47,6 +47,7 @@ pub async fn metrics_collector(
     let mut networks = sysinfo::Networks::new_with_refreshed_list();
     let mut disks = sysinfo::Disks::new_with_refreshed_list();
     let mut disk_io = disk::DiskIoSampler::new();
+    let mut network_refresh: Option<std::time::Instant> = None;
 
     // Initialize NVML (gracefully handle absence)
     let nvml = nvml_wrapper::Nvml::init().ok();
@@ -166,7 +167,7 @@ pub async fn metrics_collector(
             cpu: cpu::collect_cpu_metrics(&sys),
             memory: memory_metrics,
             disk: disk::collect_disk_metrics(&disks, &mut disk_io),
-            network: network::collect_network_metrics(&networks),
+            network: network::collect_network_metrics(&networks, &mut network_refresh),
             engines,
             gpu_events,
         };
@@ -199,6 +200,7 @@ pub async fn metrics_collector(
     let mut networks = sysinfo::Networks::new_with_refreshed_list();
     let mut disks = sysinfo::Disks::new_with_refreshed_list();
     let mut disk_io = disk::DiskIoSampler::new();
+    let mut network_refresh: Option<std::time::Instant> = None;
 
     tracing::warn!("Running on non-Linux platform -- GPU metrics will be stubs");
 
@@ -240,7 +242,7 @@ pub async fn metrics_collector(
             cpu: cpu::collect_cpu_metrics(&sys),
             memory: memory::collect_memory_metrics(&sys),
             disk: disk::collect_disk_metrics(&disks, &mut disk_io),
-            network: network::collect_network_metrics(&networks),
+            network: network::collect_network_metrics(&networks, &mut network_refresh),
             engines,
             gpu_events,
         };
