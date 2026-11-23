@@ -17,21 +17,6 @@ import {
 } from './providerLogo'
 
 /**
- * The metric groups whose combined figures are request-weighted means: the
- * latencies measured per request (mean and percentiles of TTFT, end-to-end and
- * per-output-token latency) and queue time. An engine has to report request
- * counts to carry a weight, so one that reports such a group without the
- * RequestTotal group cannot enter its mean.
- */
-export const REQUEST_WEIGHTED_GROUPS: ReadonlySet<MetricGroup> = new Set<MetricGroup>([
-  ...(['ttft', 'e2e', 'tpot'] as const).flatMap((dimension) => [
-    LATENCY_GROUPS[dimension].mean,
-    LATENCY_GROUPS[dimension].percentiles,
-  ]),
-  'QueueTime',
-])
-
-/**
  * The metric groups whose combined figures are token-weighted means: the
  * inter-token latency's mean and percentiles (with its goodput), a measure per
  * generated token, weighted by the tokens each engine generated (#151). The
@@ -42,6 +27,22 @@ export const REQUEST_WEIGHTED_GROUPS: ReadonlySet<MetricGroup> = new Set<MetricG
 export const TOKEN_WEIGHTED_GROUPS: ReadonlySet<MetricGroup> = new Set<MetricGroup>([
   LATENCY_GROUPS.itl.mean,
   LATENCY_GROUPS.itl.percentiles,
+])
+
+/**
+ * The metric groups whose combined figures are request-weighted means: the
+ * latencies measured per request (mean and percentiles of TTFT, end-to-end and
+ * per-output-token latency) and queue time. An engine has to report request
+ * counts to carry a weight, so one that reports such a group without the
+ * RequestTotal group cannot enter its mean.
+ */
+export const REQUEST_WEIGHTED_GROUPS: ReadonlySet<MetricGroup> = new Set<MetricGroup>([
+  // Every latency group but the token-weighted ones, so a latency dimension
+  // added to LATENCY_GROUPS cannot end up with no inclusion rule.
+  ...Object.values(LATENCY_GROUPS)
+    .flatMap(({ mean, percentiles }): MetricGroup[] => [mean, percentiles])
+    .filter((group) => !TOKEN_WEIGHTED_GROUPS.has(group)),
+  'QueueTime',
 ])
 
 /** The group whose counter weights `group`'s combined figures — what they are
@@ -396,14 +397,10 @@ export function aggregateEngines(engines: readonly EngineSnapshot[]): AggregateS
   // fallback below only ever runs over engines that do report the counter.
   const requests = get('total_requests')
   const tokens = get('total_generation_tokens')
-  const weightsByGroup: Partial<Record<MetricGroup, typeof requests>> = {
-    RequestTotal: requests,
-    Throughput: tokens,
-  }
-  // The split lives in weightGroupOf; a group it leaves unweighted falls back
-  // to the requests, as every latency did before the inter-token one moved.
+  // Every key weighted here is a latency or queue time, so it is in one of the
+  // two weighted group sets.
   const weightsOf = (key: keyof EngineMetrics) =>
-    weightsByGroup[weightGroupOf(metricGroupOf(key)) ?? 'RequestTotal'] ?? requests
+    TOKEN_WEIGHTED_GROUPS.has(metricGroupOf(key)) ? tokens : requests
   const weightedBy = (key: NumericEngineMetric) => {
     const weights = weightsOf(key)
     return weightedMeanOrNull(get(key).map((value, i) => ({ value, weight: weights[i] })))
