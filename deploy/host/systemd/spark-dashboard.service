@@ -8,7 +8,7 @@ Wants=network-online.target
 Type=simple
 User=spark-dashboard
 Group=spark-dashboard
-SupplementaryGroups=video render docker
+# No SupplementaryGroups=: systemd fails (216/GROUP) on a missing group; the installer adds the user to existing ones via usermod -aG.
 EnvironmentFile=-/etc/spark-dashboard/config.env
 ExecStart=/usr/local/bin/spark-dashboard
 

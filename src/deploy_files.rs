@@ -43,6 +43,13 @@ mod tests {
     }
 
     #[test]
+    fn the_systemd_unit_names_no_supplementary_groups() {
+        // A group missing on the host (no Docker) makes systemd refuse to start
+        // the unit (216/GROUP); the installer's usermod -aG covers existing ones.
+        assert!(directive(UNIT, "SupplementaryGroups").is_none());
+    }
+
+    #[test]
     fn the_image_pre_creates_the_binarys_default_state_directory() {
         // Owned by the runtime uid, because Docker seeds a fresh named volume
         // from the image — including ownership — and a distroless runtime has no
