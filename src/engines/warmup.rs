@@ -26,11 +26,17 @@ pub struct HistogramBaseline {
 
 /// Internal state of the warmup state machine. `Warming` until the engine has
 /// served `skip_requests` requests since we started watching it; `Active`
-/// thereafter, with a frozen baseline for delta computation.
+/// thereafter, with a frozen baseline for delta computation and the previous
+/// scrape's counters, which a restart drops below.
 #[derive(Clone, Debug)]
 enum WarmupState {
-    Warming { initial_total: Option<u64> },
-    Active { baseline: HistogramBaseline },
+    Warming {
+        initial_total: Option<u64>,
+    },
+    Active {
+        baseline: HistogramBaseline,
+        last: HashMap<String, f64>,
+    },
 }
 
 /// Per-engine warmup tracker. One instance lives inside each engine adapter,
@@ -99,7 +105,7 @@ impl WarmupTracker {
             .map(|v| *v as u64)
             .unwrap_or(0);
 
-        match &self.state {
+        match &mut self.state {
             WarmupState::Warming { initial_total } => {
                 // First poll captures the cursor; subsequent polls measure
                 // progress against it. With `skip_requests = 0` the cursor is
@@ -134,7 +140,10 @@ impl WarmupTracker {
                         histograms: parsed.histograms.clone(),
                     };
                     let adjusted = subtract_baseline(parsed, &baseline);
-                    self.state = WarmupState::Active { baseline };
+                    self.state = WarmupState::Active {
+                        last: baseline.counters.clone(),
+                        baseline,
+                    };
                     return WarmupOutput {
                         warming_up: false,
                         just_transitioned: true,
@@ -148,8 +157,8 @@ impl WarmupTracker {
                     adjusted: clone_passthrough(parsed),
                 }
             }
-            WarmupState::Active { baseline } => {
-                if counter_regression(parsed, baseline) {
+            WarmupState::Active { baseline, last } => {
+                if counter_regression(parsed, last) {
                     // Engine restarted (counter dropped). Re-enter warming
                     // with a fresh cursor so the next `skip_requests` are
                     // treated as warmup.
@@ -164,6 +173,7 @@ impl WarmupTracker {
                 }
 
                 let adjusted = subtract_baseline(parsed, baseline);
+                *last = parsed.counters.clone();
                 WarmupOutput {
                     warming_up: false,
                     just_transitioned: false,
@@ -182,14 +192,16 @@ fn clone_passthrough(parsed: &ParsedMetrics) -> ParsedMetrics {
     parsed.clone()
 }
 
-/// Returns true if any baselined counter has dropped below its baseline value
-/// — the canonical "engine restarted" signal. We compare every baselined key,
-/// not just the trigger, because a partial restart that resets only some
-/// counters is still a restart and still warrants re-baselining.
-fn counter_regression(parsed: &ParsedMetrics, baseline: &HistogramBaseline) -> bool {
-    for (key, baseline_val) in &baseline.counters {
+/// Returns true if any counter has dropped below its value on the previous
+/// scrape — the canonical "engine restarted" signal. Compared with the
+/// previous scrape, not the baseline: a baseline taken on an idle engine is
+/// all zeros, which no counter can drop below. We compare every key, not just
+/// the trigger, because a partial restart that resets only some counters is
+/// still a restart and still warrants re-baselining.
+fn counter_regression(parsed: &ParsedMetrics, last: &HashMap<String, f64>) -> bool {
+    for (key, last_val) in last {
         if let Some(current) = parsed.counters.get(key) {
-            if *current < *baseline_val {
+            if *current < *last_val {
                 return true;
             }
         }
