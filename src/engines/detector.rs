@@ -957,7 +957,8 @@ fn engines_from_processes(
     let mut detected: Vec<DetectedEngine> = Vec::new();
     let mut seen_endpoints: HashMap<(EngineType, String), usize> = HashMap::new();
     for (&(pid, _, cmd), engine_type) in processes.iter().zip(engines) {
-        if owned.contains(&pid) {
+        // The dashboard's own `--engine vllm --port N` is not an engine.
+        if owned.contains(&pid) || pid == std::process::id() {
             continue;
         }
         let Some(engine_type) = engine_type else {
@@ -2127,6 +2128,16 @@ mod tests {
     /// The process scan where no environment can be read.
     fn scan(rows: &[(u32, Option<u32>, &str)]) -> Vec<DetectedEngine> {
         scan_with(rows, unreadable)
+    }
+
+    /// The dashboard's own command line names `vllm` and a `--port` too: the
+    /// scan skips its own pid, and still reads the same line under another.
+    #[test]
+    fn scan_skips_the_dashboards_own_process() {
+        let line = "spark-dashboard --port 39420 --engine vllm --engine-url http://127.0.0.1:39500";
+        let own = std::process::id();
+        assert!(scan(&[(own, None, line)]).is_empty());
+        assert_eq!(scan(&[(own + 1, None, line)]).len(), 1);
     }
 
     #[test]
