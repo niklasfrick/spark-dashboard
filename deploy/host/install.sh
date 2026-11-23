@@ -140,7 +140,7 @@ install_from_source() {
 
     if [[ $NO_SERVICE -eq 1 ]]; then
         echo "==> Installing binary to ${PREFIX}/bin/spark-dashboard (no service)"
-        sudo install -m 0755 "$built" "${PREFIX}/bin/spark-dashboard"
+        sudo install -D -m 0755 "$built" "${PREFIX}/bin/spark-dashboard"
         echo "done"
         return
     fi
