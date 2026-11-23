@@ -5,7 +5,6 @@ use axum::{routing::get, Router};
 use rust_embed::Embed;
 use std::sync::Arc;
 use tokio::sync::broadcast;
-use tower_http::cors::CorsLayer;
 
 use crate::config_store::{ConfigStore, MAX_DOCUMENT_BYTES};
 
@@ -62,8 +61,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/healthz", get(healthz))
         .nest("/api", api)
         .fallback(static_handler)
-        .with_state(state)
-        .layer(CorsLayer::permissive());
+        .with_state(state);
 
     // Conditionally register the experimental log viewer endpoint.
     // Gated behind --enable-log-viewer so deployments can opt out of
@@ -539,5 +537,76 @@ mod tests {
             .unwrap();
 
         assert_eq!(resp.status(), reqwest::StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    /// The API has no auth (ADR-0003); without CORS headers a browser will not
+    /// send another site's PUT/DELETE, nor let it read a response.
+    #[tokio::test]
+    async fn a_foreign_origin_preflight_is_not_granted_cors() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = spawn(dir.path()).await;
+
+        let resp = reqwest::Client::new()
+            .request(reqwest::Method::OPTIONS, format!("{base}/api/dashboard"))
+            .header("origin", "http://evil.example")
+            .header("access-control-request-method", "DELETE")
+            .send()
+            .await
+            .unwrap();
+
+        assert!(resp.headers().get("access-control-allow-origin").is_none());
+    }
+
+    /// Sends a raw WebSocket handshake to `/ws` and returns the status code.
+    async fn ws_handshake_status(base: &str, origin: &str) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let addr = base.trim_start_matches("http://");
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let request = format!(
+            "GET /ws HTTP/1.1\r\nHost: {addr}\r\nOrigin: {origin}\r\n\
+             Connection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\n\
+             Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
+        );
+        stream.write_all(request.as_bytes()).await.unwrap();
+
+        let mut buf = vec![0u8; 1024];
+        let n = stream.read(&mut buf).await.unwrap();
+        let response = String::from_utf8_lossy(&buf[..n]);
+        response.split(' ').nth(1).unwrap_or_default().to_string()
+    }
+
+    #[tokio::test]
+    async fn a_websocket_upgrade_is_refused_from_a_foreign_origin_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = spawn(dir.path()).await;
+
+        assert_eq!(
+            ws_handshake_status(&base, "http://evil.example").await,
+            "403"
+        );
+        // `base` is the page's own origin: what the dashboard itself sends.
+        assert_eq!(ws_handshake_status(&base, &base).await, "101");
+    }
+
+    #[test]
+    fn same_origin_compares_the_origin_host_and_port_with_the_host_header() {
+        fn check(origin: Option<&str>, host: &str) -> bool {
+            let mut headers = axum::http::HeaderMap::new();
+            headers.insert("host", host.parse().unwrap());
+            if let Some(origin) = origin {
+                headers.insert("origin", origin.parse().unwrap());
+            }
+            crate::ws::same_origin(&headers)
+        }
+
+        assert!(check(Some("http://spark:3000"), "spark:3000"));
+        assert!(check(Some("https://Spark:3000"), "spark:3000"));
+        assert!(check(None, "spark:3000"));
+        assert!(!check(Some("http://evil.example:3000"), "spark:3000"));
+        assert!(!check(Some("http://spark:3001"), "spark:3000"));
+        assert!(!check(Some("null"), "spark:3000"));
+        assert!(!check(Some("not a url"), "spark:3000"));
+        assert!(!check(Some("spark:3000"), "spark:3000"));
     }
 }
