@@ -20,3 +20,16 @@ export const LLAMA_CPP_GROUPS: MetricGroup[] = [
   'SpeculativeDecoding',
   'ItlMean',
 ]
+
+/** What a TensorFold engine reports: every group but `BatchSize`, `QueueTime`,
+ *  `ItlMean`, `ItlPercentiles` and `Preemptions` in the captured launch — it
+ *  keeps no inter-token histogram, tokens per decode round is draft acceptance
+ *  rather than a batch size, and the queue-wait and preemption families are
+ *  optional per launch (they appear when upstream renders the phase metrics or
+ *  counts preemption events). ADR-0004: this is only the shape of the
+ *  declaration a spec hands the frontend, not a table the frontend itself
+ *  keeps; it is the wire order of METRIC_GROUPS, filtered. */
+export const TENSORFOLD_GROUPS: MetricGroup[] = METRIC_GROUPS.filter(
+  (group) =>
+    !['BatchSize', 'QueueTime', 'ItlMean', 'ItlPercentiles', 'Preemptions'].includes(group),
+)
