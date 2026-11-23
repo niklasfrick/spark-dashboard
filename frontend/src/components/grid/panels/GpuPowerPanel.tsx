@@ -4,7 +4,7 @@ import { TimeSeriesChart } from '@/components/charts/TimeSeriesChart'
 import { computePowerScale, powerPeak } from '@/lib/gpuPower'
 import { THRESHOLDS } from '@/lib/theme'
 import { gpuLabel } from './gpuLabel'
-import { GpuPanelNotice } from './PanelNotice'
+import { GpuPanelNotice, PanelNotice } from './PanelNotice'
 import { HardwarePanelBody } from './HardwarePanelBody'
 import { useGpuPanelSeries } from './useGpuPanel'
 import type { PanelContentProps } from '../panelRegistry'
@@ -19,12 +19,14 @@ export function GpuPowerPanel({ panel }: PanelContentProps) {
   if (resolution.status !== 'resolved') return <GpuPanelNotice resolution={resolution} />
 
   const { gpu } = resolution
+  if (gpu.power_watts === null) return <PanelNotice>This GPU does not report its power draw.</PanelNotice>
+
   const { percent } = computePowerScale(
     gpu.power_watts,
     gpu.power_limit_watts,
     powerPeak(data, gpu.power_watts),
   )
-  const watts = gpu.power_watts !== null ? Math.round(gpu.power_watts) : 0
+  const watts = Math.round(gpu.power_watts)
   const label = gpuLabel(resolution, 'GPU Power')
 
   return (

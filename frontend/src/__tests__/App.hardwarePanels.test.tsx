@@ -406,6 +406,36 @@ describe('the hardware panels the palette offered before anything rendered them'
     expect(within(region('GPU Fan')).getByText('This GPU has no fan to report.')).toBeInTheDocument()
   })
 
+  it('says so rather than drawing a zero when the GPU reports no utilization, temperature or power', async () => {
+    // NVML missing or an out-of-range index: the backend sends an all-null GPU.
+    const fetchMock = serveConfiguration({
+      document: storedDocument([
+        { id: 'util', type: 'gpu-utilization', geometry: { x: 0, y: 0, w: 4, h: 4 } },
+        { id: 'temp', type: 'gpu-temperature', geometry: { x: 4, y: 0, w: 4, h: 4 } },
+        { id: 'power', type: 'gpu-power', geometry: { x: 8, y: 0, w: 4, h: 4 } },
+      ]),
+    })
+
+    render(<App />)
+    await configurationSettles(fetchMock)
+    expect(screen.getAllByText('Waiting for metrics')).toHaveLength(3)
+
+    receive(
+      makeSnapshot(1000, [
+        makeGpu(0, { utilization_percent: null, temperature_celsius: null, power_watts: null }),
+      ]),
+    )
+
+    for (const [panel, notice] of [
+      ['GPU Utilization', 'This GPU does not report its utilization.'],
+      ['GPU Temp', 'This GPU does not report its temperature.'],
+      ['GPU Power', 'This GPU does not report its power draw.'],
+    ]) {
+      expect(within(region(panel)).getByText(notice)).toBeInTheDocument()
+      expect(within(region(panel)).queryByText('0'), panel).not.toBeInTheDocument()
+    }
+  })
+
   it('shows each GPU only its own events, and keeps a pin to a GPU that is gone', async () => {
     const fetchMock = serveConfiguration({
       document: storedDocument([
