@@ -90,31 +90,53 @@ async fn verify_candidates(
     client: &reqwest::Client,
     api_keys: &ApiKeyResolver,
 ) -> Vec<DetectedEngine> {
-    let mut verified = Vec::new();
-    for mut candidate in candidates {
+    // Candidates are probed side by side, each capped, so a round costs the
+    // slowest candidate (at most CANDIDATE_PROBE_BUDGET), not the sum.
+    let probes = candidates.into_iter().map(|mut candidate| async move {
         let fallbacks = std::mem::take(&mut candidate.fallback_endpoints);
-        for endpoint in std::iter::once(candidate.endpoint.clone()).chain(fallbacks) {
-            let http = EngineHttp::new(
-                client.clone(),
-                endpoint.clone(),
-                api_keys.resolve(&endpoint),
-            );
-            if probe_engine(&http, &candidate.engine_type).await {
-                if endpoint != candidate.endpoint {
-                    tracing::debug!(
-                        "{} candidate is not on {}; it answers on {endpoint}",
-                        candidate.engine_type,
-                        candidate.endpoint,
-                    );
+        let probe = async {
+            for endpoint in std::iter::once(candidate.endpoint.clone()).chain(fallbacks) {
+                let http = EngineHttp::new(
+                    client.clone(),
+                    endpoint.clone(),
+                    api_keys.resolve(&endpoint),
+                );
+                if probe_engine(&http, &candidate.engine_type).await {
+                    return Some(endpoint);
                 }
-                candidate.endpoint = endpoint;
-                join_on_endpoint(&mut verified, candidate);
-                break;
             }
+            None
+        };
+        let endpoint = tokio::time::timeout(CANDIDATE_PROBE_BUDGET, probe)
+            .await
+            .ok()
+            .flatten()?;
+        if endpoint != candidate.endpoint {
+            tracing::debug!(
+                "{} candidate is not on {}; it answers on {endpoint}",
+                candidate.engine_type,
+                candidate.endpoint,
+            );
         }
+        candidate.endpoint = endpoint;
+        Some(candidate)
+    });
+    let mut verified = Vec::new();
+    for candidate in futures_util::future::join_all(probes)
+        .await
+        .into_iter()
+        .flatten()
+    {
+        join_on_endpoint(&mut verified, candidate);
     }
     verified
 }
+
+/// The most one candidate's verification may take: two sequential requests
+/// at the 2 s engine timeout (SGLang's `/ready` then `/model_info`, Ollama's
+/// and llama.cpp's two routes). A longer chain — fallback endpoints that hang
+/// — drops that candidate for the round instead of the whole round.
+const CANDIDATE_PROBE_BUDGET: std::time::Duration = std::time::Duration::from_secs(4);
 
 /// Merge Docker results into the process-scan candidates.
 ///
@@ -1351,7 +1373,10 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
 
     let docker = match Docker::connect_with_local_defaults() {
         // bollard's default is 120 s; a hung dockerd must not stall detection.
-        Ok(d) => d.with_timeout(std::time::Duration::from_secs(2)),
+        // 3 s, not 2: a call that times out loses this round's Docker view
+        // (container PIDs cleared, its processes unclaimed), so a merely
+        // loaded dockerd should not trip it. Fits the 8 s detection budget.
+        Ok(d) => d.with_timeout(std::time::Duration::from_secs(3)),
         Err(e) => {
             // Elevated to info: if multi-instance containerized vLLM isn't being
             // picked up, the operator needs to know Docker discovery failed.
@@ -3977,6 +4002,48 @@ mod tests {
             assert_eq!(engine.served_model.as_deref(), Some("docker-env"));
             assert_eq!(engine.pids, vec![500]);
         }
+    }
+
+    /// Candidates are probed side by side, and one that hangs on every
+    /// endpoint is cut off at CANDIDATE_PROBE_BUDGET: two hung candidates
+    /// (2 s each) and one with three hung endpoints (6 s) took 10 s one
+    /// after another, past the detection budget, so a healthy engine beside
+    /// them was never found. Side by side, the round costs the 4 s cap.
+    #[tokio::test]
+    async fn hung_candidates_do_not_starve_a_healthy_ones_detection() {
+        use super::super::test_server::TestServer;
+        let hung = || {
+            TestServer::start_delayed(|_| (200, String::new(), std::time::Duration::from_secs(60)))
+        };
+        let (a, b, c, d, e) = (
+            hung().await,
+            hung().await,
+            hung().await,
+            hung().await,
+            hung().await,
+        );
+        let healthy = TestServer::start(|_| (200, String::new())).await;
+        let vllm = |url: &str| candidate(url, DeploymentMode::Native, &[]);
+        let candidates = vec![
+            vllm(&a.url),
+            DetectedEngine {
+                fallback_endpoints: vec![b.url.clone(), c.url.clone()],
+                ..vllm(&d.url)
+            },
+            vllm(&e.url),
+            vllm(&healthy.url),
+        ];
+
+        let started = std::time::Instant::now();
+        let verified = verify_candidates(candidates, &reqwest::Client::new(), &no_keys()).await;
+        let took = started.elapsed();
+
+        assert_eq!(verified.len(), 1);
+        assert_eq!(verified[0].endpoint, healthy.url);
+        assert!(
+            took < CANDIDATE_PROBE_BUDGET + std::time::Duration::from_millis(500),
+            "the slowest candidate's cap, not the sum: {took:?}"
+        );
     }
 
     /// The host scan cannot read a root container's environment, so where a
