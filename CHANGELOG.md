@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.17.0](https://github.com/niklasfrick/spark-dashboard/compare/spark-dashboard-v0.16.0...spark-dashboard-v0.17.0) (2026-11-23)
+
+
+### Features
+
+* **engines:** count llama.cpp's token totals from its first-scrape baseline ([c676c87](https://github.com/niklasfrick/spark-dashboard/commit/c676c8758967b9fd3e0bc2dc48f876b5eab5ea0f)), closes [#151](https://github.com/niklasfrick/spark-dashboard/issues/151)
+* **engines:** detect llama-server processes and containers without configuration ([623a15c](https://github.com/niklasfrick/spark-dashboard/commit/623a15ceabb297091cb98141c7bd98495d997b9e)), closes [#131](https://github.com/niklasfrick/spark-dashboard/issues/131)
+* **engines:** report a llama.cpp server and what its counters say ([6451a59](https://github.com/niklasfrick/spark-dashboard/commit/6451a59600f412dcf04f2d564126b49ff41fc9e3)), closes [#131](https://github.com/niklasfrick/spark-dashboard/issues/131)
+* **engines:** say when a metrics endpoint refuses the dashboard's API key ([c3f5dda](https://github.com/niklasfrick/spark-dashboard/commit/c3f5ddae735505743fd82b5dd39d3a2b9a55f600)), closes [#131](https://github.com/niklasfrick/spark-dashboard/issues/131)
+* **frontend:** name llama.cpp engines and the --metrics flag that turns their metrics on ([5efcbe8](https://github.com/niklasfrick/spark-dashboard/commit/5efcbe8ea5a9cbe7845fb780b9a0fb5263a388a1)), closes [#131](https://github.com/niklasfrick/spark-dashboard/issues/131)
+* **frontend:** weight the combined inter-token latency by generated tokens ([c24584a](https://github.com/niklasfrick/spark-dashboard/commit/c24584a8a3da7bc026906c3485141926544632ff)), closes [#151](https://github.com/niklasfrick/spark-dashboard/issues/151)
+
+
+### Bug Fixes
+
+* **frontend:** size engine tiles to the panel, not the viewport ([010db01](https://github.com/niklasfrick/spark-dashboard/commit/010db01abd01bb8ce63d7d97611a90b2d1a335b5))
+
 ## [0.16.0](https://github.com/niklasfrick/spark-dashboard/compare/spark-dashboard-v0.15.0...spark-dashboard-v0.16.0) (2026-10-16)
 
 
