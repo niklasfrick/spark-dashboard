@@ -36,9 +36,37 @@ pub fn dispatch(cmd: ServiceCommand) -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
+/// The binary path the shipped unit file starts.
+const DEFAULT_BIN: &str = "/usr/local/bin/spark-dashboard";
+
+/// The embedded unit with `ExecStart=` pointed at the binary actually
+/// installed, so `--prefix` reaches systemd. Arguments on the line are kept.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn unit_for_binary(unit: &str, bin: &str) -> String {
+    unit.replace(
+        &format!("ExecStart={DEFAULT_BIN}"),
+        &format!("ExecStart={bin}"),
+    )
+}
+
+/// The binary an installed unit starts: the first token after `ExecStart=`.
+/// Only a path ending in `spark-dashboard` counts, so a hand-edited unit can
+/// never make `uninstall` delete some other file.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn exec_start_binary(unit: &str) -> Option<&str> {
+    let bin = unit
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("ExecStart="))?
+        .split_whitespace()
+        .next()?;
+    let ours = std::path::Path::new(bin).is_absolute()
+        && std::path::Path::new(bin).file_name()? == "spark-dashboard";
+    ours.then_some(bin)
+}
+
 #[cfg(target_os = "linux")]
 mod linux {
-    use super::ServiceCommand;
+    use super::{exec_start_binary, unit_for_binary, ServiceCommand};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
@@ -78,7 +106,7 @@ mod linux {
         ensure_user()?;
         install_binary(&bin_src, &bin_dst)?;
         install_config()?;
-        install_unit()?;
+        install_unit(&bin_dst)?;
 
         println!("==> Reloading systemd");
         run_checked(Command::new("systemctl").arg("daemon-reload"))?;
@@ -102,6 +130,12 @@ mod linux {
     fn uninstall(purge: bool) -> Result<()> {
         ensure_root_or_reexec()?;
 
+        // Read before the unit is removed: it names the binary a custom
+        // `--prefix` install put somewhere other than the default locations.
+        let installed_bin = fs::read_to_string(UNIT_PATH)
+            .ok()
+            .and_then(|unit| exec_start_binary(&unit).map(PathBuf::from));
+
         if unit_exists() {
             println!("==> Stopping and disabling {SERVICE_NAME}");
             // Best-effort; ignore failures if already stopped/disabled.
@@ -113,8 +147,13 @@ mod linux {
             run_checked(Command::new("systemctl").arg("daemon-reload"))?;
         }
 
-        for prefix in ["/usr/local", "/usr"] {
-            let bin = PathBuf::from(prefix).join("bin").join(SERVICE_NAME);
+        let bins = match installed_bin {
+            Some(bin) => vec![bin],
+            None => ["/usr/local", "/usr"]
+                .map(|prefix| PathBuf::from(prefix).join("bin").join(SERVICE_NAME))
+                .to_vec(),
+        };
+        for bin in bins {
             if bin.exists() {
                 println!("==> Removing binary {}", bin.display());
                 let _ = fs::remove_file(&bin);
@@ -181,8 +220,9 @@ mod linux {
         Ok(())
     }
 
-    fn install_unit() -> Result<()> {
-        fs::write(UNIT_PATH, UNIT_FILE)?;
+    fn install_unit(bin: &Path) -> Result<()> {
+        let bin = bin.to_str().ok_or("binary path is not valid UTF-8")?;
+        fs::write(UNIT_PATH, unit_for_binary(UNIT_FILE, bin))?;
         fs::set_permissions(UNIT_PATH, fs::Permissions::from_mode(0o644))?;
         println!("==> Wrote unit file {UNIT_PATH}");
         Ok(())
@@ -285,7 +325,53 @@ mod linux {
 /// deployment detail. They are deliberately outside the Linux-only module.
 #[cfg(test)]
 mod tests {
+    use super::{exec_start_binary, unit_for_binary, DEFAULT_BIN};
     use crate::deploy_files::{directive, UNIT};
+
+    #[test]
+    fn the_shipped_unit_starts_the_default_binary() {
+        assert_eq!(directive(UNIT, "ExecStart"), Some(DEFAULT_BIN));
+    }
+
+    #[test]
+    fn the_default_prefix_leaves_the_unit_unchanged() {
+        assert_eq!(unit_for_binary(UNIT, DEFAULT_BIN), UNIT);
+    }
+
+    #[test]
+    fn a_custom_prefix_is_what_systemd_starts() {
+        let unit = unit_for_binary(UNIT, "/opt/sd/bin/spark-dashboard");
+        assert_eq!(
+            directive(&unit, "ExecStart"),
+            Some("/opt/sd/bin/spark-dashboard")
+        );
+
+        let with_args = "[Service]\nExecStart=/usr/local/bin/spark-dashboard --port 4000\n";
+        assert_eq!(
+            unit_for_binary(with_args, "/opt/sd/bin/spark-dashboard"),
+            "[Service]\nExecStart=/opt/sd/bin/spark-dashboard --port 4000\n"
+        );
+    }
+
+    #[test]
+    fn uninstall_finds_the_binary_the_unit_starts() {
+        let unit = unit_for_binary(UNIT, "/opt/sd/bin/spark-dashboard");
+        assert_eq!(
+            exec_start_binary(&unit),
+            Some("/opt/sd/bin/spark-dashboard")
+        );
+        assert_eq!(
+            exec_start_binary("ExecStart=/usr/bin/spark-dashboard --port 4000"),
+            Some("/usr/bin/spark-dashboard")
+        );
+    }
+
+    #[test]
+    fn uninstall_ignores_a_unit_that_names_some_other_file() {
+        assert_eq!(exec_start_binary("[Service]\nType=simple\n"), None);
+        assert_eq!(exec_start_binary("ExecStart=/usr/bin/python3 app.py"), None);
+        assert_eq!(exec_start_binary("ExecStart=spark-dashboard"), None);
+    }
 
     #[test]
     fn the_state_directory_is_not_world_readable() {
