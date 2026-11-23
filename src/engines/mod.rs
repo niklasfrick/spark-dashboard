@@ -1041,14 +1041,18 @@ pub async fn engine_collector_loop(
                 detector::refresh_process_table(&mut sys);
 
                 // Detection shares this loop with the polls; a hung endpoint
-                // or dockerd must not freeze every engine's numbers.
+                // or dockerd must not freeze every engine's numbers. Budget:
+                // a hung dockerd's container listing (3 s client timeout) +
+                // the candidates, probed side by side, each capped at 4 s =
+                // 7 s, + 1 s margin. Only a dockerd slow on many calls in a
+                // row overruns it: the round is skipped, the engine set kept.
                 let Ok(detected) = tokio::time::timeout(
-                    Duration::from_secs(4),
+                    Duration::from_secs(8),
                     detector::detect_engines(&sys, &client, &api_keys),
                 )
                 .await
                 else {
-                    tracing::warn!("Engine detection timed out after 4s; keeping the current engine set");
+                    tracing::warn!("Engine detection timed out after 8s; keeping the current engine set");
                     continue;
                 };
 
