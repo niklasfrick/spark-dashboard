@@ -1,7 +1,7 @@
 import type { ComponentProps } from 'react'
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { TimeSeriesChart } from '../components/charts/TimeSeriesChart'
+import { TimeSeriesChart, padData } from '../components/charts/TimeSeriesChart'
 import {
   ChartContainer,
   ChartTooltipContent,
@@ -181,5 +181,18 @@ describe('TimeSeriesChart', () => {
     )
     const chart = container.querySelector('[data-slot="chart"]')
     expect(chart).not.toBeNull()
+  })
+})
+
+describe('padData', () => {
+  it('samples long series across the whole window, keeping first and last', () => {
+    const data = Array.from({ length: 200 }, (_, i) => ({
+      timestamp: 1700000000000 + i * 2000,
+      value: i,
+    }))
+    const out = padData(data)
+    expect(out).toHaveLength(60)
+    expect(out[0].timestamp).toBe(data[0].timestamp)
+    expect(out[59].timestamp).toBe(data[199].timestamp)
   })
 })
