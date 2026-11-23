@@ -41,6 +41,7 @@ pub async fn metrics_collector(
     engine_state: std::sync::Arc<tokio::sync::RwLock<Vec<EngineSnapshot>>>,
 ) {
     let mut interval = tokio::time::interval(Duration::from_millis(poll_interval_ms));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     // Persistent sysinfo instances for delta-based metrics
     let mut sys = sysinfo::System::new();
@@ -194,6 +195,7 @@ pub async fn metrics_collector(
     engine_state: std::sync::Arc<tokio::sync::RwLock<Vec<EngineSnapshot>>>,
 ) {
     let mut interval = tokio::time::interval(Duration::from_millis(poll_interval_ms));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     // Persistent sysinfo instances for delta-based metrics
     let mut sys = sysinfo::System::new();
