@@ -841,6 +841,15 @@ fn clear_stale_pids(
     }
 }
 
+/// Drop engines past the Stopped grace period, except manual overrides:
+/// detection cannot find those, so nothing would ever re-add them.
+fn remove_expired_engines(
+    engine_map: &mut HashMap<(EngineType, String), EngineState>,
+    pinned: &std::collections::HashSet<(EngineType, String)>,
+) {
+    engine_map.retain(|key, state| pinned.contains(key) || !state.should_remove());
+}
+
 // ---------------------------------------------------------------------------
 // Manual override (D-11, D-12)
 // ---------------------------------------------------------------------------
@@ -991,6 +1000,7 @@ pub async fn engine_collector_loop(
     let mut engine_map: HashMap<(EngineType, String), EngineState> = HashMap::new();
 
     // Seed manual overrides into the engine map at startup (D-12)
+    let mut pinned = std::collections::HashSet::new();
     for ov in &overrides {
         let adapter = create_adapter(
             ov.engine_type.clone(),
@@ -1000,6 +1010,7 @@ pub async fn engine_collector_loop(
             ov.api_key.clone(),
         );
         let key = (ov.engine_type.clone(), ov.endpoint.clone());
+        pinned.insert(key.clone());
         engine_map.insert(key, EngineState::new(adapter, DeploymentMode::Native));
         tracing::info!(
             "Manual engine override registered: {} at {}",
@@ -1080,7 +1091,7 @@ pub async fn engine_collector_loop(
                 }
 
                 // Remove engines that have exceeded the 30-second grace period
-                engine_map.retain(|_key, state| !state.should_remove());
+                remove_expired_engines(&mut engine_map, &pinned);
 
                 // Write updated snapshots to shared state
                 let mut lock = shared_snapshots.write().await;
@@ -1494,6 +1505,25 @@ mod tests {
 
         assert_eq!(map[&seen_key].pids, vec![100], "detected engine keeps PIDs");
         assert!(map[&stale_key].pids.is_empty(), "undetected engine cleared");
+    }
+
+    #[test]
+    fn manual_override_survives_the_stopped_grace_period() {
+        let mut map: HashMap<(EngineType, String), EngineState> = HashMap::new();
+        let override_key = (EngineType::Ollama, "http://a:11434".to_string());
+        let detected_key = (EngineType::Vllm, "http://b:8000".to_string());
+        for key in [&override_key, &detected_key] {
+            let mut s = state();
+            s.status = EngineStatus::Stopped;
+            s.stopped_at = Some(Instant::now() - Duration::from_secs(31));
+            map.insert(key.clone(), s);
+        }
+
+        let pinned = std::collections::HashSet::from([override_key.clone()]);
+        remove_expired_engines(&mut map, &pinned);
+
+        assert!(map.contains_key(&override_key), "override kept");
+        assert!(!map.contains_key(&detected_key), "detected engine removed");
     }
 
     #[test]
