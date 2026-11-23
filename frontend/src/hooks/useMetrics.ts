@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
 import type { MetricsSnapshot } from '../types/metrics'
 
+// shortcut: assumes --poll-interval well under 15 s (the page cannot see it), send the interval in the snapshot if slower polls must be supported.
+const SILENT_SOCKET_MS = 15000
+
 export type ConnectionStatus = 'connected' | 'reconnecting' | 'disconnected'
 
 export function useMetrics() {
@@ -13,6 +16,7 @@ export function useMetrics() {
   const attemptRef = useRef(0)
   const pendingRef = useRef<MetricsSnapshot | null>(null)
   const initialFlushDone = useRef(false)
+  const connectRef = useRef<() => void>(() => {})
 
   // `connect` is declared inside the effect rather than as a `useCallback`
   // because the reconnect path schedules `connect` itself. A `useCallback`
@@ -59,6 +63,7 @@ export function useMetrics() {
       }
     }
 
+    connectRef.current = connect
     connect()
     return () => {
       wsRef.current?.close()
@@ -76,7 +81,16 @@ export function useMetrics() {
         pendingRef.current = null
         setIsStale(false)
       } else if (connectionStatus === 'connected' && lastMessageTime.current > 0) {
-        setIsStale(Date.now() - lastMessageTime.current > 5000)
+        const silentFor = Date.now() - lastMessageTime.current
+        setIsStale(silentFor > 5000)
+        // A path that died without a close frame never fires onclose; drop it and dial again.
+        if (silentFor > SILENT_SOCKET_MS && wsRef.current) {
+          wsRef.current.onclose = null
+          wsRef.current.close()
+          lastMessageTime.current = Date.now()
+          setConnectionStatus('reconnecting')
+          connectRef.current()
+        }
       }
     }
 
