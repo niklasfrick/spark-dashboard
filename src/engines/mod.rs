@@ -850,6 +850,14 @@ fn remove_expired_engines(
     engine_map.retain(|key, state| pinned.contains(key) || !state.should_remove());
 }
 
+/// Poll every engine at once, so a slow engine costs the round its own
+/// timeout, not the sum of everyone's.
+async fn poll_engines(
+    engine_map: &mut HashMap<(EngineType, String), EngineState>,
+) -> Vec<EngineSnapshot> {
+    futures_util::future::join_all(engine_map.values_mut().map(EngineState::poll)).await
+}
+
 // ---------------------------------------------------------------------------
 // Manual override (D-11, D-12)
 // ---------------------------------------------------------------------------
@@ -1021,6 +1029,10 @@ pub async fn engine_collector_loop(
 
     let mut detection_interval = tokio::time::interval(Duration::from_secs(5));
     let mut poll_interval = tokio::time::interval(Duration::from_secs(1));
+    // After a stall, resume on schedule instead of firing the missed ticks
+    // back to back (rates over millisecond windows).
+    detection_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    poll_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     loop {
         tokio::select! {
@@ -1028,7 +1040,17 @@ pub async fn engine_collector_loop(
                 // Refresh process list for scanning
                 detector::refresh_process_table(&mut sys);
 
-                let detected = detector::detect_engines(&sys, &client, &api_keys).await;
+                // Detection shares this loop with the polls; a hung endpoint
+                // or dockerd must not freeze every engine's numbers.
+                let Ok(detected) = tokio::time::timeout(
+                    Duration::from_secs(4),
+                    detector::detect_engines(&sys, &client, &api_keys),
+                )
+                .await
+                else {
+                    tracing::warn!("Engine detection timed out after 4s; keeping the current engine set");
+                    continue;
+                };
 
                 // Add newly detected engines
                 for d in &detected {
@@ -1079,16 +1101,7 @@ pub async fn engine_collector_loop(
 
             _ = poll_interval.tick() => {
                 // Poll each active engine for health + metrics
-                let mut snapshots = Vec::new();
-
-                // Collect keys first to avoid borrow issues
-                let keys: Vec<_> = engine_map.keys().cloned().collect();
-
-                for key in &keys {
-                    if let Some(state) = engine_map.get_mut(key) {
-                        snapshots.push(state.poll().await);
-                    }
-                }
+                let snapshots = poll_engines(&mut engine_map).await;
 
                 // Remove engines that have exceeded the 30-second grace period
                 remove_expired_engines(&mut engine_map, &pinned);
@@ -1415,6 +1428,49 @@ mod tests {
         assert_eq!(snapshot.model.map(|m| m.name).as_deref(), Some("a/b"));
         assert_eq!(snapshot.model_metadata_error, None);
         assert_eq!(asks(), 1, "asked the first tick it runs");
+    }
+
+    /// Engines are polled side by side. An engine that accepts the connection
+    /// but never answers costs its first round two 2 s request timeouts (the
+    /// health check, then the model fetch while it is still in its grace
+    /// period), so two of them polled one after another took 8 s; polled
+    /// together they cost one engine's 4 s.
+    #[tokio::test]
+    async fn a_hung_engine_does_not_delay_the_others_poll() {
+        use test_server::TestServer;
+        let mut engine_map = HashMap::new();
+        for delay in [
+            Duration::from_secs(60),
+            Duration::from_secs(60),
+            Duration::ZERO,
+        ] {
+            let server = TestServer::start_delayed(move |_| (200, String::new(), delay)).await;
+            let adapter = create_adapter(
+                EngineType::Vllm,
+                server.url.clone(),
+                reqwest::Client::new(),
+                None,
+                None,
+            );
+            engine_map.insert(
+                (EngineType::Vllm, server.url),
+                EngineState::new(adapter, DeploymentMode::Native),
+            );
+        }
+
+        let started = Instant::now();
+        let snapshots = poll_engines(&mut engine_map).await;
+        let took = started.elapsed();
+
+        assert_eq!(snapshots.len(), 3);
+        assert!(
+            took >= Duration::from_secs(2),
+            "the hung engines did time out: {took:?}"
+        );
+        assert!(
+            took < Duration::from_secs(6),
+            "one hung engine's timeouts, not the sum of both: {took:?}"
+        );
     }
 
     #[test]

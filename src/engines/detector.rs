@@ -1350,7 +1350,8 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
     use bollard::Docker;
 
     let docker = match Docker::connect_with_local_defaults() {
-        Ok(d) => d,
+        // bollard's default is 120 s; a hung dockerd must not stall detection.
+        Ok(d) => d.with_timeout(std::time::Duration::from_secs(2)),
         Err(e) => {
             // Elevated to info: if multi-instance containerized vLLM isn't being
             // picked up, the operator needs to know Docker discovery failed.

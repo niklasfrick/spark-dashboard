@@ -224,8 +224,9 @@ async fn fetch_hf_model_info(
 
     let url = format!("https://huggingface.co/api/models/{}", model_id);
 
+    // Same bound as the engine probes: this runs inside the engine poll round.
     let hf_client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(2))
         .build()
         .ok()?;
 
