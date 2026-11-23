@@ -538,6 +538,9 @@ Docker API (no `docker` CLI or shell required — works in distroless images).
 - **Recommendation: only enable on trusted networks.** Put the dashboard behind
   a reverse proxy with auth, bind to `127.0.0.1`/`--bind 127.0.0.1`, or
   restrict the port with a firewall. Do not enable on a public-facing host.
+  A reverse proxy must pass the browser's `Host` header through unchanged
+  (nginx: `proxy_set_header Host $host;`), because `/ws` and `/ws/logs` refuse
+  a WebSocket whose `Origin` does not match `Host`.
 
 Logs are a **panel**, added from the palette and bound to an engine like any
 other engine panel — following the page's selection, or pinned to one engine so

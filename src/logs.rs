@@ -30,7 +30,8 @@
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::Query;
-use axum::response::IntoResponse;
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
 use bollard::container::LogOutput;
 use bollard::query_parameters::LogsOptionsBuilder;
 use bollard::Docker;
@@ -92,10 +93,15 @@ pub struct LogsQuery {
 /// while the viewer is unused). Subsequent clients subscribe to the same
 /// broadcast.
 pub async fn ws_logs_handler(
+    headers: HeaderMap,
     Query(query): Query<LogsQuery>,
     ws: WebSocketUpgrade,
-) -> impl IntoResponse {
+) -> Response {
+    if !crate::ws::same_origin(&headers) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
     ws.on_upgrade(move |socket| handle_logs_socket(socket, query.engine))
+        .into_response()
 }
 
 async fn handle_logs_socket(mut socket: WebSocket, engine: Option<String>) {
