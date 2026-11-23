@@ -81,9 +81,18 @@ function eventStrokeColor(type: string): string {
 // number of commands, enabling smooth CSS `d` transitions between frames.
 const CHART_POINTS = 60
 
-function padData(data: DataPoint[]): DataPoint[] {
+// eslint-disable-next-line react-refresh/only-export-components -- exported for unit test
+export function padData(data: DataPoint[]): DataPoint[] {
   if (data.length === 0) return []
-  if (data.length >= CHART_POINTS) return data.slice(-CHART_POINTS)
+  if (data.length === CHART_POINTS) return data
+  if (data.length > CHART_POINTS) {
+    // Evenly spaced across the whole window; first and last (newest) kept.
+    const last = data.length - 1
+    return Array.from(
+      { length: CHART_POINTS },
+      (_, i) => data[Math.round((i * last) / (CHART_POINTS - 1))],
+    )
+  }
 
   const first = data[0]
   const interval = data.length > 1 ? data[1].timestamp - data[0].timestamp : 1000
