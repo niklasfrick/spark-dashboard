@@ -90,6 +90,12 @@ describe('engineMetricReader', () => {
     expect(read('tokens_per_sec')).toBeNull()
     expect(read('total_requests')).toBeNull()
   })
+
+  it('reads metrics from a serving engine whose model name is unreadable', () => {
+    const read = engineMetricReader(engine({ model: null, model_metadata_error: 'AuthRequired' }))
+
+    expect(read('tokens_per_sec')).toBe(120)
+  })
 })
 
 describe('engineAvailability', () => {
@@ -120,6 +126,12 @@ describe('engineAvailability', () => {
     expect(engineAvailability(engine({ model: null }))).toEqual({
       kind: 'offline',
       detail: 'has no model loaded.',
+    })
+  })
+
+  it('is ready when the model name is unreadable but the engine is serving', () => {
+    expect(engineAvailability(engine({ model: null, model_metadata_error: 'AuthRequired' }))).toEqual({
+      kind: 'ready',
     })
   })
 })

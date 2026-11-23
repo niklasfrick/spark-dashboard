@@ -15,7 +15,10 @@ import {
 } from '@/types/metrics'
 
 /** The parts of an engine snapshot that decide what its metrics mean. */
-export type EngineReadable = Pick<EngineSnapshot, 'status' | 'model' | 'metrics'>
+export type EngineReadable = Pick<
+  EngineSnapshot,
+  'status' | 'model' | 'metrics' | 'model_metadata_error'
+>
 
 /**
  * The metric fields that carry a plain number — everything a tile can render
@@ -25,6 +28,12 @@ export type EngineReadable = Pick<EngineSnapshot, 'status' | 'model' | 'metrics'
 export type NumericEngineMetric = {
   [K in keyof EngineMetrics]-?: EngineMetrics[K] extends number | null ? K : never
 }[keyof EngineMetrics]
+
+/** No model is loaded only when the name is missing and nothing says why: a
+ *  `model_metadata_error` means the engine is serving but its name is unreadable. */
+function hasNoModel(engine: EngineReadable): boolean {
+  return engine.model === null && !engine.model_metadata_error
+}
 
 /** Reads one field of an engine's metrics; null when there is no value to read. */
 export type EngineMetricReader = <K extends keyof EngineMetrics>(
@@ -39,7 +48,7 @@ export type EngineMetricReader = <K extends keyof EngineMetrics>(
  * would put numbers from a finished run under the name of an idle engine.
  */
 export function engineMetricReader(engine: EngineReadable): EngineMetricReader {
-  const metrics = engine.model === null ? null : engine.metrics
+  const metrics = hasNoModel(engine) ? null : engine.metrics
   return (key) => metrics?.[key] ?? null
 }
 
@@ -197,6 +206,6 @@ export function engineAvailability(engine: EngineReadable): EngineAvailability {
       return { kind: 'offline', detail: `reported an error: ${engine.status.message}` }
   }
 
-  if (engine.model === null) return { kind: 'offline', detail: 'has no model loaded.' }
+  if (hasNoModel(engine)) return { kind: 'offline', detail: 'has no model loaded.' }
   return engine.metrics === null ? { kind: 'starting' } : { kind: 'ready' }
 }
