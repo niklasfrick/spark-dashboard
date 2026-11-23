@@ -212,7 +212,7 @@ export interface EngineMetrics {
   total_prompt_tokens: number | null
   /** Generation (decode) tokens produced since the warmup baseline: the
    *  engine's lifetime count while it is still warming, then the tokens since
-   *  the baseline scrape. The window every post-warmup figure covers, and the
+   *  the baseline scrape. The window every warmup-adjusted figure covers, and the
    *  weight of the combined inter-token latency on all models (#151). */
   total_generation_tokens: number | null
   /** Prefix-cache token queries since the warmup baseline (the engine's

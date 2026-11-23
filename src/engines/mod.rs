@@ -323,7 +323,7 @@ pub struct EngineMetrics {
     pub total_prompt_tokens: Option<u64>,
     /// Generation (decode) tokens produced since the warmup baseline: the
     /// engine's lifetime count while it is still warming, then the tokens
-    /// since the baseline scrape. The window every post-warmup figure covers,
+    /// since the baseline scrape. The window every warmup-adjusted figure covers,
     /// and the weight of the combined inter-token latency (#151).
     pub total_generation_tokens: Option<u64>,
     /// Prefix-cache token queries since the warmup baseline (the engine's

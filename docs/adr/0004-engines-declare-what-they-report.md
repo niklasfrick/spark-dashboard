@@ -126,8 +126,11 @@ lifetime count.
 ### Consequences
 
 - **On a vLLM-only host the combined inter-token latency shifts** from a
-  request-weighted to a token-weighted mean. The token-weighted one is the exact
-  pooled per-token figure, so the shift is a correction.
+  request-weighted to a token-weighted mean. The token-weighted one is the pooled
+  per-token figure, so the shift is a correction. It is exact only for llama.cpp
+  (seconds over tokens); vLLM and SGLang derive the latency from a histogram
+  whose count is inter-token intervals, not generated tokens, so there it is a
+  close approximation.
 - **The Latency panel's coverage note names every group** once the inter-token
   latency covers engines the others do not. Accepted: it says which figure
   covers which engines.
