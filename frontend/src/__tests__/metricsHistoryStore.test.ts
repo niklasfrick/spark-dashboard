@@ -160,6 +160,28 @@ describe('MetricsHistoryStore windowed reads', () => {
   })
 })
 
+describe('MetricsHistoryStore GPU events', () => {
+  it('stores onsets only, so a repeating event cannot crowd out an earlier one', () => {
+    const store = new MetricsHistoryStore()
+    const thermal = { timestamp_ms: 1000, gpu_index: 0, event_type: 'thermal', detail: 'hot' }
+    store.ingest(makeSnapshot(1000, { gpu_events: [thermal] }))
+    // Over five minutes of a power cap the backend reports on every tick.
+    for (let i = 2; i <= 400; i++) {
+      store.ingest(
+        makeSnapshot(i * 1000, {
+          gpu_events: [{ timestamp_ms: i * 1000, gpu_index: 0, event_type: 'throttle', detail: 'cap' }],
+        }),
+      )
+    }
+
+    const events = store.getEvents('15m')
+    expect(events).toContainEqual(thermal)
+    expect(events.filter((e) => e.event_type === 'throttle')).toHaveLength(1)
+    // Still active, so its onset stays listed past the window's edge.
+    expect(store.getEvents('5m').map((e) => e.event_type)).toEqual(['throttle'])
+  })
+})
+
 describe('MetricsHistoryStore all-engines aggregate series', () => {
   it('ingests the combined series alongside the per-engine ones', () => {
     const store = new MetricsHistoryStore()

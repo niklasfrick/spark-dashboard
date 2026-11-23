@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, act } from '@testing-library/react'
 import { useEffect } from 'react'
 import { MetricsStoreProvider } from '../hooks/MetricsStoreProvider'
-import { useMetricSeries } from '../hooks/useMetricsStore'
+import { useGpuEvents, useMetricSeries } from '../hooks/useMetricsStore'
 import { useMetrics } from '../hooks/useMetrics'
 import { useMetricsIngest } from '../hooks/useMetricsIngest'
 import { MockWebSocket, substituteWebSocket } from '../test/websocket'
@@ -108,5 +108,33 @@ describe('metrics store through the substituted socket', () => {
     // The temperature series gained nothing, so its subscriber did not render.
     expect(renderCounts['gpuTemp']).toBe(tempRenders)
     expect(screen.getByTestId('gpuTemp')).toHaveTextContent('40')
+  })
+
+  it('keeps the events of a snapshot replaced before it was flushed', () => {
+    function Events() {
+      const events = useGpuEvents('15m')
+      return <output data-testid="events">{events.map((e) => e.detail).join(',')}</output>
+    }
+    render(
+      <MetricsStoreProvider>
+        <Feed />
+        <Events />
+      </MetricsStoreProvider>,
+    )
+    const socket = MockWebSocket.instances[0]
+    const withEvent = (ts: number, detail: string) => ({
+      ...snapshot(ts, 10, 40),
+      gpu_events: [{ timestamp_ms: ts, gpu_index: 0, event_type: 'thermal', detail }],
+    })
+
+    act(() => socket.receive(JSON.stringify(snapshot(1000, 10, 40))))
+    // Two frames inside one flush window: the first is overwritten unflushed.
+    act(() => {
+      socket.receive(JSON.stringify(withEvent(2000, 'one-tick')))
+      socket.receive(JSON.stringify(snapshot(3000, 10, 40)))
+      vi.advanceTimersByTime(2000)
+    })
+
+    expect(screen.getByTestId('events')).toHaveTextContent('one-tick')
   })
 })

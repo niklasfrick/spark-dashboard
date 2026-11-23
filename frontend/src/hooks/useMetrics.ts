@@ -39,6 +39,9 @@ export function useMetrics() {
         try {
           const data = JSON.parse(event.data) as MetricsSnapshot
           lastMessageTime.current = Date.now()
+          // Only the newest snapshot is flushed; keep the events of the one it replaces.
+          const dropped = pendingRef.current?.gpu_events
+          if (dropped?.length) data.gpu_events = [...dropped, ...(data.gpu_events ?? [])].slice(-100)
           pendingRef.current = data
           // Render the very first snapshot immediately so the UI isn't blank
           if (!initialFlushDone.current) {

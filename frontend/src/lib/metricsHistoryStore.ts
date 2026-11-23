@@ -250,6 +250,8 @@ export class MetricsHistoryStore {
   private gpuBuffers: Record<string, Record<MetricKey, CircularBuffer<DataPoint>>> = {}
   private engineBuffers: Record<string, Record<string, CircularBuffer<DataPoint>>> = {}
   private eventBuffer = new CircularBuffer<GpuEventData>(EVENT_BUFFER_CAPACITY)
+  /** The stored onset of each event still active in the last snapshot. */
+  private activeEvents = new Map<string, GpuEventData>()
   private requestBuffers: Record<string, CircularBuffer<InferenceRequestData>> = {}
   private lastTimestamp = 0
   private lastSnapshot: MetricsSnapshot | null = null
@@ -323,12 +325,19 @@ export class MetricsHistoryStore {
       this.pushEngineSamples(ALL_ENGINES_KEY, aggregate, ts, changed)
     }
 
-    if (metrics.gpu_events && metrics.gpu_events.length > 0) {
-      for (const event of metrics.gpu_events) {
-        this.eventBuffer.push(event)
-      }
+    // The backend repeats an event every tick its reason holds; store only the
+    // onset, so a long throttle cannot crowd older events out of the buffer.
+    const active = new Map<string, GpuEventData>()
+    for (const event of metrics.gpu_events ?? []) {
+      const key = `${event.gpu_index ?? 0}:${event.event_type}:${event.detail}`
+      if (active.has(key)) continue
+      const onset = this.activeEvents.get(key)
+      active.set(key, onset ?? event)
+      if (onset) continue
+      this.eventBuffer.push(event)
       changed.add(EVENTS_SERIES)
     }
+    this.activeEvents = active
 
     this.ingested++
     for (const series of changed) {
@@ -442,7 +451,9 @@ export class MetricsHistoryStore {
 
   getEvents(window: TimeWindow = DEFAULT_TIME_WINDOW): GpuEventData[] {
     const cutoff = this.cutoff(window)
-    return this.eventBuffer.toArray().filter((e) => e.timestamp_ms >= cutoff)
+    // An onset older than the window stays listed while its event is still active.
+    const active = new Set(this.activeEvents.values())
+    return this.eventBuffer.toArray().filter((e) => e.timestamp_ms >= cutoff || active.has(e))
   }
 
   /** Recent requests, optionally narrowed to one engine. `key` is an engine
