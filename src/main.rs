@@ -84,7 +84,13 @@ struct RunArgs {
     bind: String,
 
     /// Metrics polling interval in milliseconds
-    #[arg(long, env = "SPARK_DASHBOARD_POLL_INTERVAL", default_value_t = 1000)]
+    #[arg(
+        long,
+        env = "SPARK_DASHBOARD_POLL_INTERVAL",
+        default_value_t = 1000,
+        // tokio::time::interval panics on a zero period.
+        value_parser = clap::value_parser!(u64).range(1..)
+    )]
     poll_interval: u64,
 
     /// Directory holding mutable state, currently the dashboard configuration
@@ -262,14 +268,14 @@ async fn run_server_inner(args: RunArgs) -> Result<(), Box<dyn std::error::Error
 
     // Spawn engine collector loop as separate tokio task (Research Pitfall 7:
     // separate task so slow engine API calls don't block hardware metrics)
-    tokio::spawn(engines::engine_collector_loop(
+    let engine_task = tokio::spawn(engines::engine_collector_loop(
         engine_state.clone(),
         overrides,
         api_keys,
     ));
 
     // Pass engine_state to metrics collector so it includes engines in snapshots
-    tokio::spawn(metrics::metrics_collector(
+    let metrics_task = tokio::spawn(metrics::metrics_collector(
         tx.clone(),
         args.poll_interval,
         args.gpu_index,
@@ -305,9 +311,18 @@ async fn run_server_inner(args: RunArgs) -> Result<(), Box<dyn std::error::Error
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!("Spark Dashboard running at http://{}", addr);
 
-    axum::serve(listener, app).await?;
-
-    Ok(())
+    // A dead collector would leave /healthz green while /ws goes silent or
+    // stale, so exit non-zero and let the service manager restart us.
+    let (task, result) = tokio::select! {
+        served = axum::serve(listener, app) => return Ok(served?),
+        result = engine_task => ("engine collector", result),
+        result = metrics_task => ("metrics collector", result),
+    };
+    let reason = match result {
+        Ok(()) => "returned".to_string(),
+        Err(err) => err.to_string(),
+    };
+    Err(format!("{task} task ended ({reason}), exiting").into())
 }
 
 #[cfg(test)]
@@ -440,6 +455,15 @@ mod tests {
                 (EngineType::LlamaCpp, "http://127.0.0.1:8081".to_string()),
             ]
         );
+    }
+
+    /// A zero poll interval would panic the metrics collector, so it is
+    /// refused at parse time.
+    #[test]
+    fn poll_interval_rejects_zero() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(Cli::try_parse_from(["spark-dashboard", "--poll-interval", "0"]).is_err());
+        assert_eq!(parse(&["--poll-interval", "1"]).poll_interval, 1);
     }
 
     #[test]
