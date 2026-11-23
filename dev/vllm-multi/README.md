@@ -214,7 +214,7 @@ required KV cache) or drop `--gpu-memory-utilization` a notch.
 Two likely causes:
 
 1. **`spark-dashboard` isn't in the `docker` group yet.** The service
-   installer adds it (`SupplementaryGroups=... docker` in the unit file),
+   installer adds it (`usermod -aG docker`) if the group exists,
    but if you installed Docker *after* the dashboard, you need to re-apply:
 
    ```bash
