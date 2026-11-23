@@ -2085,4 +2085,36 @@ mod tests {
         assert!(!seen[3].warming_up);
         assert!(seen[4].tokens_per_sec.is_some_and(|tps| tps > 0.0));
     }
+
+    /// The same restart when the dashboard attached to an idle server: the
+    /// baseline is all zeros, so no counter can fall below it, and the
+    /// restart shows only as a drop from the previous scrape.
+    #[tokio::test]
+    async fn a_restart_is_noticed_when_the_first_scrape_was_idle() {
+        const SCRAPES: [(u64, u64); 5] = [(0, 0), (152, 1803), (0, 0), (20, 50), (20, 100)];
+        let scrapes = Arc::new(AtomicUsize::new(0));
+        let served = scrapes.clone();
+        let server = llama_server(move |path| match path {
+            "/metrics" => {
+                let i = served.fetch_add(1, Ordering::SeqCst).min(SCRAPES.len() - 1);
+                let (prompt, generated) = SCRAPES[i];
+                (200, scrape_at(prompt, generated))
+            }
+            _ => idle(path),
+        })
+        .await;
+        let adapter = adapter(&server.url);
+        let mut seen = Vec::new();
+        for _ in 0..SCRAPES.len() {
+            seen.push(adapter.get_metrics().await.expect("metrics"));
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(seen[2].warming_up, "the restart is noticed");
+        for m in &seen {
+            for rate in [m.tokens_per_sec, m.prompt_tokens_per_sec] {
+                assert!(rate.is_none_or(|r| r >= 0.0), "negative rate {rate:?}");
+            }
+        }
+        assert!(seen[4].tokens_per_sec.is_some_and(|tps| tps > 0.0));
+    }
 }
