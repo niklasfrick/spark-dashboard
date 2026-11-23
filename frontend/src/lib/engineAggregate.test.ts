@@ -652,22 +652,35 @@ describe('aggregateEngines over engines that report different metric groups', ()
     expect(declared).toEqual(undeclared)
   })
 
-  it('falls back to a simple mean of inter-token latency when no engine has generated tokens', () => {
-    // Request counts that would give (20·10 + 80·40) / 50 = 68 do not step in.
+  it.each([0, null])(
+    'falls back to a simple mean of the inter-token latency family when no engine has generated tokens (%s)',
+    (tokens) => {
+      // Request counts that would give (20·10 + 80·40) / 50 = 68 do not step in.
+      const itl = (inter_token_latency_ms: number, total_requests: number, goodput: number) =>
+        fullMetrics({
+          inter_token_latency_ms,
+          itl_percentiles: percentiles(inter_token_latency_ms),
+          itl_goodput_pct: goodput,
+          total_requests,
+          total_generation_tokens: tokens,
+        })
+
+      const snap = aggregateEngines([
+        engine('Running', itl(20, 10, 90)),
+        engine('Running', itl(80, 40, 50), 'b'),
+      ])
+      expect(snap.inter_token_latency_ms).toBe(50)
+      // Per quantile, the simple mean of A's (20, 40, 60) and B's (80, 160, 240).
+      expect(snap.itl_percentiles!.p50_ms).toBeCloseTo(50, 5)
+      expect(snap.itl_percentiles!.p95_ms).toBeCloseTo(100, 5)
+      expect(snap.itl_percentiles!.p99_ms).toBeCloseTo(150, 5)
+      expect(snap.itl_goodput_pct).toBe(70)
+    },
+  )
+
+  it('weights the inter-token latency by tokens only for an engine past its baseline', () => {
     const itl = (inter_token_latency_ms: number, total_requests: number, tokens: number | null) =>
       fullMetrics({ inter_token_latency_ms, total_requests, total_generation_tokens: tokens })
-
-    const zero = aggregateEngines([
-      engine('Running', itl(20, 10, 0)),
-      engine('Running', itl(80, 40, 0), 'b'),
-    ])
-    expect(zero.inter_token_latency_ms).toBe(50)
-
-    const none = aggregateEngines([
-      engine('Running', itl(20, 10, null)),
-      engine('Running', itl(80, 40, null), 'b'),
-    ])
-    expect(none.inter_token_latency_ms).toBe(50)
 
     // On its baseline scrape an engine has generated nothing yet, so it carries
     // no weight beside one that has — while still counted as covered.
