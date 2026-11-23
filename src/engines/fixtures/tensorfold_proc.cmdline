@@ -1,0 +1,1 @@
+/opt/tensorfold/bin/tensorfold-dsv41 serve /home/marker/.cache/huggingface/jayleaton-flash17-ablit --host 0.0.0.0 --port 8000 --parallel 4 --context 1048576 --name deepseek-v4.1-flash --max-tokens 32768 --no-update-check

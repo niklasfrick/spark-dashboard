@@ -1,0 +1,15 @@
+# HELP tensorfold:prompt_cache_states All retained prompt states, including long-message interior cuts.
+# TYPE tensorfold:prompt_cache_states gauge
+tensorfold:prompt_cache_states 1
+# HELP tensorfold:prompt_cache_bytes Storage held by retained prompt states and spare buffers, inside their budget.
+# TYPE tensorfold:prompt_cache_bytes gauge
+tensorfold:prompt_cache_bytes 134217728
+# HELP tensorfold:prompt_tokens_cached_total Prompt tokens of finished requests restored from kept prompt states.
+# TYPE tensorfold:prompt_tokens_cached_total counter
+tensorfold:prompt_tokens_cached_total 129024
+# HELP tensorfold:prefix_cache_queries_total Prompt tokens of finished requests, looked up in the kept prompt states, under vLLM's name.
+# TYPE tensorfold:prefix_cache_queries_total counter
+tensorfold:prefix_cache_queries_total 220
+# HELP tensorfold:prefix_cache_hits_total Prompt tokens of finished requests restored from kept prompt states, under vLLM's name.
+# TYPE tensorfold:prefix_cache_hits_total counter
+tensorfold:prefix_cache_hits_total 96
