@@ -1,5 +1,6 @@
 use crate::metrics::NetworkMetrics;
 use std::net::IpAddr;
+use std::time::{Duration, Instant};
 
 /// Interface prefixes/names that are virtual (loopback, containers, VPNs, bridges).
 /// Physical / Wi-Fi names (`en*`, `eth*`, `wl*`, `wlan*`, `ww*`, `ib*`) are intentionally
@@ -64,8 +65,16 @@ fn is_global_ip(addr: &IpAddr) -> bool {
 }
 
 /// Collect aggregate network I/O throughput metrics from sysinfo Networks.
-/// Since we refresh every ~1 second, the delta values approximate bytes/sec.
-pub fn collect_network_metrics(networks: &sysinfo::Networks) -> NetworkMetrics {
+/// sysinfo reports bytes since the last refresh, so divide by the real time since
+/// `last_refresh` (the previous call). The first call reports zero, like `DiskIoSampler`.
+pub fn collect_network_metrics(
+    networks: &sysinfo::Networks,
+    last_refresh: &mut Option<Instant>,
+) -> NetworkMetrics {
+    let now = Instant::now();
+    let elapsed = last_refresh.map(|t| now.saturating_duration_since(t));
+    *last_refresh = Some(now);
+
     let interfaces: Vec<InterfaceInfo> = networks
         .iter()
         .map(|(iface, data)| InterfaceInfo {
@@ -77,7 +86,19 @@ pub fn collect_network_metrics(networks: &sysinfo::Networks) -> NetworkMetrics {
         })
         .collect();
 
-    select_network_metrics(&interfaces)
+    let mut metrics = select_network_metrics(&interfaces);
+    let elapsed = elapsed.unwrap_or_default();
+    metrics.rx_bytes_per_sec = bytes_per_second(metrics.rx_bytes_per_sec, elapsed);
+    metrics.tx_bytes_per_sec = bytes_per_second(metrics.tx_bytes_per_sec, elapsed);
+    metrics
+}
+
+/// Bytes moved during `elapsed` as a per-second rate; zero for a zero elapsed time.
+fn bytes_per_second(bytes: u64, elapsed: Duration) -> u64 {
+    if elapsed.is_zero() {
+        return 0;
+    }
+    (bytes as f64 / elapsed.as_secs_f64()).round() as u64
 }
 
 /// Pick the primary interface name and scope rx/tx totals to real (non-virtual)
@@ -147,6 +168,15 @@ mod tests {
             has_global_ip,
             is_virtual,
         }
+    }
+
+    #[test]
+    fn rate_scales_with_elapsed_time_and_zero_elapsed_is_zero() {
+        let one = bytes_per_second(10_000, Duration::from_secs(1));
+        let two = bytes_per_second(10_000, Duration::from_secs(2));
+        assert_eq!(one, 10_000);
+        assert_eq!(two, one / 2);
+        assert_eq!(bytes_per_second(10_000, Duration::ZERO), 0);
     }
 
     #[test]
@@ -247,8 +277,8 @@ mod tests {
     #[test]
     fn collect_network_metrics_with_fresh_networks_returns_zero_or_valid() {
         let networks = sysinfo::Networks::new_with_refreshed_list();
-        let metrics = collect_network_metrics(&networks);
-        // First reading returns delta since process start, should be finite.
+        let metrics = collect_network_metrics(&networks, &mut None);
+        // First reading has no previous refresh, so it reports zero.
         assert!(metrics.rx_bytes_per_sec < u64::MAX);
         assert!(metrics.tx_bytes_per_sec < u64::MAX);
     }
