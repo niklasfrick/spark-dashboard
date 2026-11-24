@@ -85,7 +85,7 @@ export interface NetworkMetrics {
 
 // --- LLM Engine Types (Phase 2) ---
 
-export type EngineType = 'Vllm' | 'Sglang' | 'Ollama' | 'LlamaCpp'
+export type EngineType = 'Vllm' | 'Sglang' | 'Ollama' | 'LlamaCpp' | 'Hibana'
 
 export type DeploymentMode = 'Docker' | 'Native'
 

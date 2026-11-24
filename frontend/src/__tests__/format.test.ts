@@ -145,6 +145,14 @@ describe('engineDisplayName and engineIconPath', () => {
       'Ollama localhost:11434',
     )
   })
+
+  it('names a Hibana engine and points at its own icon', () => {
+    expect(engineDisplayName('Hibana')).toBe('Hibana')
+    expect(engineIconPath('Hibana')).toBe('/icons/hibana.svg')
+    expect(engineDescription({ engine_type: 'Hibana', endpoint: 'http://localhost:8888' })).toBe(
+      'Hibana localhost:8888',
+    )
+  })
 })
 
 describe('engineModelLabel', () => {

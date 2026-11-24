@@ -51,6 +51,8 @@ fn default_port(engine_type: &EngineType) -> u16 {
         EngineType::Sglang => SGLANG_DEFAULT_PORT,
         EngineType::Ollama => super::ollama::DEFAULT_PORT,
         EngineType::LlamaCpp => llamacpp::default_ports(&DeploymentMode::Native)[0],
+        // Hibana's default `--port` (SD4 learns it from the launch line).
+        EngineType::Hibana => 8888,
     }
 }
 
@@ -364,6 +366,8 @@ fn parse_model_for(engine_type: &EngineType, cmd: &str) -> Option<String> {
         EngineType::LlamaCpp => {
             llamacpp_launch(&cmd.split_whitespace().collect::<Vec<_>>(), |_| None).served_model()
         }
+        // Hibana takes SD2's launch-line parsing; nothing is named yet.
+        EngineType::Hibana => None,
     }
 }
 
@@ -1026,6 +1030,8 @@ fn engines_from_processes(
                 };
                 (endpoint, Vec::new(), served_model)
             }
+            // Nothing is read off a Hibana launch line until SD2 detects it.
+            EngineType::Hibana => continue,
         };
         match seen_endpoints.get(&(engine_type.clone(), endpoint.clone())) {
             Some(&slot) => detected[slot].pids.push(pid),
@@ -1507,7 +1513,7 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
             .and_then(|h| h.network_mode.as_deref());
         let env = match engine_type {
             EngineType::Ollama | EngineType::LlamaCpp => container_env(&docker, container_id).await,
-            EngineType::Vllm | EngineType::Sglang => Vec::new(),
+            EngineType::Vllm | EngineType::Sglang | EngineType::Hibana => Vec::new(),
         };
         let env_var = |name: &str| env_var_in(env.iter().map(|e| e.as_bytes()), name);
 
@@ -1733,6 +1739,10 @@ async fn probe_engine(http: &EngineHttp, engine_type: &EngineType) -> bool {
         // By the `Server: llama.cpp` header every llama-server answer carries
         // (`llamacpp::identify`).
         EngineType::LlamaCpp => super::llamacpp::identify(http).await,
+        // SD4 fills in Hibana's probe; until then a candidate never enters
+        // the map rather than passing as a Hibana engine it cannot yet be
+        // sure of.
+        EngineType::Hibana => false, // SD4
     }
 }
 
@@ -2352,6 +2362,17 @@ mod tests {
             &EngineType::Sglang
         ));
         assert!(!runs_engine("sleep infinity", &EngineType::Sglang));
+    }
+
+    /// Hibana's defaults: its default `--port`, and no model named until
+    /// SD2 adds the launch-line parsing.
+    #[test]
+    fn a_hibana_engine_defaults_to_its_port_and_names_no_model() {
+        assert_eq!(default_port(&EngineType::Hibana), 8888);
+        assert_eq!(
+            parse_model_for(&EngineType::Hibana, "hibana serve --port 8888"),
+            None
+        );
     }
 
     /// A container's command is read with its engine's own model flags:
