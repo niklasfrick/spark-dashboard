@@ -1,5 +1,6 @@
 mod common;
 pub mod detector;
+pub mod hibana;
 pub mod histogram;
 pub mod llamacpp;
 mod model_info;
@@ -28,6 +29,8 @@ pub enum EngineType {
     Ollama,
     /// llama.cpp's `llama-server`.
     LlamaCpp,
+    /// The Hibana inference engine (OpenAI-compatible server).
+    Hibana,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq, Hash)]
@@ -43,6 +46,7 @@ impl std::fmt::Display for EngineType {
             EngineType::Sglang => write!(f, "SGLang"),
             EngineType::Ollama => write!(f, "Ollama"),
             EngineType::LlamaCpp => write!(f, "llama.cpp"),
+            EngineType::Hibana => write!(f, "Hibana"),
         }
     }
 }
@@ -948,6 +952,9 @@ pub fn create_adapter(
         EngineType::LlamaCpp => Box::new(llamacpp::LlamaCppAdapter::new(
             client, endpoint, model_hint, api_key,
         )),
+        EngineType::Hibana => Box::new(hibana::HibanaAdapter::new(
+            client, endpoint, model_hint, api_key,
+        )),
     }
 }
 
@@ -1597,6 +1604,35 @@ mod tests {
             Some("k".into()),
         );
         let _without = create_adapter(EngineType::Vllm, "http://a:8000".into(), client, None, None);
+    }
+
+    /// Every engine type builds through the factory and names itself on the
+    /// snapshot, so a new type cannot miss its adapter.
+    #[test]
+    fn create_adapter_builds_an_adapter_for_every_engine_type() {
+        let client = reqwest::Client::new();
+        for engine_type in [
+            EngineType::Vllm,
+            EngineType::Sglang,
+            EngineType::Ollama,
+            EngineType::LlamaCpp,
+            EngineType::Hibana,
+        ] {
+            let adapter = create_adapter(
+                engine_type.clone(),
+                "http://127.0.0.1:1/".into(),
+                client.clone(),
+                None,
+                None,
+            );
+            let state = EngineState::new(adapter, DeploymentMode::Native);
+            let json = serde_json_value(&state.snapshot(EngineStatus::Running, None, None));
+            assert_eq!(
+                json["engine_type"],
+                serde_json::to_value(&engine_type).unwrap(),
+                "{engine_type}"
+            );
+        }
     }
 
     /// The wire name of each group. Exhaustive on purpose: a new group does not
