@@ -1,0 +1,11 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "Qwen3.8-Flash-Next-NVFP4",
+      "object": "model",
+      "created": 1762900000,
+      "owned_by": "hibana"
+    }
+  ]
+}

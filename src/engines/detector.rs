@@ -314,9 +314,22 @@ fn is_llama_server(args: &[&str]) -> bool {
     matches!(program, Some("llama-server" | "llama-server.exe"))
 }
 
+/// Hibana's `hibana serve`, its venv console script (by any path, and behind
+/// an interpreter or `exec`ing wrapper in front of it) with `serve` right
+/// after it; a flag in between (`hibana --port 8004 serve`) launches nothing.
+fn is_hibana_server(args: &[&str]) -> bool {
+    let program =
+        |arg: &str| arg == "hibana" || arg.ends_with("/hibana") || arg.ends_with("/hibana.exe");
+    match args.iter().position(|arg| program(arg)) {
+        Some(i) => args.get(i + 1) == Some(&"serve"),
+        None => false,
+    }
+}
+
 /// Which engine a command line runs, if any. Ollama's server is told by its
 /// program and subcommand together (`is_ollama_server`), llama.cpp's by its
-/// program (`is_llama_server`); otherwise the first argument that names an
+/// program (`is_llama_server`), Hibana's by its script and `serve`
+/// (`is_hibana_server`); otherwise the first argument that names an
 /// engine's server decides. The program comes before its arguments, so a
 /// path or flag value that happens to name the other engine — `python3 -m
 /// sglang.launch_server --download-dir /data/vllm` — cannot turn the process
@@ -328,6 +341,9 @@ fn engine_of_command<'a>(args: impl IntoIterator<Item = &'a str>) -> Option<Engi
     }
     if is_llama_server(&args) {
         return Some(EngineType::LlamaCpp);
+    }
+    if is_hibana_server(&args) {
+        return Some(EngineType::Hibana);
     }
     args.into_iter().find_map(server_named_by)
 }
@@ -369,6 +385,17 @@ fn parse_model_for(engine_type: &EngineType, cmd: &str) -> Option<String> {
         // Hibana takes SD2's launch-line parsing; nothing is named yet.
         EngineType::Hibana => None,
     }
+}
+
+/// The image is Hibana's when its repository's last segment starts with
+/// `hibana` (`hibana-flashnext-vision:d474b74d-v1`) — checked on the
+/// repository, never the tag, as the other image checks are.
+#[cfg(any(target_os = "linux", test))]
+fn is_hibana_image(image: &str) -> bool {
+    image_repository(image)
+        .rsplit('/')
+        .next()
+        .is_some_and(|repo| repo.starts_with("hibana"))
 }
 
 /// What a container's declared name, image and command say about which
@@ -461,6 +488,9 @@ fn classify_container(names: &[String], image: &str, command: &str) -> Option<Co
     }
     if is_llamacpp_image(image) {
         return class(EngineType::LlamaCpp, true);
+    }
+    if is_hibana_image(image) {
+        return class(EngineType::Hibana, true);
     }
     match mentions(image) {
         (true, false) => return class(EngineType::Vllm, true),
@@ -1019,19 +1049,19 @@ fn engines_from_processes(
                 let (endpoint, fallback_endpoints) = listen.endpoints();
                 (endpoint, fallback_endpoints, launch.served_model())
             }
-            EngineType::Vllm | EngineType::Sglang => {
+            EngineType::Vllm | EngineType::Sglang | EngineType::Hibana => {
                 let default_endpoint = format!("http://localhost:{}", default_port(&engine_type));
                 let endpoint =
                     parse_endpoint_from_args(cmd, &default_endpoint).unwrap_or(default_endpoint);
-                let served_model = if engine_type == EngineType::Vllm {
-                    parse_model_from_args(cmd)
-                } else {
-                    parse_sglang_model_from_args(cmd)
+                let served_model = match engine_type {
+                    EngineType::Vllm => parse_model_from_args(cmd),
+                    EngineType::Sglang => parse_sglang_model_from_args(cmd),
+                    // Hibana names no model at launch: `serve flashnext` is a
+                    // target, not a model id, and `/v1/models` is what answers.
+                    _ => None,
                 };
                 (endpoint, Vec::new(), served_model)
             }
-            // Nothing is read off a Hibana launch line until SD2 detects it.
-            EngineType::Hibana => continue,
         };
         match seen_endpoints.get(&(engine_type.clone(), endpoint.clone())) {
             Some(&slot) => detected[slot].pids.push(pid),
@@ -1696,6 +1726,44 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
 // Layer 3: API health probe
 // ---------------------------------------------------------------------------
 
+/// Hibana's own identity routes: `/health` says the server is alive and
+/// healthy, and `/v1/models` attributes a model to Hibana (the `owned_by` no
+/// plain OpenAI server ships).
+#[derive(serde::Deserialize, Default)]
+struct HibanaHealth {
+    #[serde(default)]
+    status: String,
+}
+
+#[derive(serde::Deserialize)]
+struct HibanaModels {
+    data: Vec<HibanaModel>,
+}
+
+#[derive(serde::Deserialize)]
+struct HibanaModel {
+    #[serde(default)]
+    owned_by: String,
+}
+
+/// Hibana answers as Hibana on both of its own routes: `/health` says `ok`
+/// and a model it lists is owned by Hibana, which rules out a plain OpenAI
+/// server answering the same pair of routes.
+async fn identify_hibana(http: &EngineHttp) -> bool {
+    let health = match http.get("/health").send().await {
+        Ok(r) if r.status().is_success() => r.json::<HibanaHealth>().await.unwrap_or_default(),
+        _ => return false,
+    };
+    let models = match http.get("/v1/models").send().await {
+        Ok(r) if r.status().is_success() => r,
+        _ => return false,
+    };
+    let Ok(models) = models.json::<HibanaModels>().await else {
+        return false;
+    };
+    health.status == "ok" && models.data.iter().any(|model| model.owned_by == "hibana")
+}
+
 /// Verify that a candidate engine's API is actually responding, and is the
 /// engine type it was detected as. Every request carries the endpoint's
 /// configured API key, as the adapter's own requests do.
@@ -1739,10 +1807,9 @@ async fn probe_engine(http: &EngineHttp, engine_type: &EngineType) -> bool {
         // By the `Server: llama.cpp` header every llama-server answer carries
         // (`llamacpp::identify`).
         EngineType::LlamaCpp => super::llamacpp::identify(http).await,
-        // SD4 fills in Hibana's probe; until then a candidate never enters
-        // the map rather than passing as a Hibana engine it cannot yet be
-        // sure of.
-        EngineType::Hibana => false, // SD4
+        // Hibana's `/health` plus its `/v1/models`, whose `owned_by` no
+        // plain OpenAI server answers (`identify_hibana`).
+        EngineType::Hibana => identify_hibana(http).await,
     }
 }
 
@@ -2373,6 +2440,101 @@ mod tests {
             parse_model_for(&EngineType::Hibana, "hibana serve --port 8888"),
             None
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Hibana
+    // -----------------------------------------------------------------------
+
+    /// The capture of the container's venv launch, as `/proc` holds it.
+    const HIBANA_SERVE: &[u8] = include_bytes!("fixtures/hibana_proc_serve.cmdline");
+
+    /// The venv script with its `serve` subcommand is Hibana — behind an
+    /// interpreter or wrapper too — and becomes one candidate on its `--port`,
+    /// its `serve flashnext` target naming no model. A `hibana` without
+    /// `serve` (`hibana --help`) runs nothing.
+    #[test]
+    fn a_hibana_process_is_its_serve_subcommand_on_its_port() {
+        let hibana = Some(EngineType::Hibana);
+        assert_eq!(engine_of_process(&cmdline(HIBANA_SERVE)), hibana);
+        for line in [
+            "hibana serve flashnext",
+            "bash /serve.sh /opt/hibana/.venv/bin/hibana serve",
+        ] {
+            assert_eq!(engine_of_process(&argv(line)), hibana, "{line}");
+        }
+        for line in [
+            "hibana --help",
+            "hibana chat",
+            "tail -f /var/log/hibana.log",
+        ] {
+            assert_eq!(engine_of_process(&argv(line)), None, "{line}");
+        }
+        let detected = scan_argvs(&[(500, Some(1), cmdline(HIBANA_SERVE))], unreadable);
+        assert_eq!(
+            detected
+                .iter()
+                .map(|e| (
+                    e.engine_type.clone(),
+                    e.endpoint.as_str(),
+                    e.pids.as_slice(),
+                    e.served_model.as_deref()
+                ))
+                .collect::<Vec<_>>(),
+            vec![(
+                EngineType::Hibana,
+                "http://localhost:8004",
+                &[500][..],
+                None
+            )],
+        );
+    }
+
+    /// The image's repository — its last segment starting with `hibana`, the
+    /// tag never — is what the Docker scan classifies by.
+    #[test]
+    fn a_hibana_container_is_told_by_its_image() {
+        let is_hibana = |image: &str, command: &str| {
+            matches!(
+                classify_container(&[], image, command),
+                Some(c) if c.engine_type == EngineType::Hibana
+            )
+        };
+        assert!(is_hibana(
+            "hibana-flashnext-vision:d474b74d-v1",
+            "bash /serve.sh"
+        ));
+        assert!(!is_hibana("ghcr.io/foo/not-hibana", "bash /serve.sh"));
+    }
+
+    /// Hibana answers as itself on both routes: `/health` says `ok` and a
+    /// model it lists is owned by `hibana`. A plain OpenAI server — same
+    /// routes, no `owned_by` — is rejected.
+    #[tokio::test]
+    async fn the_hibana_probe_needs_both_of_its_own_answers() {
+        use super::super::test_server::TestServer;
+        let health = include_str!("fixtures/hibana_health.json");
+        let models = include_str!("fixtures/hibana_v1_models.json");
+        let openai = r#"{"data":[{"id":"gpt-x","owned_by":"openai"}]}"#;
+        for (name, models, expected) in [
+            ("the fixtures", models, true),
+            ("a plain OpenAI server", openai, false),
+        ] {
+            let health = health.to_string();
+            let models = models.to_string();
+            let server = TestServer::start(move |r| match r.path.as_str() {
+                "/health" => (200, health.clone()),
+                "/v1/models" => (200, models.clone()),
+                _ => (404, String::new()),
+            })
+            .await;
+            let http = EngineHttp::new(reqwest::Client::new(), server.url.clone(), None);
+            assert_eq!(
+                probe_engine(&http, &EngineType::Hibana).await,
+                expected,
+                "{name}",
+            );
+        }
     }
 
     /// A container's command is read with its engine's own model flags:
