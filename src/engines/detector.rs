@@ -51,7 +51,7 @@ fn default_port(engine_type: &EngineType) -> u16 {
         EngineType::Sglang => SGLANG_DEFAULT_PORT,
         EngineType::Ollama => super::ollama::DEFAULT_PORT,
         EngineType::LlamaCpp => llamacpp::default_ports(&DeploymentMode::Native)[0],
-        // Hibana's default `--port` (SD4 learns it from the launch line).
+        // Hibana's default `--port`, when the launch line names none.
         EngineType::Hibana => 8888,
     }
 }
@@ -382,7 +382,7 @@ fn parse_model_for(engine_type: &EngineType, cmd: &str) -> Option<String> {
         EngineType::LlamaCpp => {
             llamacpp_launch(&cmd.split_whitespace().collect::<Vec<_>>(), |_| None).served_model()
         }
-        // Hibana takes SD2's launch-line parsing; nothing is named yet.
+        // Hibana names no model at launch (`serve flashnext` is a target); `/v1/models` does.
         EngineType::Hibana => None,
     }
 }
@@ -2431,8 +2431,8 @@ mod tests {
         assert!(!runs_engine("sleep infinity", &EngineType::Sglang));
     }
 
-    /// Hibana's defaults: its default `--port`, and no model named until
-    /// SD2 adds the launch-line parsing.
+    /// Hibana's defaults: its default `--port`, and no model read off the
+    /// launch line.
     #[test]
     fn a_hibana_engine_defaults_to_its_port_and_names_no_model() {
         assert_eq!(default_port(&EngineType::Hibana), 8888);

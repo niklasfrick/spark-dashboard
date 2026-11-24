@@ -1,6 +1,6 @@
 //! Hibana (github.com/sharar-project/hibana), an OpenAI-compatible inference
-//! server. SD3 fills the SD1 stub: `/metrics` rates, warmup and totals, and
-//! the model from `/v1/models`, which answers as vLLM does.
+//! server: `/metrics` rates, warmup and totals, and the model from
+//! `/v1/models`, which answers as vLLM does.
 
 use super::common::{warmup_skip_from_env, CounterRate, EngineHttp};
 use super::model_info::ModelResolver;
@@ -19,7 +19,7 @@ const WARMUP_TRIGGER_KEY: &str = "hibana_finished";
 const GEN_TOKEN_KEY: &str = "hibana_decode_tokens";
 const PROMPT_TOKEN_KEY: &str = "hibana_prefill_tokens";
 
-/// Instantaneous figures plus the two lifetime token counters SD3 needs.
+/// Instantaneous figures plus the two lifetime token counters the rates need.
 pub struct HibanaSnapshot {
     pub metrics: EngineMetrics,
     pub prefill_tokens: Option<u64>,
@@ -303,7 +303,7 @@ mod tests {
         )
     }
 
-    /// The three checks in one live-server test: the SD2 fixture and a
+    /// The three checks in one live-server test: the metrics fixture and a
     /// vLLM-shaped `/v1/models` body report the model and the gauges; two
     /// scrapes with a growing `hibana_decode_tokens` (skip=0, so the first is
     /// the baseline) read as a positive rate; a 500 on `/metrics` is no
