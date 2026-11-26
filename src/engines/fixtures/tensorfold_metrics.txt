@@ -1,0 +1,238 @@
+# HELP tensorfold:requests_running Requests in prefill or decode.
+# TYPE tensorfold:requests_running gauge
+tensorfold:requests_running 0
+# HELP tensorfold:requests_waiting Requests queued or held until a lane is free.
+# TYPE tensorfold:requests_waiting gauge
+tensorfold:requests_waiting 0
+# HELP tensorfold:generation_tokens_running Generated tokens held by live streams.
+# TYPE tensorfold:generation_tokens_running gauge
+tensorfold:generation_tokens_running 0
+# HELP tensorfold:prompt_tokens_total Prompt tokens of finished requests.
+# TYPE tensorfold:prompt_tokens_total counter
+tensorfold:prompt_tokens_total 250296082
+# HELP tensorfold:generation_tokens_total Generated tokens of finished requests.
+# TYPE tensorfold:generation_tokens_total counter
+tensorfold:generation_tokens_total 341951
+# HELP tensorfold:kv_cache_usage_ratio Tokens in a stream cache divided by that stream's context window.
+# TYPE tensorfold:kv_cache_usage_ratio gauge
+tensorfold:kv_cache_usage_ratio{pool="0"} 0
+# HELP tensorfold:mtp_drafted_total Draft tokens verified on finished requests.
+# TYPE tensorfold:mtp_drafted_total counter
+tensorfold:mtp_drafted_total 377838
+# HELP tensorfold:mtp_accepted_total Draft tokens kept on finished requests.
+# TYPE tensorfold:mtp_accepted_total counter
+tensorfold:mtp_accepted_total 246617
+# HELP tensorfold:request_latency_seconds Seconds from arrival to the reply leaving.
+# TYPE tensorfold:request_latency_seconds histogram
+tensorfold:request_latency_seconds_bucket{le="0.01"} 0
+tensorfold:request_latency_seconds_bucket{le="0.05"} 0
+tensorfold:request_latency_seconds_bucket{le="0.1"} 0
+tensorfold:request_latency_seconds_bucket{le="0.25"} 0
+tensorfold:request_latency_seconds_bucket{le="0.5"} 0
+tensorfold:request_latency_seconds_bucket{le="1"} 3
+tensorfold:request_latency_seconds_bucket{le="2.5"} 10
+tensorfold:request_latency_seconds_bucket{le="5"} 197
+tensorfold:request_latency_seconds_bucket{le="10"} 645
+tensorfold:request_latency_seconds_bucket{le="30"} 861
+tensorfold:request_latency_seconds_bucket{le="60"} 884
+tensorfold:request_latency_seconds_bucket{le="120"} 898
+tensorfold:request_latency_seconds_bucket{le="300"} 916
+tensorfold:request_latency_seconds_bucket{le="+Inf"} 917
+tensorfold:request_latency_seconds_sum 13789.298071
+tensorfold:request_latency_seconds_count 917
+# HELP tensorfold:time_to_first_token_seconds Seconds from arrival to the first generated token.
+# TYPE tensorfold:time_to_first_token_seconds histogram
+tensorfold:time_to_first_token_seconds_bucket{le="0.01"} 0
+tensorfold:time_to_first_token_seconds_bucket{le="0.05"} 0
+tensorfold:time_to_first_token_seconds_bucket{le="0.1"} 0
+tensorfold:time_to_first_token_seconds_bucket{le="0.25"} 0
+tensorfold:time_to_first_token_seconds_bucket{le="0.5"} 2
+tensorfold:time_to_first_token_seconds_bucket{le="1"} 31
+tensorfold:time_to_first_token_seconds_bucket{le="2.5"} 824
+tensorfold:time_to_first_token_seconds_bucket{le="5"} 873
+tensorfold:time_to_first_token_seconds_bucket{le="10"} 901
+tensorfold:time_to_first_token_seconds_bucket{le="30"} 903
+tensorfold:time_to_first_token_seconds_bucket{le="60"} 905
+tensorfold:time_to_first_token_seconds_bucket{le="120"} 906
+tensorfold:time_to_first_token_seconds_bucket{le="300"} 910
+tensorfold:time_to_first_token_seconds_bucket{le="+Inf"} 911
+tensorfold:time_to_first_token_seconds_sum 3188.093322
+tensorfold:time_to_first_token_seconds_count 911
+# HELP tensorfold:request_decode_seconds Seconds a finished request spent decoding. Its sum over generation_tokens_total is the decode rate.
+# TYPE tensorfold:request_decode_seconds histogram
+tensorfold:request_decode_seconds_bucket{le="0.01"} 0
+tensorfold:request_decode_seconds_bucket{le="0.05"} 0
+tensorfold:request_decode_seconds_bucket{le="0.1"} 0
+tensorfold:request_decode_seconds_bucket{le="0.25"} 2
+tensorfold:request_decode_seconds_bucket{le="0.5"} 4
+tensorfold:request_decode_seconds_bucket{le="1"} 9
+tensorfold:request_decode_seconds_bucket{le="2.5"} 130
+tensorfold:request_decode_seconds_bucket{le="5"} 369
+tensorfold:request_decode_seconds_bucket{le="10"} 733
+tensorfold:request_decode_seconds_bucket{le="30"} 872
+tensorfold:request_decode_seconds_bucket{le="60"} 889
+tensorfold:request_decode_seconds_bucket{le="120"} 904
+tensorfold:request_decode_seconds_bucket{le="300"} 911
+tensorfold:request_decode_seconds_bucket{le="+Inf"} 911
+tensorfold:request_decode_seconds_sum 8928.651192
+tensorfold:request_decode_seconds_count 911
+# HELP tensorfold:request_time_per_output_token_seconds Seconds from the first generated token to the last, divided by the tokens less one.
+# TYPE tensorfold:request_time_per_output_token_seconds histogram
+tensorfold:request_time_per_output_token_seconds_bucket{le="0.0025"} 0
+tensorfold:request_time_per_output_token_seconds_bucket{le="0.005"} 0
+tensorfold:request_time_per_output_token_seconds_bucket{le="0.0075"} 0
+tensorfold:request_time_per_output_token_seconds_bucket{le="0.01"} 0
+tensorfold:request_time_per_output_token_seconds_bucket{le="0.015"} 0
+tensorfold:request_time_per_output_token_seconds_bucket{le="0.02"} 141
+tensorfold:request_time_per_output_token_seconds_bucket{le="0.025"} 588
+tensorfold:request_time_per_output_token_seconds_bucket{le="0.03"} 780
+tensorfold:request_time_per_output_token_seconds_bucket{le="0.04"} 871
+tensorfold:request_time_per_output_token_seconds_bucket{le="0.05"} 900
+tensorfold:request_time_per_output_token_seconds_bucket{le="0.075"} 908
+tensorfold:request_time_per_output_token_seconds_bucket{le="0.1"} 910
+tensorfold:request_time_per_output_token_seconds_bucket{le="0.15"} 910
+tensorfold:request_time_per_output_token_seconds_bucket{le="0.2"} 910
+tensorfold:request_time_per_output_token_seconds_bucket{le="0.3"} 910
+tensorfold:request_time_per_output_token_seconds_bucket{le="0.5"} 910
+tensorfold:request_time_per_output_token_seconds_bucket{le="1"} 910
+tensorfold:request_time_per_output_token_seconds_bucket{le="+Inf"} 910
+tensorfold:request_time_per_output_token_seconds_sum 22.790984
+tensorfold:request_time_per_output_token_seconds_count 910
+# HELP tensorfold:decode_rounds_total Decode rounds used by finished requests.
+# TYPE tensorfold:decode_rounds_total counter
+tensorfold:decode_rounds_total 95859
+# HELP tensorfold:request_prefill_seconds Seconds a finished request's prompt pass took.
+# TYPE tensorfold:request_prefill_seconds histogram
+tensorfold:request_prefill_seconds_bucket{le="0.01"} 0
+tensorfold:request_prefill_seconds_bucket{le="0.05"} 0
+tensorfold:request_prefill_seconds_bucket{le="0.1"} 0
+tensorfold:request_prefill_seconds_bucket{le="0.25"} 0
+tensorfold:request_prefill_seconds_bucket{le="0.5"} 2
+tensorfold:request_prefill_seconds_bucket{le="1"} 557
+tensorfold:request_prefill_seconds_bucket{le="2.5"} 851
+tensorfold:request_prefill_seconds_bucket{le="5"} 882
+tensorfold:request_prefill_seconds_bucket{le="10"} 901
+tensorfold:request_prefill_seconds_bucket{le="30"} 903
+tensorfold:request_prefill_seconds_bucket{le="60"} 905
+tensorfold:request_prefill_seconds_bucket{le="120"} 907
+tensorfold:request_prefill_seconds_bucket{le="300"} 910
+tensorfold:request_prefill_seconds_bucket{le="+Inf"} 911
+tensorfold:request_prefill_seconds_sum 2504.372285
+tensorfold:request_prefill_seconds_count 911
+# HELP tensorfold:process_resident_bytes Current resident set (VmRSS); device memory is not in it, so it is not a physical footprint (Linux).
+# TYPE tensorfold:process_resident_bytes gauge
+tensorfold:process_resident_bytes 5369499648
+# HELP tensorfold:process_resident_anon_bytes Current resident anonymous memory (RssAnon): heap, stacks and private maps (Linux).
+# TYPE tensorfold:process_resident_anon_bytes gauge
+tensorfold:process_resident_anon_bytes 3459420160
+# HELP tensorfold:process_resident_file_bytes Current resident file-backed memory (RssFile): the binary, libraries and mapped files (Linux).
+# TYPE tensorfold:process_resident_file_bytes gauge
+tensorfold:process_resident_file_bytes 376094720
+# HELP tensorfold:process_resident_shmem_bytes Current resident shared memory (RssShmem): System V shared memory, tmpfs maps and shared anonymous maps (Linux).
+# TYPE tensorfold:process_resident_shmem_bytes gauge
+tensorfold:process_resident_shmem_bytes 1533984768
+# HELP tensorfold:process_resident_peak_bytes Kernel lifetime peak resident set (VmHWM); never reset by health (Linux).
+# TYPE tensorfold:process_resident_peak_bytes gauge
+tensorfold:process_resident_peak_bytes 6723608576
+# HELP tensorfold:device_memory_bytes Device memory the engine holds now: weights, caches and live streams; only where the backend counts it (CUDA).
+# TYPE tensorfold:device_memory_bytes gauge
+tensorfold:device_memory_bytes 109392606572
+# HELP tensorfold:device_memory_peak_bytes The most device memory the engine has held since start or the last /health?reset_peak=1.
+# TYPE tensorfold:device_memory_peak_bytes gauge
+tensorfold:device_memory_peak_bytes 111950858876
+# HELP tensorfold:pinned_memory_bytes Pinned host memory the engine holds now: staging buffers and windows; only where the backend counts it (CUDA).
+# TYPE tensorfold:pinned_memory_bytes gauge
+tensorfold:pinned_memory_bytes 0
+# HELP tensorfold:num_requests_running Requests in prefill or decode. A mirror of tensorfold:requests_running.
+# TYPE tensorfold:num_requests_running gauge
+tensorfold:num_requests_running 0
+# HELP tensorfold:num_requests_waiting Requests queued or held until a lane is free. A mirror of tensorfold:requests_waiting.
+# TYPE tensorfold:num_requests_waiting gauge
+tensorfold:num_requests_waiting 0
+# HELP tensorfold:kv_cache_usage_perc A stream's cache occupancy under vLLM's name; same streams and ratios as tensorfold:kv_cache_usage_ratio.
+# TYPE tensorfold:kv_cache_usage_perc gauge
+tensorfold:kv_cache_usage_perc{stream="0"} 0
+# HELP tensorfold:spec_decode_num_draft_tokens_total Draft tokens verified on finished requests, this server's single draft counter.
+# TYPE tensorfold:spec_decode_num_draft_tokens_total counter
+tensorfold:spec_decode_num_draft_tokens_total 377838
+# HELP tensorfold:spec_decode_num_accepted_tokens_total Draft tokens kept on finished requests.
+# TYPE tensorfold:spec_decode_num_accepted_tokens_total counter
+tensorfold:spec_decode_num_accepted_tokens_total 246617
+# HELP tensorfold:e2e_request_latency_seconds Seconds from arrival to the reply leaving, under vLLM's name.
+# TYPE tensorfold:e2e_request_latency_seconds histogram
+tensorfold:e2e_request_latency_seconds_bucket{le="0.01"} 0
+tensorfold:e2e_request_latency_seconds_bucket{le="0.05"} 0
+tensorfold:e2e_request_latency_seconds_bucket{le="0.1"} 0
+tensorfold:e2e_request_latency_seconds_bucket{le="0.25"} 0
+tensorfold:e2e_request_latency_seconds_bucket{le="0.5"} 0
+tensorfold:e2e_request_latency_seconds_bucket{le="1"} 3
+tensorfold:e2e_request_latency_seconds_bucket{le="2.5"} 10
+tensorfold:e2e_request_latency_seconds_bucket{le="5"} 197
+tensorfold:e2e_request_latency_seconds_bucket{le="10"} 645
+tensorfold:e2e_request_latency_seconds_bucket{le="30"} 861
+tensorfold:e2e_request_latency_seconds_bucket{le="60"} 884
+tensorfold:e2e_request_latency_seconds_bucket{le="120"} 898
+tensorfold:e2e_request_latency_seconds_bucket{le="300"} 916
+tensorfold:e2e_request_latency_seconds_bucket{le="+Inf"} 917
+tensorfold:e2e_request_latency_seconds_sum 13789.298071
+tensorfold:e2e_request_latency_seconds_count 917
+# HELP tensorfold:request_decode_time_seconds Seconds a finished request spent decoding, under vLLM's name.
+# TYPE tensorfold:request_decode_time_seconds histogram
+tensorfold:request_decode_time_seconds_bucket{le="0.01"} 0
+tensorfold:request_decode_time_seconds_bucket{le="0.05"} 0
+tensorfold:request_decode_time_seconds_bucket{le="0.1"} 0
+tensorfold:request_decode_time_seconds_bucket{le="0.25"} 2
+tensorfold:request_decode_time_seconds_bucket{le="0.5"} 4
+tensorfold:request_decode_time_seconds_bucket{le="1"} 9
+tensorfold:request_decode_time_seconds_bucket{le="2.5"} 130
+tensorfold:request_decode_time_seconds_bucket{le="5"} 369
+tensorfold:request_decode_time_seconds_bucket{le="10"} 733
+tensorfold:request_decode_time_seconds_bucket{le="30"} 872
+tensorfold:request_decode_time_seconds_bucket{le="60"} 889
+tensorfold:request_decode_time_seconds_bucket{le="120"} 904
+tensorfold:request_decode_time_seconds_bucket{le="300"} 911
+tensorfold:request_decode_time_seconds_bucket{le="+Inf"} 911
+tensorfold:request_decode_time_seconds_sum 8928.651192
+tensorfold:request_decode_time_seconds_count 911
+# HELP tensorfold:request_prefill_time_seconds Seconds a finished request's prompt pass took, under vLLM's name.
+# TYPE tensorfold:request_prefill_time_seconds histogram
+tensorfold:request_prefill_time_seconds_bucket{le="0.01"} 0
+tensorfold:request_prefill_time_seconds_bucket{le="0.05"} 0
+tensorfold:request_prefill_time_seconds_bucket{le="0.1"} 0
+tensorfold:request_prefill_time_seconds_bucket{le="0.25"} 0
+tensorfold:request_prefill_time_seconds_bucket{le="0.5"} 2
+tensorfold:request_prefill_time_seconds_bucket{le="1"} 557
+tensorfold:request_prefill_time_seconds_bucket{le="2.5"} 851
+tensorfold:request_prefill_time_seconds_bucket{le="5"} 882
+tensorfold:request_prefill_time_seconds_bucket{le="10"} 901
+tensorfold:request_prefill_time_seconds_bucket{le="30"} 903
+tensorfold:request_prefill_time_seconds_bucket{le="60"} 905
+tensorfold:request_prefill_time_seconds_bucket{le="120"} 907
+tensorfold:request_prefill_time_seconds_bucket{le="300"} 910
+tensorfold:request_prefill_time_seconds_bucket{le="+Inf"} 911
+tensorfold:request_prefill_time_seconds_sum 2504.372285
+tensorfold:request_prefill_time_seconds_count 911
+# HELP tensorfold:client_disconnections_total Requests a client left before the reply left the server.
+# TYPE tensorfold:client_disconnections_total counter
+tensorfold:client_disconnections_total 7
+# HELP tensorfold:server_info This server: its served model, backend, release and process instance; always 1.
+# TYPE tensorfold:server_info gauge
+tensorfold:server_info{model="deepseek-v4.1-flash",backend="cuda",version="1.2.5",instance="14e901e3f28b676cec6e93ccb76f2e09"} 1
+# HELP tensorfold:process_start_time_seconds Unix time the server process started.
+# TYPE tensorfold:process_start_time_seconds gauge
+tensorfold:process_start_time_seconds 1795163610
+# HELP tensorfold:engine_parked 1 while the idle unload has closed the engine: no engine value is shown then.
+# TYPE tensorfold:engine_parked gauge
+tensorfold:engine_parked 0
+# HELP tensorfold:lanes Lanes the engine serves at once.
+# TYPE tensorfold:lanes gauge
+tensorfold:lanes 4
+# HELP tensorfold:http_requests_active Model requests from the end of their headers to the end of their reply, by route group.
+# TYPE tensorfold:http_requests_active gauge
+tensorfold:http_requests_active{route="chat_completions"} 0
+tensorfold:http_requests_active{route="completions"} 0
+tensorfold:http_requests_active{route="responses"} 0
+tensorfold:http_requests_active{route="messages"} 0
+tensorfold:http_requests_active{route="embeddings"} 0
+tensorfold:http_requests_active{route="speech"} 0
+tensorfold:http_requests_active{route="other"} 0

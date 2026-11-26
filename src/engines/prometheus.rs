@@ -62,16 +62,18 @@ impl ParsedMetrics {
 /// series, as a plain name-keyed map would, reports a fraction of the engine
 /// that depends on exposition order.
 pub fn parse_prometheus_text(body: &str) -> Option<ParsedMetrics> {
-    // Normalize colons in metric name prefixes to underscores. vLLM, SGLang
-    // and llama.cpp use colons (e.g. "vllm:kv_cache_usage_perc",
-    // "sglang:num_running_reqs", "llamacpp:tokens_predicted_total") which are
-    // reserved for Prometheus recording rules and get silently dropped by
-    // prometheus-parse. Replace in both metric lines and # TYPE/# HELP lines
-    // so the parser can match samples to their type declarations.
+    // Normalize colons in metric name prefixes to underscores. vLLM, SGLang,
+    // llama.cpp and TensorFold use colons (e.g. "vllm:kv_cache_usage_perc",
+    // "sglang:num_running_reqs", "llamacpp:tokens_predicted_total",
+    // "tensorfold:requests_running") which are reserved for Prometheus
+    // recording rules and get silently dropped by prometheus-parse. Replace in
+    // both metric lines and # TYPE/# HELP lines so the parser can match
+    // samples to their type declarations.
     let normalized = body
         .replace("vllm:", "vllm_")
         .replace("sglang:", "sglang_")
-        .replace("llamacpp:", "llamacpp_");
+        .replace("llamacpp:", "llamacpp_")
+        .replace("tensorfold:", "tensorfold_");
 
     let reader = std::io::BufReader::new(normalized.as_bytes());
     let scrape = prometheus_parse::Scrape::parse(reader.lines()).ok()?;
@@ -264,6 +266,66 @@ llamacpp:spec_decode_num_accepted_tokens_per_pos_total{position=\"1\"} 80
             Some(&162.0)
         );
         assert!(parsed.gauges.keys().all(|name| !name.contains(':')));
+    }
+
+    /// TensorFold prefixes every series `tensorfold:`, in samples and in
+    /// `# TYPE` lines alike. The colon is normalized like the other engines'
+    /// prefixes, so each sample keeps the type its declaration gives it — a
+    /// counter lands in `counters`, a gauge in `gauges`, a histogram under its
+    /// base name — and the adapter can read them under the underscored names.
+    #[test]
+    fn tensorfold_series_arrive_under_underscored_names_with_their_types() {
+        let body = "\
+# HELP tensorfold:requests_running Requests in prefill or decode.
+# TYPE tensorfold:requests_running gauge
+tensorfold:requests_running 2
+# HELP tensorfold:prompt_tokens_total Prompt tokens of finished requests.
+# TYPE tensorfold:prompt_tokens_total counter
+tensorfold:prompt_tokens_total 1203686
+# HELP tensorfold:time_to_first_token_seconds Seconds from arrival to the first generated token.
+# TYPE tensorfold:time_to_first_token_seconds histogram
+tensorfold:time_to_first_token_seconds_bucket{le=\"0.5\"} 1
+tensorfold:time_to_first_token_seconds_bucket{le=\"+Inf\"} 2
+tensorfold:time_to_first_token_seconds_sum 3.0
+tensorfold:time_to_first_token_seconds_count 2
+# TYPE tensorfold:kv_cache_usage_ratio gauge
+tensorfold:kv_cache_usage_ratio{pool=\"0\"} 0.5
+tensorfold:kv_cache_usage_ratio{pool=\"1\"} 0.3
+";
+        let parsed = parse_prometheus_text(body).expect("parse");
+        assert_eq!(parsed.gauge_sum("tensorfold_requests_running"), Some(2.0));
+        assert_eq!(
+            parsed.counters.get("tensorfold_prompt_tokens_total"),
+            Some(&1_203_686.0)
+        );
+        assert_eq!(
+            parsed
+                .counters
+                .get("tensorfold_time_to_first_token_seconds_sum"),
+            Some(&3.0)
+        );
+        assert_eq!(
+            parsed
+                .counters
+                .get("tensorfold_time_to_first_token_seconds_count"),
+            Some(&2.0)
+        );
+        let buckets = parsed
+            .histograms
+            .get("tensorfold_time_to_first_token_seconds")
+            .expect("histogram captured under its base name");
+        assert_eq!(buckets.len(), 2);
+        assert!(buckets[1].0.is_infinite());
+        assert_eq!(
+            parsed.gauge_mean("tensorfold_kv_cache_usage_ratio"),
+            Some(0.4)
+        );
+        assert!(parsed
+            .gauges
+            .keys()
+            .chain(parsed.counters.keys())
+            .chain(parsed.histograms.keys())
+            .all(|name| !name.contains(':')));
     }
 
     #[test]
