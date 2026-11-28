@@ -29,8 +29,12 @@ pub struct DetectedEngine {
     /// Where else to probe, in order, when `endpoint` does not answer as
     /// this engine type: a llama-server whose launch names no port is on
     /// one of llama.cpp's default ports (`llamacpp::default_ports`), and
-    /// only the probe can tell which. Empty for every other candidate, and
-    /// once verified — `endpoint` is then the one that answered.
+    /// only the probe can tell which; a container is on each published port
+    /// and each of its addresses on its networks (`container_addresses`).
+    /// Empty for every other candidate. Once verified, `endpoint` is the one
+    /// that answered and these are the others it was probed on: a container
+    /// that answers on another of its addresses one round is still the engine
+    /// the engine map knows on the first (`engines::engine_key`).
     pub fallback_endpoints: Vec<String>,
 }
 
@@ -94,15 +98,15 @@ async fn verify_candidates(
     // slowest candidate (at most CANDIDATE_PROBE_BUDGET), not the sum.
     let probes = candidates.into_iter().map(|mut candidate| async move {
         let fallbacks = std::mem::take(&mut candidate.fallback_endpoints);
+        let endpoints: Vec<String> = std::iter::once(candidate.endpoint.clone())
+            .chain(fallbacks)
+            .collect();
         let probe = async {
-            for endpoint in std::iter::once(candidate.endpoint.clone()).chain(fallbacks) {
-                let http = EngineHttp::new(
-                    client.clone(),
-                    endpoint.clone(),
-                    api_keys.resolve(&endpoint),
-                );
+            for endpoint in &endpoints {
+                let http =
+                    EngineHttp::new(client.clone(), endpoint.clone(), api_keys.resolve(endpoint));
                 if probe_engine(&http, &candidate.engine_type).await {
-                    return Some(endpoint);
+                    return Some(endpoint.clone());
                 }
             }
             None
@@ -118,6 +122,7 @@ async fn verify_candidates(
                 candidate.endpoint,
             );
         }
+        candidate.fallback_endpoints = endpoints.into_iter().filter(|e| *e != endpoint).collect();
         candidate.endpoint = endpoint;
         Some(candidate)
     });
@@ -137,6 +142,26 @@ async fn verify_candidates(
 /// and llama.cpp's two routes). A longer chain — fallback endpoints that hang
 /// — drops that candidate for the round instead of the whole round.
 const CANDIDATE_PROBE_BUDGET: std::time::Duration = std::time::Duration::from_secs(4);
+
+/// How long a detection probe waits for its TCP connection. Every candidate
+/// is on this host — its loopback, its interfaces, or a container's address
+/// on one of its Docker networks — where a connection is made or refused in
+/// well under a millisecond. Only an address nothing answers at all hangs
+/// instead: a container's address on a network the dashboard is not
+/// attached to (a bridge-networked dashboard's view of another network),
+/// which would otherwise hold its candidate for the whole 2 s request
+/// timeout on every endpoint, every detection round.
+const PROBE_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(400);
+
+/// The HTTP client detection probes candidates with (`detect_engines`): the
+/// engines' own 2 s request timeout, and `PROBE_CONNECT_TIMEOUT` to connect.
+pub fn probe_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .connect_timeout(PROBE_CONNECT_TIMEOUT)
+        .build()
+        .unwrap_or_default()
+}
 
 /// Merge Docker results into the process-scan candidates.
 ///
@@ -494,24 +519,144 @@ fn classify_container(names: &[String], image: &str, command: &str) -> Option<Co
     }
 }
 
-/// The endpoint to probe a container's vLLM on, and whether the port had to be
-/// assumed.
+/// The endpoints a containerized vLLM or SGLang server answers on from the
+/// host, in the order to probe them, given the port it listens on inside the
+/// container (`listen_port`, else the engine's default), its network mode,
+/// its published ports and its addresses on its networks
+/// (`container_addresses`):
 ///
-/// No port anywhere — no published binding, no `--port` in the command, none in
-/// the container's process list — means vLLM is on its own default. That is the
-/// normal shape of a host-networked container: it publishes nothing, because it
-/// is already on the host's ports.
+/// - on the host network it is on the host's own ports, probed on
+///   localhost;
+/// - otherwise first the host port that publishes the listening port, then
+///   any other published port: a port set where no command line shows it (a
+///   config file's) can still be published, and the probe rejects what is
+///   not the engine — each on localhost when published on every interface
+///   or on a loopback address (`vllm_published_endpoint`);
+/// - after those, on a bridge or other network of its own, the listening
+///   port on each of the container's addresses, which a host-networked or
+///   native dashboard reaches directly;
+/// - with none of those to try — the network mode unreported, another
+///   container's, or no address — the listening port on localhost, as on the
+///   host network;
+/// - on no network at all (`none`), nothing: nothing outside reaches it, and
+///   its port guessed on localhost would be whatever else is there.
 ///
-/// Assuming is safe and dropping the container is not. The health probe rejects
-/// a candidate whose `/health` does not answer, so a wrong assumption costs one
-/// request and corrects itself — while a container dropped for having no
-/// readable port is invisible to the dashboard for good, engine, metrics and
-/// logs alike.
-fn docker_endpoint(port: Option<&str>, default_port: u16) -> (String, bool) {
-    match port {
-        Some(p) => (format!("http://localhost:{}", p), false),
-        None => (format!("http://localhost:{}", default_port), true),
+/// Guessing is safe and dropping the container is not: the health probe
+/// rejects a candidate that does not answer, so a wrong guess costs one
+/// request, while a container dropped here would be invisible to the
+/// dashboard for good — engine, metrics and logs alike.
+#[cfg(any(target_os = "linux", test))]
+fn vllm_container_endpoints(
+    port: u16,
+    network_mode: Option<&str>,
+    published: &[PublishedPort<'_>],
+    addresses: &[&str],
+) -> Vec<String> {
+    match network_mode {
+        Some("host") => return vec![format!("http://localhost:{port}")],
+        Some("none") => return Vec::new(),
+        _ => {}
     }
+    let mut bindings: Vec<(u16, u16, Option<&str>)> = published
+        .iter()
+        .filter(|p| p.tcp)
+        .filter_map(|p| Some((p.container, p.host?, p.host_ip)))
+        .collect();
+    // The listening port's first, the rest in the order Docker lists them.
+    bindings.sort_by_key(|&(container, _, _)| container != port);
+    let mut endpoints: Vec<String> = Vec::new();
+    for (_, host_port, host_ip) in bindings {
+        let endpoint = vllm_published_endpoint(host_ip, host_port);
+        if !endpoints.contains(&endpoint) {
+            endpoints.push(endpoint);
+        }
+    }
+    if network_mode.is_some_and(|mode| !mode.starts_with("container:")) {
+        endpoints.extend(container_address_endpoints(addresses, &[port]));
+    }
+    if endpoints.is_empty() {
+        endpoints.push(format!("http://localhost:{port}"));
+    }
+    endpoints
+}
+
+/// The endpoint a vLLM or SGLang container's published port is probed on:
+/// localhost when it is published on every interface (`0.0.0.0`, `::`, or
+/// no address named) or on a loopback address (`127.0.0.1`, `::1`) — the
+/// endpoint every published port was probed on before, which is the
+/// engine's identity (its key, saved panel bindings, per-endpoint API keys)
+/// — else the one address it is bound to, the only one it answers on.
+#[cfg(any(target_os = "linux", test))]
+fn vllm_published_endpoint(host_ip: Option<&str>, port: u16) -> String {
+    let bound = host_ip
+        .unwrap_or_default()
+        .trim_matches(['[', ']'])
+        .parse::<std::net::IpAddr>();
+    match bound {
+        Ok(ip) if !ip.is_unspecified() && !ip.is_loopback() => llamacpp_endpoint(host_ip, port),
+        _ => format!("http://localhost:{port}"),
+    }
+}
+
+/// The port a containerized vLLM or SGLang server listens on inside its
+/// container, as its `--port` says: on the container's own command line,
+/// else on a process of the container's (`docker top`) that runs the engine
+/// (`runs_engine`), else on any of its processes. `None` when no command
+/// line names one: the engine's default, or a port set in a config file.
+///
+/// The container's command is only its entrypoint, and often a wrapper's,
+/// so the engine's own process comes before the others: a sidecar of the
+/// container's — a metrics exporter, a proxy — listed first with a
+/// `--port` of its own is not where the engine listens.
+#[cfg(any(target_os = "linux", test))]
+fn listen_port(
+    engine_type: &EngineType,
+    container_command: &str,
+    commands: &[String],
+) -> Option<u16> {
+    parse_port_from_command_str(container_command)
+        .or_else(|| {
+            commands
+                .iter()
+                .filter(|c| runs_engine(c, engine_type))
+                .find_map(|c| parse_port_from_command_str(c))
+        })
+        .or_else(|| commands.iter().find_map(|c| parse_port_from_command_str(c)))
+}
+
+/// A container's addresses on the networks it is attached to, from the
+/// Docker API's `(network name, IPv4 address)` pairs: ordered by network
+/// name — the API's map has no order of its own, and the first is the one
+/// probed first — without an empty address (a network being joined, or a
+/// network mode that gives the container none) or a repeat.
+///
+/// IPv4 only: a network's `GlobalIPv6Address` is not read, so a container
+/// on an IPv6-only network has no address here.
+#[cfg(any(target_os = "linux", test))]
+fn container_addresses<'a>(mut networks: Vec<(&'a str, &'a str)>) -> Vec<&'a str> {
+    networks.sort_unstable();
+    let mut addresses: Vec<&str> = Vec::new();
+    for (_, address) in networks {
+        let address = address.trim();
+        if !address.is_empty() && !addresses.contains(&address) {
+            addresses.push(address);
+        }
+    }
+    addresses
+}
+
+/// The endpoints on a container's own addresses: each address with each of
+/// `ports` in order, the first address first.
+#[cfg(any(target_os = "linux", test))]
+fn container_address_endpoints(addresses: &[&str], ports: &[u16]) -> Vec<String> {
+    addresses
+        .iter()
+        .flat_map(|&address| {
+            ports
+                .iter()
+                .map(move |&port| llamacpp_endpoint(Some(address), port))
+        })
+        .collect()
 }
 
 /// A port a container publishes, as the Docker API lists it.
@@ -531,7 +676,9 @@ struct PublishedPort<'a> {
 
 /// The endpoint a containerized Ollama answers on from the host, given the
 /// address it listens on inside the container (its `OLLAMA_HOST`, the image
-/// sets `0.0.0.0:11434`), its network mode and its published ports:
+/// sets `0.0.0.0:11434`), its network mode, its published ports and its
+/// addresses on its networks (`container_addresses`) — the first endpoint
+/// the one to probe first, the rest its fallbacks:
 ///
 /// - on the host network it listens on the host's own interfaces, read
 ///   like a native server's;
@@ -541,18 +688,21 @@ struct PublishedPort<'a> {
 ///   not report, or one shared with another container, the listening
 ///   address is assumed reachable as on the host network — the probe
 ///   rejects a wrong guess;
-/// - on a bridge or other network with nothing published, `None`: the
-///   server is unreachable from the host, and assuming its port would
-///   point at whatever else is there, typically a native Ollama on the
-///   default port.
+/// - on a bridge or other network with nothing published, the listening
+///   port on each of the container's addresses, which a host-networked or
+///   native dashboard reaches directly;
+/// - with no address either, none: the server is unreachable from the
+///   host, and assuming its port on localhost would point at whatever else
+///   is there, typically a native Ollama on the default port.
 #[cfg(any(target_os = "linux", test))]
-fn ollama_container_endpoint(
+fn ollama_container_endpoints(
     listen: &OllamaHost,
     network_mode: Option<&str>,
     published: &[PublishedPort<'_>],
-) -> Option<String> {
+    addresses: &[&str],
+) -> Vec<String> {
     if network_mode == Some("host") {
-        return Some(listen.endpoint());
+        return vec![listen.endpoint()];
     }
     let binding = published
         .iter()
@@ -570,12 +720,12 @@ fn ollama_container_endpoint(
             port,
             ..OllamaHost::from_env(None)
         };
-        return Some(published.endpoint());
+        return vec![published.endpoint()];
     }
     match network_mode {
-        None => Some(listen.endpoint()),
-        Some(mode) if mode.starts_with("container:") => Some(listen.endpoint()),
-        Some(_) => None,
+        None => vec![listen.endpoint()],
+        Some(mode) if mode.starts_with("container:") => vec![listen.endpoint()],
+        Some(_) => container_address_endpoints(addresses, &[listen.port]),
     }
 }
 
@@ -800,7 +950,8 @@ fn llamacpp_endpoint(host: Option<&str>, port: u16) -> String {
 
 /// The endpoints a containerized llama-server answers on from the host, in
 /// the order to probe them, given where it listens inside the container,
-/// its network mode and its published ports:
+/// its network mode, its published ports and its addresses on its networks
+/// (`container_addresses`):
 ///
 /// - on the host network it listens on the host's own interfaces, read
 ///   like a native server's;
@@ -811,15 +962,19 @@ fn llamacpp_endpoint(host: Option<&str>, port: u16) -> String {
 /// - with nothing published there and a network mode the Docker API did not
 ///   report, or one shared with another container, the listening ports are
 ///   assumed reachable as on the host network;
-/// - on a bridge or other network with nothing published, none: the server
-///   is unreachable from the host, and assuming its port would point at
-///   whatever else is there — a native llama-server on 8080, say, whose
-///   engine would then take this container for its own.
+/// - on a bridge or other network with nothing published, the ports it may
+///   listen on, in order, on each of the container's addresses, which a
+///   host-networked or native dashboard reaches directly;
+/// - with no address either, none: the server is unreachable from the
+///   host, and assuming its port on localhost would point at whatever else
+///   is there — a native llama-server on 8080, say, whose engine would then
+///   take this container for its own.
 #[cfg(any(target_os = "linux", test))]
 fn llamacpp_container_endpoints(
     listen: &LlamaCppListen<'_>,
     network_mode: Option<&str>,
     published: &[PublishedPort<'_>],
+    addresses: &[&str],
 ) -> Vec<String> {
     let listening = || {
         let (endpoint, fallbacks) = listen.endpoints();
@@ -852,7 +1007,7 @@ fn llamacpp_container_endpoints(
     match network_mode {
         None => listening(),
         Some(mode) if mode.starts_with("container:") => listening(),
-        Some(_) => Vec::new(),
+        Some(_) => container_address_endpoints(addresses, &listen.ports().collect::<Vec<_>>()),
     }
 }
 
@@ -1482,11 +1637,14 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
             continue;
         }
 
-        // Where the host reaches the container: its published ports and its
-        // network mode. Ollama and llama.cpp read where they listen inside
-        // it from the container's environment (`docker inspect`'s
-        // Config.Env, the image's merged with the run's): its server runs as
-        // root, so the host cannot read that process's environment.
+        // Where the host reaches the container: its published ports, its
+        // network mode and its addresses on its networks (a compose
+        // project's network, say, with nothing published — reachable from a
+        // host-networked dashboard). Ollama and llama.cpp read where they
+        // listen inside it from the container's environment (`docker
+        // inspect`'s Config.Env, the image's merged with the run's): its
+        // server runs as root, so the host cannot read that process's
+        // environment.
         let published: Vec<PublishedPort<'_>> = container
             .ports
             .iter()
@@ -1505,6 +1663,19 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
             .host_config
             .as_ref()
             .and_then(|h| h.network_mode.as_deref());
+        let addresses = container_addresses(
+            container
+                .network_settings
+                .iter()
+                .flat_map(|settings| settings.networks.iter().flatten())
+                .map(|(name, network)| {
+                    (
+                        name.as_str(),
+                        network.ip_address.as_deref().unwrap_or_default(),
+                    )
+                })
+                .collect(),
+        );
         let env = match engine_type {
             EngineType::Ollama | EngineType::LlamaCpp => container_env(&docker, container_id).await,
             EngineType::Vllm | EngineType::Sglang => Vec::new(),
@@ -1518,19 +1689,21 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
             // all, which is not where Ollama serves, so no port is read off
             // it.
             let listen = OllamaHost::from_env(env_var("OLLAMA_HOST").as_deref());
-            match ollama_container_endpoint(&listen, network_mode, &published) {
-                Some(endpoint) => (endpoint, Vec::new(), None),
-                None => {
-                    tracing::debug!(
-                        "Ollama container (image={}) is not on the host network and publishes \
-                         no port for {}; unreachable from the host. Publish the port, or \
-                         configure it with --engine ollama --engine-url <url>.",
-                        container.image.as_deref().unwrap_or("?"),
-                        listen.port,
-                    );
-                    continue;
-                }
-            }
+            let mut endpoints =
+                ollama_container_endpoints(&listen, network_mode, &published, &addresses)
+                    .into_iter();
+            let Some(endpoint) = endpoints.next() else {
+                tracing::debug!(
+                    "Ollama container (image={}) is not on the host network, publishes \
+                     no port for {} and has no address on its network; unreachable from \
+                     the host. Publish the port, or configure it with --engine ollama \
+                     --engine-url <url>.",
+                    container.image.as_deref().unwrap_or("?"),
+                    listen.port,
+                );
+                continue;
+            };
+            (endpoint, endpoints.collect(), None)
         } else if engine_type == EngineType::LlamaCpp {
             // llama-server listens where its command line says, else its
             // LLAMA_ARG_* environment — the official images set
@@ -1554,12 +1727,14 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
                 continue;
             };
             let mut endpoints =
-                llamacpp_container_endpoints(&listen, network_mode, &published).into_iter();
+                llamacpp_container_endpoints(&listen, network_mode, &published, &addresses)
+                    .into_iter();
             let Some(endpoint) = endpoints.next() else {
                 tracing::debug!(
-                    "llama.cpp container (image={}) is not on the host network and publishes \
-                     no port for {:?}; unreachable from the host. Publish the port, or \
-                     configure it with --engine llamacpp --engine-url <url>.",
+                    "llama.cpp container (image={}) is not on the host network, publishes \
+                     no port for {:?} and has no address on its network; unreachable from \
+                     the host. Publish the port, or configure it with --engine llamacpp \
+                     --engine-url <url>.",
                     container.image.as_deref().unwrap_or("?"),
                     listen.ports().collect::<Vec<_>>(),
                 );
@@ -1567,40 +1742,41 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
             };
             (endpoint, endpoints.collect(), launch.served_model())
         } else {
-            // The port from the container's port mappings (-p / port
-            // forwarding), else its own command string, else its process
-            // list; the model from the command string, else the process list.
+            // The port it listens on inside the container from its own
+            // command string, else its process list (`listen_port`), else
+            // the engine's default; the model from the command string, else
+            // the process list. Where the host reaches that port is the
+            // network's say (`vllm_container_endpoints`): the port that
+            // publishes it first, then any other published port.
             let container_cmd = container.command.as_deref().unwrap_or_default();
-            let port = container
-                .ports
-                .iter()
-                .flatten()
-                .find_map(|p| p.public_port)
-                .map(|p| p.to_string())
-                .or_else(|| parse_port_from_command_str(container_cmd))
-                .or_else(|| commands.iter().find_map(|c| parse_port_from_command_str(c)));
+            let port = listen_port(&engine_type, container_cmd, &commands);
             let served_model = parse_model_for(&engine_type, container_cmd).or_else(|| {
                 commands
                     .iter()
                     .find_map(|c| parse_model_for(&engine_type, c))
             });
 
-            // No port anywhere — no published binding, no `--port` in the
-            // command, none in the container's process list — means the
-            // engine is on its own default. That is the normal shape of a
-            // host-networked container: it publishes nothing, because it is
-            // already on the host's ports.
-            //
-            // Guessing is safe here and dropping the container is not. The
-            // health probe below rejects a candidate whose `/health` does not
-            // answer, so a wrong guess costs one request and corrects itself,
-            // while a container dropped for having no port is invisible to the
-            // dashboard for good — engine, metrics and logs alike.
-            let (endpoint, guessed) = docker_endpoint(port.as_deref(), default_port(&engine_type));
-            if guessed {
-                tracing::debug!("Docker engine on {endpoint}: no port found, assuming the default");
-            }
-            (endpoint, Vec::new(), served_model)
+            // No `--port` in the command or the container's process list
+            // means the engine is on its own default — the normal shape of
+            // a container started without one.
+            let port = port.unwrap_or_else(|| {
+                tracing::debug!(
+                    "Docker engine (image={}): no --port found, assuming the default",
+                    container.image.as_deref().unwrap_or("?"),
+                );
+                default_port(&engine_type)
+            });
+            let mut endpoints =
+                vllm_container_endpoints(port, network_mode, &published, &addresses).into_iter();
+            let Some(endpoint) = endpoints.next() else {
+                tracing::debug!(
+                    "{engine_type} container (image={}) has no network (network mode none); \
+                     unreachable from the host. Configure it with --engine-url <url>.",
+                    container.image.as_deref().unwrap_or("?"),
+                );
+                continue;
+            };
+            (endpoint, endpoints.collect(), served_model)
         };
         tracing::debug!(
             "Docker engine candidate: image={}, endpoint={}, then {:?}, model={:?}",
@@ -1660,24 +1836,19 @@ fn parse_pid_from_top_row(row: &[String]) -> Option<u32> {
     row.first().and_then(|cell| cell.trim().parse::<u32>().ok())
 }
 
-/// Parse `--port` value from a command string (space-separated).
-#[cfg(target_os = "linux")]
-fn parse_port_from_command_str(cmd: &str) -> Option<String> {
+/// The `--port` (or `--port=`) a command string (space-separated) names,
+/// when it is a port number.
+#[cfg(any(target_os = "linux", test))]
+fn parse_port_from_command_str(cmd: &str) -> Option<u16> {
     let parts: Vec<&str> = cmd.split_whitespace().collect();
-    for (i, part) in parts.iter().enumerate() {
-        if *part == "--port" {
-            if let Some(val) = parts.get(i + 1) {
-                if val.parse::<u16>().is_ok() {
-                    return Some(val.to_string());
-                }
-            }
-        } else if let Some(val) = part.strip_prefix("--port=") {
-            if val.parse::<u16>().is_ok() {
-                return Some(val.to_string());
-            }
-        }
-    }
-    None
+    parts
+        .iter()
+        .enumerate()
+        .find_map(|(i, part)| match part.strip_prefix("--port") {
+            Some("") => parts.get(i + 1)?.parse().ok(),
+            Some(inline) => inline.strip_prefix('=')?.parse().ok(),
+            None => None,
+        })
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -2091,23 +2262,287 @@ mod tests {
         assert!(!runs_engine("tail -f /var/log/vllm.log", &EngineType::Vllm));
     }
 
+    /// The live shape this was found on: a vLLM container on a compose
+    /// project's network (`reda_default`), publishing nothing, serving on
+    /// `--port 8000` inside it. Nothing listens on the host's 8000, so
+    /// localhost was the wrong place to look and the container was dropped;
+    /// its address on its network is where a host-networked dashboard
+    /// reaches it.
     #[test]
-    fn docker_endpoint_uses_the_port_detection_found() {
+    fn a_vllm_container_on_a_network_of_its_own_is_probed_on_its_address() {
         assert_eq!(
-            docker_endpoint(Some("8001"), VLLM_DEFAULT_PORT),
-            ("http://localhost:8001".to_string(), false)
+            vllm_container_endpoints(8000, Some("reda_default"), &[], &["172.21.0.5"]),
+            strings(&["http://172.21.0.5:8000"])
+        );
+        assert_eq!(
+            vllm_container_endpoints(30000, Some("bridge"), &[], &["172.17.0.3"]),
+            strings(&["http://172.17.0.3:30000"])
+        );
+        // On several networks, each address is tried, in network-name order
+        // whatever order the Docker API's map listed them in.
+        for networks in [
+            vec![("zeta", "172.30.0.2"), ("alpha", "172.20.0.4")],
+            vec![("alpha", "172.20.0.4"), ("zeta", "172.30.0.2")],
+        ] {
+            let addresses = container_addresses(networks);
+            assert_eq!(
+                vllm_container_endpoints(8000, Some("alpha"), &[], &addresses),
+                strings(&["http://172.20.0.4:8000", "http://172.30.0.2:8000"])
+            );
+        }
+    }
+
+    /// Host networking, and a published port, are as before: localhost, on
+    /// the host port that publishes the server's own port first. The first
+    /// published port was taken whatever it published, so a container
+    /// publishing a sidecar's port beside vLLM's was probed on the
+    /// sidecar's; it is still tried, after vLLM's, and the container's own
+    /// address after that.
+    #[test]
+    fn a_vllm_container_is_probed_where_the_host_reaches_its_port() {
+        let address = ["172.17.0.3"];
+        assert_eq!(
+            vllm_container_endpoints(8000, Some("host"), &[], &[]),
+            strings(&["http://localhost:8000"])
+        );
+        assert_eq!(
+            vllm_container_endpoints(8001, Some("host"), &[], &address),
+            strings(&["http://localhost:8001"])
+        );
+        // `-p 9000:8000`, listed once per address family.
+        let both = [
+            published(8000, Some(9000), "0.0.0.0"),
+            published(8000, Some(9000), "::"),
+        ];
+        assert_eq!(
+            vllm_container_endpoints(8000, Some("bridge"), &both, &address),
+            strings(&["http://localhost:9000", "http://172.17.0.3:8000"])
+        );
+        // A sidecar's port published first is not vLLM's: vLLM's comes
+        // first, the sidecar's after it.
+        let sidecar_first = [
+            published(9090, Some(19090), "0.0.0.0"),
+            published(8000, Some(18000), "0.0.0.0"),
+        ];
+        assert_eq!(
+            vllm_container_endpoints(8000, Some("bridge"), &sidecar_first, &address),
+            strings(&[
+                "http://localhost:18000",
+                "http://localhost:19090",
+                "http://172.17.0.3:8000",
+            ])
+        );
+        // Only another port published: tried before its address, as a port
+        // set where no command line shows it can still be published there.
+        assert_eq!(
+            vllm_container_endpoints(
+                8000,
+                Some("bridge"),
+                &[published(9090, Some(19090), "0.0.0.0")],
+                &address
+            ),
+            strings(&["http://localhost:19090", "http://172.17.0.3:8000"])
+        );
+        // A UDP binding, or an exposed port not published: not where the
+        // host reaches vLLM, so its address is.
+        let udp = PublishedPort {
+            tcp: false,
+            ..published(8000, Some(8000), "0.0.0.0")
+        };
+        for ports in [vec![udp], vec![published(8000, None, "")]] {
+            assert_eq!(
+                vllm_container_endpoints(8000, Some("bridge"), &ports, &address),
+                strings(&["http://172.17.0.3:8000"]),
+                "{ports:?}"
+            );
+        }
+    }
+
+    /// A vLLM whose port is set in a config file, not on any command line,
+    /// is assumed on its default, 8000; published on 8001 (`-p 8001:8001`),
+    /// that is tried first, as the first published port was before, and the
+    /// default on its address only after.
+    #[test]
+    fn a_vllm_container_listening_where_no_command_line_says_is_probed_on_its_published_port() {
+        assert_eq!(
+            listen_port(&EngineType::Vllm, "vllm serve --config /etc/vllm.yaml", &[]),
+            None
+        );
+        assert_eq!(
+            vllm_container_endpoints(
+                VLLM_DEFAULT_PORT,
+                Some("bridge"),
+                &[
+                    published(8001, Some(8001), "0.0.0.0"),
+                    published(8001, Some(8001), "::"),
+                ],
+                &["172.17.0.3"]
+            ),
+            strings(&["http://localhost:8001", "http://172.17.0.3:8000"])
         );
     }
 
+    /// A port published on every interface, or on a loopback address, is
+    /// probed on localhost — the endpoint it had before, which is the
+    /// engine's identity: its key, saved panel bindings and per-endpoint API
+    /// keys. Only a port bound to one other address is probed there, the
+    /// one place it answers.
     #[test]
-    fn docker_endpoint_assumes_vllms_default_when_no_port_is_readable() {
-        // The host-networked container: it publishes no ports because it is
-        // already on the host's, and it was started without an explicit
-        // --port. Before this it was dropped from detection entirely, which
-        // took its metrics and its logs with it.
+    fn a_vllm_containers_published_port_keeps_its_localhost_endpoint() {
+        for host_ip in [
+            Some("0.0.0.0"),
+            Some("::"),
+            Some(""),
+            None,
+            Some("127.0.0.1"),
+            Some("127.0.0.53"),
+            Some("::1"),
+            Some("[::1]"),
+        ] {
+            let binding = PublishedPort {
+                host_ip,
+                ..published(8000, Some(8000), "")
+            };
+            assert_eq!(
+                vllm_container_endpoints(8000, Some("bridge"), &[binding], &[]),
+                strings(&["http://localhost:8000"]),
+                "{host_ip:?}"
+            );
+        }
         assert_eq!(
-            docker_endpoint(None, VLLM_DEFAULT_PORT),
-            ("http://localhost:8000".to_string(), true)
+            vllm_container_endpoints(
+                8000,
+                Some("bridge"),
+                &[published(8000, Some(9000), "192.168.1.20")],
+                &[]
+            ),
+            strings(&["http://192.168.1.20:9000"])
+        );
+        assert_eq!(
+            vllm_published_endpoint(Some("fd00::20"), 9000),
+            "http://[fd00::20]:9000"
+        );
+    }
+
+    /// With no address to try — the network mode unreported, another
+    /// container's network, or a network that gave it none — the listening
+    /// port is guessed on localhost, as before: the probe rejects a wrong
+    /// guess, while a dropped container is invisible for good. Docker's
+    /// `default` network mode is the default bridge, read like any other
+    /// network. On no network at all (`none`) there is nothing to probe, as
+    /// for Ollama and llama.cpp: its port guessed on localhost would be
+    /// whatever else is there.
+    #[test]
+    fn a_vllm_container_with_no_address_keeps_the_localhost_guess() {
+        for mode in [
+            None,
+            Some("container:abc123"),
+            Some("bridge"),
+            Some("default"),
+        ] {
+            assert_eq!(
+                vllm_container_endpoints(8000, mode, &[], &[]),
+                strings(&["http://localhost:8000"]),
+                "{mode:?}"
+            );
+        }
+        // Another container's network: its addresses are not this one's.
+        assert_eq!(
+            vllm_container_endpoints(8000, Some("container:abc123"), &[], &["172.17.0.9"]),
+            strings(&["http://localhost:8000"])
+        );
+        assert_eq!(
+            vllm_container_endpoints(8000, Some("default"), &[], &["172.17.0.9"]),
+            strings(&["http://172.17.0.9:8000"])
+        );
+        assert!(vllm_container_endpoints(8000, Some("none"), &[], &[]).is_empty());
+        assert!(vllm_container_endpoints(30000, Some("none"), &[], &["172.17.0.9"]).is_empty());
+    }
+
+    /// vLLM's port is read off the container's own command first, then off
+    /// the process of the container's that runs vLLM, and only then off any
+    /// other: a sidecar listed first in `docker top`, with a `--port` of its
+    /// own, is not where vLLM listens.
+    #[test]
+    fn a_vllm_containers_port_is_its_engine_processes() {
+        let sidecar_first = strings(&[
+            "/usr/bin/metrics-exporter --port 9100",
+            "python3 -m vllm.entrypoints.openai.api_server --model m --port 8001",
+        ]);
+        assert_eq!(
+            listen_port(&EngineType::Vllm, "/entrypoint.sh", &sidecar_first),
+            Some(8001)
+        );
+        assert_eq!(
+            listen_port(
+                &EngineType::Vllm,
+                "vllm serve m --port 8002",
+                &sidecar_first
+            ),
+            Some(8002)
+        );
+        // No engine process names one: any other process's, as before.
+        assert_eq!(
+            listen_port(
+                &EngineType::Vllm,
+                "/entrypoint.sh",
+                &strings(&["/usr/bin/metrics-exporter --port=9100", "vllm serve m"])
+            ),
+            Some(9100)
+        );
+        assert_eq!(
+            listen_port(
+                &EngineType::Sglang,
+                "",
+                &strings(&["python3 -m sglang.launch_server --model-path m --port 30001"])
+            ),
+            Some(30001)
+        );
+        assert_eq!(listen_port(&EngineType::Vllm, "vllm serve m", &[]), None);
+    }
+
+    #[test]
+    fn a_port_is_read_off_a_command_string() {
+        assert_eq!(
+            parse_port_from_command_str("vllm serve m --port 8001"),
+            Some(8001)
+        );
+        assert_eq!(
+            parse_port_from_command_str("vllm serve m --port=8002"),
+            Some(8002)
+        );
+        assert_eq!(
+            parse_port_from_command_str("x --port abc --port 8003"),
+            Some(8003)
+        );
+        assert_eq!(parse_port_from_command_str("x --port 70000"), None);
+        assert_eq!(parse_port_from_command_str("x --ports 8000 --port="), None);
+        assert_eq!(parse_port_from_command_str("x --port"), None);
+    }
+
+    /// A container's addresses, from the Docker API's per-network map: in
+    /// network-name order, without the empty address of a network that gave
+    /// it none, or a repeat.
+    #[test]
+    fn a_containers_addresses_are_read_in_network_order() {
+        assert_eq!(
+            container_addresses(vec![
+                ("web", "172.22.0.2"),
+                ("none", ""),
+                ("backend", " 172.21.0.5 "),
+                ("again", "172.22.0.2"),
+            ]),
+            vec!["172.22.0.2", "172.21.0.5"]
+        );
+        assert!(container_addresses(vec![("host", "")]).is_empty());
+        assert_eq!(
+            container_address_endpoints(&["172.21.0.5", "172.22.0.2"], &[8080, 9931]),
+            strings(&[
+                "http://172.21.0.5:8080",
+                "http://172.21.0.5:9931",
+                "http://172.22.0.2:8080",
+                "http://172.22.0.2:9931",
+            ])
         );
     }
 
@@ -2899,7 +3334,9 @@ mod tests {
     fn an_ollama_container_is_probed_where_the_host_reaches_it() {
         let image = OllamaHost::from_env(Some("0.0.0.0:11434"));
         let resolve = |listen: &OllamaHost, mode: Option<&str>, ports: &[PublishedPort<'_>]| {
-            ollama_container_endpoint(listen, mode, ports)
+            let endpoints = ollama_container_endpoints(listen, mode, ports, &[]);
+            assert!(endpoints.len() <= 1, "{endpoints:?}");
+            endpoints.into_iter().next()
         };
 
         // `docker run -p 11434:11434 ollama/ollama` — Docker lists the
@@ -3007,6 +3444,61 @@ mod tests {
             resolve(&image, Some("container:abc123"), &[]).as_deref(),
             Some("http://127.0.0.1:11434")
         );
+    }
+
+    /// On a bridge or other network with nothing published, a container's
+    /// Ollama is probed on its addresses there: reachable from a
+    /// host-networked dashboard, and never the localhost guess that would
+    /// find a native Ollama instead. A published port, or the host network,
+    /// still comes first.
+    #[test]
+    fn an_ollama_container_on_a_network_of_its_own_is_probed_on_its_address() {
+        let image = OllamaHost::from_env(Some("0.0.0.0:11434"));
+        let address = ["172.21.0.7"];
+        assert_eq!(
+            ollama_container_endpoints(&image, Some("bridge"), &[], &address),
+            strings(&["http://172.21.0.7:11434"])
+        );
+        let moved = OllamaHost::from_env(Some("0.0.0.0:8080"));
+        assert_eq!(
+            ollama_container_endpoints(
+                &moved,
+                Some("bridge"),
+                &[published(11434, Some(11434), "0.0.0.0")],
+                &address
+            ),
+            strings(&["http://172.21.0.7:8080"])
+        );
+        assert_eq!(
+            ollama_container_endpoints(
+                &image,
+                Some("ai_net"),
+                &[],
+                &container_addresses(vec![("zz", "172.30.0.2"), ("ai_net", "172.21.0.7")])
+            ),
+            strings(&["http://172.21.0.7:11434", "http://172.30.0.2:11434"])
+        );
+        assert_eq!(
+            ollama_container_endpoints(
+                &image,
+                Some("bridge"),
+                &[published(11434, Some(11500), "0.0.0.0")],
+                &address
+            ),
+            strings(&["http://127.0.0.1:11500"])
+        );
+        assert_eq!(
+            ollama_container_endpoints(&image, Some("host"), &[], &address),
+            strings(&["http://127.0.0.1:11434"])
+        );
+        assert!(ollama_container_endpoints(&image, Some("bridge"), &[], &[]).is_empty());
+        // Docker's `default` mode is the default bridge; `none` is no
+        // network, and so no address.
+        assert_eq!(
+            ollama_container_endpoints(&image, Some("default"), &[], &address),
+            strings(&["http://172.21.0.7:11434"])
+        );
+        assert!(ollama_container_endpoints(&image, Some("none"), &[], &[]).is_empty());
     }
 
     /// The host scan sees a containerized server too, and — unable to read a
@@ -3737,8 +4229,12 @@ mod tests {
                 tcp: true,
             })
             .collect();
-        let endpoints =
-            llamacpp_container_endpoints(&listen, container.network_mode.as_deref(), &published);
+        let endpoints = llamacpp_container_endpoints(
+            &listen,
+            container.network_mode.as_deref(),
+            &published,
+            &[],
+        );
         Some((endpoints, launch.served_model()))
     }
 
@@ -3865,6 +4361,52 @@ mod tests {
         );
     }
 
+    /// On a bridge or other network with nothing published, a container's
+    /// llama-server is probed on its addresses there, on each port it may
+    /// listen on in order; published ports and the host network still come
+    /// first.
+    #[test]
+    fn a_llamacpp_container_on_a_network_of_its_own_is_probed_on_its_address() {
+        let named = LlamaCppListen {
+            host: Some("0.0.0.0"),
+            port: 8080,
+            fallback_ports: Vec::new(),
+        };
+        let defaults = LlamaCppListen {
+            host: None,
+            port: 8080,
+            fallback_ports: vec![9931],
+        };
+        let address = ["172.21.0.6"];
+        assert_eq!(
+            llamacpp_container_endpoints(&named, Some("bridge"), &[], &address),
+            strings(&["http://172.21.0.6:8080"])
+        );
+        assert_eq!(
+            llamacpp_container_endpoints(&defaults, Some("my-network"), &[], &address),
+            strings(&["http://172.21.0.6:8080", "http://172.21.0.6:9931"])
+        );
+        assert_eq!(
+            llamacpp_container_endpoints(
+                &named,
+                Some("bridge"),
+                &[published(8080, Some(18090), "0.0.0.0")],
+                &address
+            ),
+            strings(&["http://localhost:18090"])
+        );
+        assert_eq!(
+            llamacpp_container_endpoints(&named, Some("host"), &[], &address),
+            strings(&["http://localhost:8080"])
+        );
+        assert!(llamacpp_container_endpoints(&named, Some("bridge"), &[], &[]).is_empty());
+        assert_eq!(
+            llamacpp_container_endpoints(&named, Some("default"), &[], &address),
+            strings(&["http://172.21.0.6:8080"])
+        );
+        assert!(llamacpp_container_endpoints(&named, Some("none"), &[], &[]).is_empty());
+    }
+
     /// A llama.cpp container's launch is its server's: the container's own
     /// command when that runs llama-server, else the first llama-server
     /// among its processes (a wrapper entrypoint's child). A router's
@@ -3953,7 +4495,15 @@ mod tests {
         let verified = verify_candidates(vec![native], &reqwest::Client::new(), &no_keys()).await;
         assert_eq!(verified.len(), 1);
         assert_eq!(verified[0].endpoint, llama.url);
-        assert!(verified[0].fallback_endpoints.is_empty());
+        assert_eq!(
+            verified[0].fallback_endpoints,
+            vec![
+                NOTHING_THERE.to_string(),
+                vllm.url.clone(),
+                unasked.url.clone()
+            ],
+            "the others it was probed on stay with it, for the engine map"
+        );
         assert_eq!(vllm.requests().len(), 1, "the vLLM server was asked once");
         assert!(unasked.requests().is_empty());
 
@@ -4046,6 +4596,30 @@ mod tests {
         );
     }
 
+    /// A container address nothing answers at — another Docker network,
+    /// seen from a bridge-networked dashboard — costs the probe its short
+    /// connect timeout, not the 2 s request timeout, before the next
+    /// endpoint is tried. 192.0.2.1 (TEST-NET-1) is never routed: the
+    /// connection hangs, or fails at once where there is no route at all.
+    #[tokio::test]
+    async fn an_address_nothing_answers_at_costs_the_connect_timeout() {
+        use super::super::test_server::TestServer;
+        let vllm = TestServer::start(|_| (200, String::new())).await;
+        let unreachable = DetectedEngine {
+            fallback_endpoints: vec![vllm.url.clone()],
+            ..candidate("http://192.0.2.1:8000", DeploymentMode::Docker, &[])
+        };
+        let started = std::time::Instant::now();
+        let verified = verify_candidates(vec![unreachable], &probe_client(), &no_keys()).await;
+        let took = started.elapsed();
+        assert_eq!(verified.len(), 1);
+        assert_eq!(verified[0].endpoint, vllm.url);
+        assert!(
+            took < PROBE_CONNECT_TIMEOUT + std::time::Duration::from_millis(600),
+            "the connect timeout, not the request timeout: {took:?}"
+        );
+    }
+
     /// The host scan cannot read a root container's environment, so where a
     /// llama.cpp container names its model by `LLAMA_ARG_ALIAS` the host
     /// scan has only the `-m` path, which `/models` does not report. Where
@@ -4082,5 +4656,38 @@ mod tests {
         };
         assert_eq!(joined([&host_view, &unnamed]), host_view.served_model);
         assert_eq!(joined([&unnamed, &host_view]), host_view.served_model);
+    }
+
+    /// A container probed first where nothing answers is verified on the
+    /// fallback that does — its address on its network; one that answers
+    /// nowhere is dropped.
+    #[tokio::test]
+    async fn a_container_is_verified_on_the_address_that_answers() {
+        use super::super::test_server::TestServer;
+        let vllm = TestServer::start(|request| {
+            let status = if request.path == "/health" { 200 } else { 404 };
+            (status, String::new())
+        })
+        .await;
+        let container = DetectedEngine {
+            container_id: Some("c0ffee".into()),
+            fallback_endpoints: vec![vllm.url.clone()],
+            ..candidate(NOTHING_THERE, DeploymentMode::Docker, &[42])
+        };
+        let verified =
+            verify_candidates(vec![container.clone()], &reqwest::Client::new(), &no_keys()).await;
+        assert_eq!(verified.len(), 1);
+        assert_eq!(verified[0].endpoint, vllm.url);
+        assert_eq!(verified[0].container_id.as_deref(), Some("c0ffee"));
+
+        let nowhere = DetectedEngine {
+            fallback_endpoints: Vec::new(),
+            ..container
+        };
+        assert!(
+            verify_candidates(vec![nowhere], &reqwest::Client::new(), &no_keys())
+                .await
+                .is_empty()
+        );
     }
 }

@@ -301,6 +301,23 @@ On multi-GPU hosts, Spark Dashboard monitors all available NVIDIA GPUs by
 default. Use `--gpu-index` to focus on one device. Engines are auto-detected via
 process scan and Docker API (vLLM, SGLang, llama.cpp and Ollama, on their
 default ports 8000, 30000, 9931 — 8080 before llama.cpp v0.7.0 — and 11434).
+A containerized engine is probed on the host network, on the host port that
+publishes its listening port (then on any other port it publishes), or — on a
+bridge or Compose network — on the container's own IP on that network.
+Container-IP probing works when the dashboard runs natively or host-networked
+(the default Compose setup). A dashboard in a bridge-networked container
+reaches neither a container's IP on another network nor a port published on
+the host's localhost: publish the engine's port and point `--engine-url` at
+`http://host.docker.internal:<port>`, or attach the dashboard to the engine's
+network — one or the other, since with both the engine shows up twice, once at
+your URL and once at the container IP it was discovered on
+([details](deploy/docker/docker.md)). A container IP is not a stable identity:
+Docker may hand the container another one after `docker compose down`/`up`, a
+daemon restart or a reboot, and the dashboard then sees a new engine — saved
+panel bindings, SLO settings, history and per-endpoint API keys are keyed by
+the endpoint and stay with the old one. For a stable endpoint, publish the
+port, or pin the container's address on its network (`ipv4_address` in
+Compose).
 Use `--engine` and `--engine-url` to override when auto-detection doesn't work. For a host-systemd installation, put the same
 values in `/etc/spark-dashboard/config.env` as `SPARK_DASHBOARD_ENGINE` and
 `SPARK_DASHBOARD_ENGINE_URL`; comma-separated engine and URL values are paired
@@ -318,8 +335,8 @@ a container running `llama-server` is found and confirmed as llama.cpp by its
 own API. It listens on its `--port` or `LLAMA_ARG_PORT`, otherwise on its
 default: 9931 from llama.cpp v0.7.0, 8080 on earlier releases and in the
 official Docker image; when the dashboard can't read which, it tries both. A
-container is reached on the host network or on the host port that publishes its
-listening port; one that publishes nothing is out of reach from the host. To
+container is reached like any other engine's (see above): on the host network,
+on the host port that publishes its listening port, or on its own IP. To
 point at one by hand, pass `--engine llamacpp` (`llama.cpp` and `llama-cpp` are
 accepted too) with `--engine-url`. It reports throughput, running and queued
 requests, mean inter-token latency and speculative decoding; everything else
