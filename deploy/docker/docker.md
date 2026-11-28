@@ -77,7 +77,20 @@ This switches to bridge networking, publishes `3000:3000`, and adds
 `host.docker.internal` (→ `host-gateway`) so the container can still reach host
 services. **Tradeoff:** engines bound only to the host network are no longer
 auto-discovered. Container-based discovery over the Docker socket still works
-(`pid:host` is inherited).
+(`pid:host` is inherited), but the endpoints it finds are the host's view of an
+engine container — `localhost:<published port>`, or the container's own IP on
+its Docker network — and a bridge-networked dashboard reaches neither. Either:
+
+- publish the engine's port and point `--engine-url` at
+  `http://host.docker.internal:<port>`, or
+- attach the dashboard to the engine's network; the engine's IP there is then
+  reachable and discovered.
+
+Not both: attached to the engine's network and also given
+`--engine-url http://<service>:8000`, the dashboard shows the engine twice —
+once at your URL, once at the container IP it discovered — because an engine
+is identified by its endpoint. In host mode, container IPs are reachable
+directly.
 
 ## Saved dashboards (persistent state)
 

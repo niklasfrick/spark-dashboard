@@ -984,6 +984,76 @@ fn adopt_container(state: &mut EngineState, container_id: Option<&str>) -> bool 
     true
 }
 
+/// The engine-map key a detected engine is tracked under: its own type and
+/// endpoint — the engine's identity — unless the map already tracks its
+/// container under another of the endpoints it was probed on. A container
+/// on several networks answers on each of its addresses there, and one
+/// round its first may miss a probe while another answers: it is still the
+/// engine the map knows, not a second one beside it. Matched on the
+/// container id, the engine type and that endpoint together, so a
+/// container that has really moved — its old address no longer among its
+/// endpoints — is tracked anew.
+fn engine_key(
+    engine_map: &HashMap<(EngineType, String), EngineState>,
+    detected: &detector::DetectedEngine,
+) -> (EngineType, String) {
+    let key = (detected.engine_type.clone(), detected.endpoint.clone());
+    if engine_map.contains_key(&key) {
+        return key;
+    }
+    let Some(container_id) = detected.container_id.as_deref() else {
+        return key;
+    };
+    engine_map
+        .iter()
+        .find(|((engine_type, endpoint), state)| {
+            *engine_type == detected.engine_type
+                && state.container_id.as_deref() == Some(container_id)
+                && detected.fallback_endpoints.contains(endpoint)
+        })
+        .map(|(known, _)| known.clone())
+        .unwrap_or(key)
+}
+
+/// Fold one detection round into the engine map: an engine not yet tracked
+/// is added (`new_state` builds it), each detected engine's PIDs are
+/// refreshed — engines restart and fork workers over their lifetime — and
+/// its container adopted where it had none (`adopt_container`), and the
+/// PIDs of every engine this round did not see are cleared
+/// (`clear_stale_pids`).
+fn apply_detections(
+    engine_map: &mut HashMap<(EngineType, String), EngineState>,
+    detected: &[detector::DetectedEngine],
+    mut new_state: impl FnMut(&detector::DetectedEngine) -> EngineState,
+) {
+    let mut detected_keys = std::collections::HashSet::new();
+    for d in detected {
+        let key = engine_key(engine_map, d);
+        let state = engine_map.entry(key.clone()).or_insert_with(|| {
+            let mut state = new_state(d);
+            state.container_id = d.container_id.clone();
+            state
+        });
+        state.pids = d.pids.clone();
+
+        if adopt_container(state, d.container_id.as_deref()) {
+            tracing::info!(
+                "Engine at {} resolved to container {:?}",
+                key.1,
+                d.container_id,
+            );
+        }
+        detected_keys.insert(key);
+    }
+
+    // Engines absent from this pass (stopped, restarting, probe blip) keep
+    // emitting snapshots through the grace period, but their PIDs are stale
+    // — the OS may recycle one onto an unrelated GPU process, turning the
+    // badge into a confident wrong guess. Clear them: empty = unknown = no
+    // badge.
+    clear_stale_pids(engine_map, &detected_keys);
+}
+
 /// Runs the engine detection and metrics collection loop.
 ///
 /// This function is spawned as a background tokio task. It:
@@ -1003,6 +1073,11 @@ pub async fn engine_collector_loop(
         .timeout(Duration::from_secs(2))
         .build()
         .unwrap_or_default();
+
+    // Detection probes connect on a short leash of their own: every
+    // candidate is on this host, and one that hangs to connect is a
+    // container address the dashboard cannot reach.
+    let probe_client = detector::probe_client();
 
     let mut sys = sysinfo::System::new();
     let mut engine_map: HashMap<(EngineType, String), EngineState> = HashMap::new();
@@ -1048,7 +1123,7 @@ pub async fn engine_collector_loop(
                 // row overruns it: the round is skipped, the engine set kept.
                 let Ok(detected) = tokio::time::timeout(
                     Duration::from_secs(8),
-                    detector::detect_engines(&sys, &client, &api_keys),
+                    detector::detect_engines(&sys, &probe_client, &api_keys),
                 )
                 .await
                 else {
@@ -1056,51 +1131,22 @@ pub async fn engine_collector_loop(
                     continue;
                 };
 
-                // Add newly detected engines
-                for d in &detected {
-                    let key = (d.engine_type.clone(), d.endpoint.clone());
-                    let state = engine_map.entry(key).or_insert_with(|| {
-                        let adapter = create_adapter(
-                            d.engine_type.clone(),
-                            d.endpoint.clone(),
-                            client.clone(),
-                            d.served_model.clone(),
-                            api_keys.resolve(&d.endpoint),
-                        );
-                        tracing::info!(
-                            "Detected engine: {} at {} (model={:?})",
-                            d.engine_type,
-                            d.endpoint,
-                            d.served_model,
-                        );
-                        let mut state =
-                            EngineState::new(adapter, d.deployment_mode.clone());
-                        state.container_id = d.container_id.clone();
-                        state
-                    });
-                    // Refresh the PID set every detection tick — engines
-                    // restart and fork workers over their lifetime.
-                    state.pids = d.pids.clone();
-
-                    if adopt_container(state, d.container_id.as_deref()) {
-                        tracing::info!(
-                            "Engine at {} resolved to container {:?}",
-                            d.endpoint,
-                            d.container_id,
-                        );
-                    }
-                }
-
-                // Engines absent from this pass (stopped, restarting, probe
-                // blip) keep emitting snapshots through the grace period, but
-                // their PIDs are stale — the OS may recycle one onto an
-                // unrelated GPU process, turning the badge into a confident
-                // wrong guess. Clear them: empty = unknown = no badge.
-                let detected_keys: std::collections::HashSet<_> = detected
-                    .iter()
-                    .map(|d| (d.engine_type.clone(), d.endpoint.clone()))
-                    .collect();
-                clear_stale_pids(&mut engine_map, &detected_keys);
+                apply_detections(&mut engine_map, &detected, |d| {
+                    let adapter = create_adapter(
+                        d.engine_type.clone(),
+                        d.endpoint.clone(),
+                        client.clone(),
+                        d.served_model.clone(),
+                        api_keys.resolve(&d.endpoint),
+                    );
+                    tracing::info!(
+                        "Detected engine: {} at {} (model={:?})",
+                        d.engine_type,
+                        d.endpoint,
+                        d.served_model,
+                    );
+                    EngineState::new(adapter, d.deployment_mode.clone())
+                });
             }
 
             _ = poll_interval.tick() => {
@@ -1565,6 +1611,91 @@ mod tests {
 
         assert_eq!(map[&seen_key].pids, vec![100], "detected engine keeps PIDs");
         assert!(map[&stale_key].pids.is_empty(), "undetected engine cleared");
+    }
+
+    fn detected(
+        endpoint: &str,
+        others: &[&str],
+        container_id: Option<&str>,
+    ) -> detector::DetectedEngine {
+        detector::DetectedEngine {
+            engine_type: EngineType::Vllm,
+            endpoint: endpoint.to_string(),
+            deployment_mode: DeploymentMode::Docker,
+            served_model: None,
+            pids: vec![42],
+            container_id: container_id.map(str::to_string),
+            fallback_endpoints: others.iter().map(|e| e.to_string()).collect(),
+            container: None,
+        }
+    }
+
+    /// A container on two networks is verified on its first address; one
+    /// round that address misses the probe and its second answers. It is
+    /// the engine the map already knows, under the key it was first found
+    /// on, not a second engine beside it — and back on its first address it
+    /// is still the one.
+    #[test]
+    fn a_container_answering_on_its_other_address_keeps_its_engine() {
+        let (a, b) = ("http://172.20.0.4:8000", "http://172.30.0.2:8000");
+        let mut map: HashMap<(EngineType, String), EngineState> = HashMap::new();
+        let mut created = 0;
+        let mut round = |map: &mut HashMap<_, _>, d: detector::DetectedEngine| {
+            apply_detections(map, &[d], |_| {
+                created += 1;
+                state()
+            });
+        };
+        round(&mut map, detected(a, &[b], Some("c0ffee")));
+        round(&mut map, detected(b, &[a], Some("c0ffee")));
+        round(&mut map, detected(a, &[b], Some("c0ffee")));
+        assert_eq!(map.len(), 1);
+        let key = (EngineType::Vllm, a.to_string());
+        assert_eq!(map[&key].pids, vec![42], "refreshed under its first key");
+        assert_eq!(map[&key].container_id.as_deref(), Some("c0ffee"));
+        assert_eq!(created, 1);
+    }
+
+    /// Only the same container, as the same engine type, on an endpoint it
+    /// was probed on is the engine the map knows: another container on
+    /// that address, a native engine there, or a container whose old
+    /// address is no longer among its endpoints (it moved) is tracked anew.
+    #[test]
+    fn only_the_same_container_on_one_of_its_endpoints_keeps_an_engine() {
+        let (a, b) = ("http://172.20.0.4:8000", "http://172.30.0.2:8000");
+        let known = || {
+            let mut map: HashMap<(EngineType, String), EngineState> = HashMap::new();
+            apply_detections(&mut map, &[detected(a, &[b], Some("c0ffee"))], |_| state());
+            map
+        };
+        for (d, why) in [
+            (detected(b, &[a], Some("beef")), "another container"),
+            (detected(b, &[a], None), "a native engine"),
+            (
+                detected(b, &[], Some("c0ffee")),
+                "moved off its old address",
+            ),
+            (
+                detector::DetectedEngine {
+                    engine_type: EngineType::Sglang,
+                    ..detected(b, &[a], Some("c0ffee"))
+                },
+                "another engine type",
+            ),
+        ] {
+            let mut map = known();
+            assert_eq!(
+                engine_key(&map, &d),
+                (d.engine_type.clone(), b.to_string()),
+                "{why}"
+            );
+            apply_detections(&mut map, &[d], |_| state());
+            assert_eq!(map.len(), 2, "{why}");
+            assert!(
+                map[&(EngineType::Vllm, a.to_string())].pids.is_empty(),
+                "{why}: the first engine was not seen this round"
+            );
+        }
     }
 
     #[test]
