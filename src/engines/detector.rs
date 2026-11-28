@@ -36,6 +36,22 @@ pub struct DetectedEngine {
     /// that answers on another of its addresses one round is still the engine
     /// the engine map knows on the first (`engines::engine_key`).
     pub fallback_endpoints: Vec<String>,
+    /// The container a Docker candidate was found in, as the Docker scan saw
+    /// it: what a candidate that answers on none of its endpoints is
+    /// reported by (`note_unverified_container`). `None` for native
+    /// candidates.
+    pub container: Option<ContainerInfo>,
+}
+
+/// What the Docker scan saw of the container a candidate was found in.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ContainerInfo {
+    /// Its name, without Docker's leading `/`.
+    pub name: String,
+    pub image: String,
+    /// Its network mode (`host`, `bridge`, a user network, `container:<id>`),
+    /// when the Docker API reported one.
+    pub network_mode: Option<String>,
 }
 
 /// The port vLLM serves on when it is not told otherwise. Used wherever a
@@ -101,8 +117,12 @@ async fn verify_candidates(
         let endpoints: Vec<String> = std::iter::once(candidate.endpoint.clone())
             .chain(fallbacks)
             .collect();
+        // How many of `endpoints` the probe got to: one cut off by the
+        // budget has not tried the rest.
+        let reached = std::sync::atomic::AtomicUsize::new(0);
         let probe = async {
             for endpoint in &endpoints {
+                reached.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let http =
                     EngineHttp::new(client.clone(), endpoint.clone(), api_keys.resolve(endpoint));
                 if probe_engine(&http, &candidate.engine_type).await {
@@ -111,10 +131,19 @@ async fn verify_candidates(
             }
             None
         };
-        let endpoint = tokio::time::timeout(CANDIDATE_PROBE_BUDGET, probe)
+        let Some(endpoint) = tokio::time::timeout(CANDIDATE_PROBE_BUDGET, probe)
             .await
             .ok()
-            .flatten()?;
+            .flatten()
+        else {
+            if let Some(container) = &candidate.container {
+                note_unverified_container(&candidate, container, &endpoints, reached.into_inner());
+            }
+            return None;
+        };
+        if let Some(container) = &candidate.container {
+            forget_unverified_container(&candidate, container);
+        }
         if endpoint != candidate.endpoint {
             tracing::debug!(
                 "{} candidate is not on {}; it answers on {endpoint}",
@@ -161,6 +190,126 @@ pub fn probe_client() -> reqwest::Client {
         .connect_timeout(PROBE_CONNECT_TIMEOUT)
         .build()
         .unwrap_or_default()
+}
+
+/// Say at info that a container classified as an engine answered on none of
+/// the endpoints it was probed on — `endpoints`, of which the probe reached
+/// the first `reached` before its budget ran out — and so is not shown: a
+/// dropped container was otherwise silent below debug, and the dashboard
+/// simply showed no engine. Once per container and endpoints, not every
+/// detection tick — a container that stays unreachable would repeat it
+/// forever — but again when the endpoints change (a restart on another
+/// network or port), or once it has been verified since
+/// (`forget_unverified_container`).
+fn note_unverified_container(
+    candidate: &DetectedEngine,
+    container: &ContainerInfo,
+    endpoints: &[String],
+    reached: usize,
+) {
+    let (noticed, key) = notice_key(candidate, container, endpoints);
+    if !first_notice(&UNVERIFIED_NOTICES, noticed, key) {
+        return;
+    }
+    let (tried, untried) = endpoints.split_at(reached.min(endpoints.len()));
+    let untried = if untried.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " (the probe ran out of time before trying {})",
+            untried.join(", ")
+        )
+    };
+    tracing::info!(
+        "{} container {} (image {}, network {}) did not answer as {} on {}{untried}; it is \
+         not shown until it does. If it is not still starting, the dashboard cannot reach it \
+         there: publish its port, or configure it with --engine-url <url>. A dashboard in a \
+         bridge-networked container reaches neither a container's IP on another network nor \
+         a port published on the host's localhost: publish the port and point --engine-url \
+         at http://host.docker.internal:<port>, or attach the dashboard to the engine's \
+         network.",
+        candidate.engine_type,
+        if container.name.is_empty() {
+            "?"
+        } else {
+            &container.name
+        },
+        container.image,
+        container.network_mode.as_deref().unwrap_or("unknown"),
+        candidate.engine_type,
+        tried.join(", "),
+    );
+}
+
+/// Forget that a container was noted as unverified, now that it has been
+/// verified: should it stop answering later, that is news again.
+fn forget_unverified_container(candidate: &DetectedEngine, container: &ContainerInfo) {
+    forget_notice(
+        &UNVERIFIED_NOTICES,
+        &noticed_container(candidate, container),
+    );
+}
+
+/// What `note_unverified_container` has said, per container: the endpoints
+/// it was noted on.
+static UNVERIFIED_NOTICES: std::sync::Mutex<std::collections::BTreeMap<String, String>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// The container a note is about, as `UNVERIFIED_NOTICES` remembers it: its
+/// id, else its name.
+fn noticed_container(candidate: &DetectedEngine, container: &ContainerInfo) -> String {
+    candidate
+        .container_id
+        .clone()
+        .unwrap_or_else(|| container.name.clone())
+}
+
+/// A note's container (`noticed_container`) and its endpoints, sorted: the
+/// same endpoints in another order are the same note.
+fn notice_key(
+    candidate: &DetectedEngine,
+    container: &ContainerInfo,
+    endpoints: &[String],
+) -> (String, String) {
+    let mut endpoints = endpoints.to_vec();
+    endpoints.sort_unstable();
+    endpoints.dedup();
+    (noticed_container(candidate, container), endpoints.join(","))
+}
+
+/// The most containers `first_notice` remembers: past it, it forgets them
+/// all and each is noted once more — containers come and go under new ids,
+/// and a long-lived dashboard should not keep every one it ever saw.
+const NOTICE_MEMORY: usize = 256;
+
+/// Whether `container` is not yet noted on `endpoints`, remembering that it
+/// now is.
+fn first_notice(
+    seen: &std::sync::Mutex<std::collections::BTreeMap<String, String>>,
+    container: String,
+    endpoints: String,
+) -> bool {
+    let mut seen = seen
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if seen.get(&container) == Some(&endpoints) {
+        return false;
+    }
+    if !seen.contains_key(&container) && seen.len() >= NOTICE_MEMORY {
+        seen.clear();
+    }
+    seen.insert(container, endpoints);
+    true
+}
+
+/// Forget what `first_notice` remembers of `container`.
+fn forget_notice(
+    seen: &std::sync::Mutex<std::collections::BTreeMap<String, String>>,
+    container: &str,
+) {
+    seen.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(container);
 }
 
 /// Merge Docker results into the process-scan candidates.
@@ -224,6 +373,9 @@ fn join_on_endpoint(candidates: &mut Vec<DetectedEngine>, candidate: DetectedEng
     existing.pids.sort_unstable();
     if existing.container_id.is_none() {
         existing.container_id = candidate.container_id;
+    }
+    if existing.container.is_none() {
+        existing.container = candidate.container;
     }
     for endpoint in candidate.fallback_endpoints {
         if endpoint != existing.endpoint && !existing.fallback_endpoints.contains(&endpoint) {
@@ -1194,6 +1346,7 @@ fn engines_from_processes(
                     pids: vec![pid],
                     container_id: None,
                     fallback_endpoints,
+                    container: None,
                 });
             }
         }
@@ -1793,6 +1946,17 @@ pub async fn detect_docker_engines() -> Vec<DetectedEngine> {
             pids,
             container_id: container.id.clone(),
             fallback_endpoints,
+            container: Some(ContainerInfo {
+                name: container
+                    .names
+                    .iter()
+                    .flatten()
+                    .next()
+                    .map(|name| name.trim_start_matches('/').to_string())
+                    .unwrap_or_default(),
+                image: container.image.clone().unwrap_or_default(),
+                network_mode: network_mode.map(str::to_string),
+            }),
         });
     }
 
@@ -2227,6 +2391,7 @@ mod tests {
             pids: pids.to_vec(),
             container_id: None,
             fallback_endpoints: Vec::new(),
+            container: None,
         }
     }
 
@@ -4659,8 +4824,8 @@ mod tests {
     }
 
     /// A container probed first where nothing answers is verified on the
-    /// fallback that does — its address on its network; one that answers
-    /// nowhere is dropped.
+    /// fallback that does — its address on its network — and keeps what the
+    /// Docker scan saw of it; one that answers nowhere is dropped.
     #[tokio::test]
     async fn a_container_is_verified_on_the_address_that_answers() {
         use super::super::test_server::TestServer;
@@ -4669,8 +4834,14 @@ mod tests {
             (status, String::new())
         })
         .await;
+        let info = ContainerInfo {
+            name: "reda-vllm-1".into(),
+            image: "eugr/spark-vllm".into(),
+            network_mode: Some("reda_default".into()),
+        };
         let container = DetectedEngine {
             container_id: Some("c0ffee".into()),
+            container: Some(info.clone()),
             fallback_endpoints: vec![vllm.url.clone()],
             ..candidate(NOTHING_THERE, DeploymentMode::Docker, &[42])
         };
@@ -4678,6 +4849,7 @@ mod tests {
             verify_candidates(vec![container.clone()], &reqwest::Client::new(), &no_keys()).await;
         assert_eq!(verified.len(), 1);
         assert_eq!(verified[0].endpoint, vllm.url);
+        assert_eq!(verified[0].container.as_ref(), Some(&info));
         assert_eq!(verified[0].container_id.as_deref(), Some("c0ffee"));
 
         let nowhere = DetectedEngine {
@@ -4689,5 +4861,98 @@ mod tests {
                 .await
                 .is_empty()
         );
+    }
+
+    /// A dropped container is noted once per container and endpoints, not
+    /// every detection tick, and again when either changes, or once it has
+    /// been verified in between; past its memory the notes start over
+    /// rather than grow without bound.
+    #[test]
+    fn a_dropped_container_is_noted_once_per_container_and_endpoints() {
+        let seen = std::sync::Mutex::new(std::collections::BTreeMap::new());
+        let note = |container: &str, endpoints: &str| {
+            first_notice(&seen, container.into(), endpoints.into())
+        };
+        assert!(note("c0ffee", "http://172.21.0.5:8000"));
+        assert!(!note("c0ffee", "http://172.21.0.5:8000"));
+        assert!(note("c0ffee", "http://172.21.0.9:8000"));
+        assert!(note("beef", "http://172.21.0.5:8000"));
+        assert!(!note("beef", "http://172.21.0.5:8000"));
+        forget_notice(&seen, "beef");
+        assert!(
+            note("beef", "http://172.21.0.5:8000"),
+            "verified in between"
+        );
+        assert!(
+            !note("c0ffee", "http://172.21.0.9:8000"),
+            "only beef was forgotten"
+        );
+        for n in 0..NOTICE_MEMORY {
+            note(&format!("filler-{n}"), "");
+        }
+        assert!(seen.lock().unwrap().len() <= NOTICE_MEMORY);
+        assert!(note("c0ffee", "http://172.21.0.9:8000"));
+    }
+
+    /// A note is remembered by the container's id, else — the Docker API
+    /// listing none — its name, and by its endpoints whatever their order.
+    #[test]
+    fn a_notes_key_is_its_container_and_its_sorted_endpoints() {
+        let info = ContainerInfo {
+            name: "reda-vllm-1".into(),
+            image: "vllm/vllm-openai".into(),
+            network_mode: Some("reda_default".into()),
+        };
+        let with_id = DetectedEngine {
+            container_id: Some("c0ffee".into()),
+            container: Some(info.clone()),
+            ..candidate("http://172.21.0.5:8000", DeploymentMode::Docker, &[])
+        };
+        let endpoints = strings(&["http://172.30.0.2:8000", "http://172.21.0.5:8000"]);
+        let key = notice_key(&with_id, &info, &endpoints);
+        assert_eq!(
+            key,
+            (
+                "c0ffee".to_string(),
+                "http://172.21.0.5:8000,http://172.30.0.2:8000".to_string()
+            )
+        );
+        let reversed: Vec<String> = endpoints.iter().rev().cloned().collect();
+        assert_eq!(notice_key(&with_id, &info, &reversed), key);
+        let without_id = DetectedEngine {
+            container_id: None,
+            ..with_id
+        };
+        assert_eq!(notice_key(&without_id, &info, &endpoints).0, "reda-vllm-1");
+    }
+
+    /// The host scan's candidate and the container's, joined on one
+    /// endpoint, keep what the Docker scan saw of the container, whichever
+    /// came first.
+    #[test]
+    fn a_joined_candidate_keeps_its_container() {
+        let info = ContainerInfo {
+            name: "vllm".into(),
+            image: "vllm/vllm-openai".into(),
+            network_mode: Some("host".into()),
+        };
+        let host_view = candidate("http://localhost:8000", DeploymentMode::Native, &[500]);
+        let container = DetectedEngine {
+            container_id: Some("c0ffee".into()),
+            container: Some(info.clone()),
+            ..candidate("http://localhost:8000", DeploymentMode::Docker, &[])
+        };
+        for order in [
+            [host_view.clone(), container.clone()],
+            [container.clone(), host_view.clone()],
+        ] {
+            let mut candidates = Vec::new();
+            for candidate in order {
+                join_on_endpoint(&mut candidates, candidate);
+            }
+            assert_eq!(candidates.len(), 1);
+            assert_eq!(candidates[0].container.as_ref(), Some(&info));
+            assert_eq!(candidates[0].container_id.as_deref(), Some("c0ffee"));
+        }
     }
 }

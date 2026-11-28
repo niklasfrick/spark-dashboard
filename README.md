@@ -318,6 +318,8 @@ panel bindings, SLO settings, history and per-endpoint API keys are keyed by
 the endpoint and stay with the old one. For a stable endpoint, publish the
 port, or pin the container's address on its network (`ipv4_address` in
 Compose).
+A container that is found but doesn't answer is logged once at `info`, with the
+endpoints tried and its network mode.
 Use `--engine` and `--engine-url` to override when auto-detection doesn't work. For a host-systemd installation, put the same
 values in `/etc/spark-dashboard/config.env` as `SPARK_DASHBOARD_ENGINE` and
 `SPARK_DASHBOARD_ENGINE_URL`; comma-separated engine and URL values are paired

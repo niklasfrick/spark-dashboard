@@ -1626,6 +1626,7 @@ mod tests {
             pids: vec![42],
             container_id: container_id.map(str::to_string),
             fallback_endpoints: others.iter().map(|e| e.to_string()).collect(),
+            container: None,
         }
     }
 
